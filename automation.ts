@@ -10,11 +10,16 @@ const historyDir = path.join(taskDir, 'history');
 if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true });
 if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
 
+let isRunning = false;
+
 export function startAutomationWatcher() {
   console.log('Starting task watcher on:', taskDir);
   
   // Simple polling to avoid fs.watch cross-platform quirks
   setInterval(async () => {
+    if (isRunning) return; // 防止并发冲突
+    isRunning = true;
+
     try {
       const files = fs.readdirSync(taskDir);
       for (const file of files) {
@@ -36,6 +41,8 @@ export function startAutomationWatcher() {
       }
     } catch (err) {
       console.error('Error in watcher:', err);
+    } finally {
+      isRunning = false; // 执行完毕后释放锁
     }
   }, 3000); // Check every 3 seconds
 }
