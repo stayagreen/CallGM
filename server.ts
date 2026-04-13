@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import { startAutomationWatcher } from "./automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -12,16 +13,23 @@ async function startServer() {
 
   app.use(express.json({ limit: "10mb" }));
 
+  const taskDir = path.join(__dirname, "task");
+  if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true });
+
   // API route to save generation request
   app.post("/api/execute", (req, res) => {
     const { tasks } = req.body;
     
-    // Save to JSON file
-    const filePath = path.join(__dirname, "tasks.json");
+    // Save to JSON file with unique name
+    const filename = `task_${Date.now()}.json`;
+    const filePath = path.join(taskDir, filename);
     fs.writeFileSync(filePath, JSON.stringify(tasks, null, 2));
 
-    res.json({ status: "ok", message: "Tasks queued" });
+    res.json({ status: "ok", message: "Tasks queued", filename });
   });
+
+  // Start the automation watcher
+  startAutomationWatcher();
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

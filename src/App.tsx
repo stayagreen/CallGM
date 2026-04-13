@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef } from 'react';
-import { Plus, Trash2, Upload, Settings, X } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { Plus, Trash2, Upload, Settings, X, History } from 'lucide-react';
 
 interface Task {
   id: string;
@@ -20,11 +20,27 @@ interface Template {
   prompt: string;
 }
 
+interface HistoryItem {
+  id: string;
+  timestamp: number;
+  tasks: Task[];
+}
+
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([{ id: '1', prompt: '', images: [], count: 1, download: false }]);
   const [activeTaskId, setActiveTaskId] = useState<string>('1');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  
+  const [history, setHistory] = useState<HistoryItem[]>(() => {
+    const saved = localStorage.getItem('task_history');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('task_history', JSON.stringify(history));
+  }, [history]);
 
   const activeTask = tasks.find(t => t.id === activeTaskId) || tasks[0];
 
@@ -81,12 +97,26 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tasks }),
     });
-    if (response.ok) alert('任务已加入队列，等待本地执行！');
+
+    if (response.ok) {
+      const newHistoryItem = { id: Date.now().toString(), timestamp: Date.now(), tasks: JSON.parse(JSON.stringify(tasks)) };
+      setHistory([newHistoryItem, ...history]);
+      alert('任务已保存到 task 目录，自动化脚本将自动执行！');
+    }
   };
 
   return (
     <div className="p-6 max-w-4xl mx-auto bg-gray-50 min-h-screen">
-      <h1 className="text-3xl font-extrabold text-gray-900 mb-6">CallGM 任务管理器</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-extrabold text-gray-900">CallGM 任务管理器</h1>
+        <button 
+          onClick={() => setShowHistoryModal(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50 shadow-sm transition font-medium"
+        >
+          <History size={18} />
+          历史记录
+        </button>
+      </div>
       
       <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
         {tasks.map((t, index) => (
@@ -165,6 +195,46 @@ export default function App() {
 
         <button onClick={handleExecute} className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-lg shadow-blue-200">执行所有任务</button>
       </div>
+
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+            <h2 className="text-2xl font-bold mb-6">执行历史记录</h2>
+            {history.length === 0 ? (
+              <p className="text-gray-500 text-center py-4">暂无历史记录</p>
+            ) : (
+              history.map(h => (
+                <div key={h.id} className="flex justify-between items-center mb-3 p-4 bg-gray-50 rounded-xl border border-gray-100">
+                  <div>
+                    <div className="font-bold text-gray-800">{new Date(h.timestamp).toLocaleString()}</div>
+                    <div className="text-sm text-gray-500">包含 {h.tasks.length} 个任务</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => {
+                        setTasks(h.tasks);
+                        setActiveTaskId(h.tasks[0].id);
+                        setShowHistoryModal(false);
+                      }} 
+                      className="px-4 py-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 font-medium transition"
+                    >
+                      重载此任务
+                    </button>
+                    <button 
+                      onClick={() => setHistory(history.filter(x => x.id !== h.id))} 
+                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                      title="删除记录"
+                    >
+                      <Trash2 size={18}/>
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+            <button onClick={() => setShowHistoryModal(false)} className="mt-4 w-full text-gray-500 hover:text-gray-700 py-2 font-medium">关闭</button>
+          </div>
+        </div>
+      )}
 
       {showTemplateModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
