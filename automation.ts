@@ -42,8 +42,8 @@ export function startAutomationWatcher() {
 
 async function executeWithPhysicalSimulation(tasks: any) {
   try {
-    // Dynamically import nut.js and open
-    const nutjs = await import('@nut-tree/nut-js');
+    // Dynamically import nut.js (using the maintained fork) and open
+    const nutjs = await import('@nut-tree-fork/nut-js');
     const { keyboard, Key, mouse, screen, clipboard } = nutjs;
     const open = (await import('open')).default;
 
@@ -98,8 +98,8 @@ async function executeWithPhysicalSimulation(tasks: any) {
     
     console.log('\n所有任务物理模拟执行完毕！');
   } catch (error) {
-    console.log('未检测到 @nut-tree/nut-js 或 open。这在云端环境中是正常的。');
-    console.log('请在本地运行: npm install @nut-tree/nut-js open');
+    console.log('未检测到 @nut-tree-fork/nut-js 或 open。这在云端环境中是正常的。');
+    console.log('请在本地运行: npm install @nut-tree-fork/nut-js open');
     console.log('模拟执行 2 秒...');
     await new Promise(r => setTimeout(r, 2000));
   }
