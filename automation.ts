@@ -44,10 +44,22 @@ async function executeWithPuppeteer(tasks: any) {
   try {
     // Dynamically import puppeteer so it doesn't crash the cloud server if missing
     const puppeteer = (await import('puppeteer')).default;
-    console.log('Launching browser...');
-    const browser = await puppeteer.launch({ headless: false, userDataDir: './chrome_data' });
-    const page = await browser.newPage();
-    await page.goto('https://gemini.google.com/');
+    console.log('Connecting to existing browser on port 9222...');
+    
+    const browser = await puppeteer.connect({ 
+      browserURL: 'http://127.0.0.1:9222',
+      defaultViewport: null
+    });
+    
+    const pages = await browser.pages();
+    let page = pages.find(p => p.url().includes('gemini.google.com'));
+    
+    if (!page) {
+       page = await browser.newPage();
+       await page.goto('https://gemini.google.com/');
+    } else {
+       await page.bringToFront();
+    }
     
     for (const task of tasks) {
       for (let i = 0; i < task.count; i++) {
@@ -58,9 +70,11 @@ async function executeWithPuppeteer(tasks: any) {
         await new Promise(r => setTimeout(r, 2000)); // simulate work
       }
     }
-    await browser.close();
+    
+    browser.disconnect();
+    console.log('Tasks execution finished, disconnected from browser.');
   } catch (error) {
-    console.log('Puppeteer not found or failed. (This is expected in the cloud environment).');
+    console.error('Failed to connect to browser. Please ensure Chrome is running with --remote-debugging-port=9222', error);
     console.log('Simulating execution for 2 seconds...');
     await new Promise(r => setTimeout(r, 2000));
   }
