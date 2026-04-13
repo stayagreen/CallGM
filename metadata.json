@@ -1,0 +1,6 @@
+{
+  "name": "CallGM",
+  "description": "A web application to generate images using Gemini, with server-side JSON logging.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
