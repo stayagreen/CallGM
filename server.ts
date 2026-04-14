@@ -247,6 +247,30 @@ async function startServer() {
     res.json({ success: true, files: savedFiles });
   });
 
+  // Copy gallery images to uploads for task reference
+  app.post('/api/images/copy-to-uploads', (req, res) => {
+    const { filenames } = req.body;
+    if (!filenames || !Array.isArray(filenames)) return res.status(400).json({ error: 'Invalid filenames' });
+    
+    const copiedUrls: string[] = [];
+    filenames.forEach((filename: string) => {
+      const sourcePath = path.join(downloadDir, filename);
+      const destFilename = `ref_gallery_${Date.now()}_${Math.floor(Math.random() * 1000)}_${filename}`;
+      const destPath = path.join(uploadsDir, destFilename);
+      
+      if (fs.existsSync(sourcePath)) {
+        try {
+          fs.copyFileSync(sourcePath, destPath);
+          copiedUrls.push(`/uploads/${destFilename}`);
+        } catch (e) {
+          console.error('Failed to copy image to uploads:', e);
+        }
+      }
+    });
+    
+    res.json({ success: true, urls: copiedUrls });
+  });
+
   // Start the automation watcher
   startAutomationWatcher();
 

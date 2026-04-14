@@ -231,9 +231,21 @@ export default function App() {
     alert('请直接在页面上按 Ctrl+V 进行粘贴');
   };
 
-  const selectFromGallery = () => {
-    const selectedUrls = Array.from(selectedGalleryImages).map(img => `/downloads/${img}`);
-    updateTask({ images: [...activeTask.images, ...selectedUrls].slice(0, 10) });
+  const selectFromGallery = async () => {
+    const filenames = Array.from(selectedGalleryImages);
+    try {
+      const response = await fetch('/api/images/copy-to-uploads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filenames })
+      });
+      const data = await response.json();
+      if (data.success) {
+        updateTask({ images: [...activeTask.images, ...data.urls].slice(0, 10) });
+      }
+    } catch (error) {
+      console.error('Failed to copy gallery images to uploads:', error);
+    }
     setShowGalleryPicker(false);
     setSelectedGalleryImages(new Set());
   };
