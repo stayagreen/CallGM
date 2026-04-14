@@ -448,7 +448,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         })());`;
         
         // 将多行脚本压缩成单行 (虽然控制台支持多行，但地址栏必须单行)
-        const pollScript = rawPollScript.replace(/\/\*.*?\*\//gs, '').replace(/\n/g, ' ').replace(/\s{2,}/g, ' ');
+        const pollScript = rawPollScript.replace(/\/\*.*?\*\//gs, '').replace(/\/\/.*?\n/g, ' ').replace(/\n/g, ' ').replace(/\s{2,}/g, ' ');
         await injectJsViaAddressBar(pollScript);
 
         // 彻底抛弃状态轮询，直接进入文件监控模式 (Zero-IPC 架构)
