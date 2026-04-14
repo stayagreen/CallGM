@@ -145,18 +145,26 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
             }
 
             // 如果最新文件是在点击下载按钮之后（或者点击前 5 秒内，考虑到系统时间误差）创建/修改的
-            if (newestFile && newestTime > clickTime - 5000) {
-                console.log(`✅ 检测到最新下载的文件: ${newestFile}`);
-                // 额外等待 2 秒，确保浏览器彻底释放文件占用锁
-                await new Promise(r => setTimeout(r, 2000));
+            // 扩大时间窗口，允许点击前 10 秒内创建的文件
+            if (newestFile && newestTime > clickTime - 10000) {
+                console.log(`✅ [DEBUG] 成功监测到新下载的文件: ${newestFile}`);
+                console.log(`   详细信息: 创建时间: ${new Date(newestTime).toLocaleTimeString()}, 点击时间: ${new Date(clickTime).toLocaleTimeString()}`);
+                
+                // 额外等待 5 秒，确保浏览器彻底释放文件占用锁
+                await new Promise(r => setTimeout(r, 5000));
                 
                 const oldPath = path.join(systemDownloadsDir, newestFile);
                 const newPath = path.join(projectDownloadDir, newestFile);
                 try {
                     if (fs.existsSync(oldPath)) {
-                        fs.copyFileSync(oldPath, newPath);
-                        fs.unlinkSync(oldPath);
-                        console.log(`📦 成功剪切文件: ${newestFile} -> 项目 download 目录`);
+                        // 使用 fs.renameSync 移动文件，如果跨分区则使用 copy+unlink
+                        try {
+                            fs.renameSync(oldPath, newPath);
+                        } catch (e) {
+                            fs.copyFileSync(oldPath, newPath);
+                            fs.unlinkSync(oldPath);
+                        }
+                        console.log(`📦 成功移动文件: ${newestFile} -> 项目 download 目录`);
                         movedFiles.push(newestFile);
                         return movedFiles;
                     }
@@ -165,7 +173,7 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
                 }
             } else {
                 if (attempts % 5 === 0) {
-                    console.log(`   ...等待新文件出现... (最新文件是 ${newestFile || '无'}, 但时间不匹配)`);
+                    console.log(`   ...等待新文件出现... (最新文件是 ${newestFile || '无'}, 时间: ${newestTime ? new Date(newestTime).toLocaleTimeString() : 'N/A'}, 点击时间: ${new Date(clickTime).toLocaleTimeString()})`);
                 }
             }
         } catch (err) {
