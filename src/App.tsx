@@ -4,7 +4,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink } from 'lucide-react';
 
 interface Task {
   id: string;
@@ -12,6 +12,7 @@ interface Task {
   images: string[];
   count: number;
   download: boolean;
+  downloadedFiles?: string[];
 }
 
 interface Template {
@@ -32,6 +33,8 @@ export default function App() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showGalleryModal, setShowGalleryModal] = useState(false);
+  const [galleryImages, setGalleryImages] = useState<string[]>([]);
   
   const [history, setHistory] = useState<HistoryItem[]>(() => {
     const saved = localStorage.getItem('task_history');
@@ -41,6 +44,64 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('task_history', JSON.stringify(history));
   }, [history]);
+
+  const fetchHistory = async () => {
+    try {
+      const res = await fetch('/api/history');
+      const data = await res.json();
+      // Update local history with backend data (which includes downloadedFiles)
+      const formattedHistory = data.map((item: any) => ({
+        id: item.filename,
+        timestamp: item.timestamp,
+        tasks: item.tasks
+      }));
+      setHistory(formattedHistory);
+    } catch (error) {
+      console.error('Failed to fetch history:', error);
+    }
+  };
+
+  const fetchGallery = async () => {
+    try {
+      const res = await fetch('/api/images');
+      const data = await res.json();
+      setGalleryImages(data);
+    } catch (error) {
+      console.error('Failed to fetch gallery:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (showHistoryModal) fetchHistory();
+  }, [showHistoryModal]);
+
+  useEffect(() => {
+    if (showGalleryModal) fetchGallery();
+  }, [showGalleryModal]);
+
+  const deleteHistory = async (filename: string) => {
+    if (!window.confirm('确定要删除这条历史记录吗？')) return;
+    
+    const deleteFiles = window.confirm('是否同时删除相关的本地图片源文件？\n\n点击"确定"删除源文件，点击"取消"仅删除历史记录。');
+    
+    try {
+      await fetch(`/api/history/${filename}?deleteFiles=${deleteFiles}`, { method: 'DELETE' });
+      fetchHistory();
+    } catch (error) {
+      console.error('Failed to delete history:', error);
+    }
+  };
+
+  const deleteGalleryImage = async (filename: string) => {
+    if (!window.confirm('确定要删除这张图片吗？这将会从本地硬盘中彻底删除该文件。')) return;
+    
+    try {
+      await fetch(`/api/images/${filename}`, { method: 'DELETE' });
+      fetchGallery();
+    } catch (error) {
+      console.error('Failed to delete image:', error);
+    }
+  };
 
   const activeTask = tasks.find(t => t.id === activeTaskId) || tasks[0];
 
@@ -109,13 +170,22 @@ export default function App() {
     <div className="p-6 max-w-4xl mx-auto bg-gray-50 min-h-screen">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-extrabold text-gray-900">CallGM 任务管理器</h1>
-        <button 
-          onClick={() => setShowHistoryModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50 shadow-sm transition font-medium"
-        >
-          <History size={18} />
-          历史记录
-        </button>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setShowGalleryModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50 shadow-sm transition font-medium"
+          >
+            <ImageIcon size={18} />
+            图库
+          </button>
+          <button 
+            onClick={() => setShowHistoryModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50 shadow-sm transition font-medium"
+          >
+            <History size={18} />
+            历史记录
+          </button>
+        </div>
       </div>
       
       <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
@@ -208,8 +278,17 @@ export default function App() {
                   <div>
                     <div className="font-bold text-gray-800">{new Date(h.timestamp).toLocaleString()}</div>
                     <div className="text-sm text-gray-500">包含 {h.tasks.length} 个任务</div>
+                    
+                    {/* Display downloaded files for this history record */}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {h.tasks.map(t => t.downloadedFiles?.map(img => (
+                        <a key={img} href={`/downloads/${img}`} target="_blank" rel="noreferrer" className="block w-12 h-12 rounded border border-gray-200 overflow-hidden hover:border-blue-500 transition-colors shadow-sm">
+                          <img src={`/downloads/${img}`} alt="downloaded" className="w-full h-full object-cover" />
+                        </a>
+                      )))}
+                    </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-start">
                     <button 
                       onClick={() => {
                         setTasks(h.tasks);
@@ -221,7 +300,7 @@ export default function App() {
                       重载此任务
                     </button>
                     <button 
-                      onClick={() => setHistory(history.filter(x => x.id !== h.id))} 
+                      onClick={() => deleteHistory(h.id)} 
                       className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
                       title="删除记录"
                     >
@@ -232,6 +311,49 @@ export default function App() {
               ))
             )}
             <button onClick={() => setShowHistoryModal(false)} className="mt-4 w-full text-gray-500 hover:text-gray-700 py-2 font-medium">关闭</button>
+          </div>
+        </div>
+      )}
+
+      {showGalleryModal && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-4xl max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold">本地图库</h2>
+              <button onClick={fetchGallery} className="text-sm text-blue-600 hover:text-blue-700 font-medium">刷新图库</button>
+            </div>
+            
+            {galleryImages.length === 0 ? (
+              <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg border border-gray-200 border-dashed">
+                <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+                <p>暂无下载的图片</p>
+                <p className="text-sm mt-1">执行带有开启下载选项的任务后，图片会显示在这里</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                {galleryImages.map(img => (
+                  <div key={img} className="group relative bg-white p-2 rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-all">
+                    <a href={`/downloads/${img}`} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden rounded bg-gray-100 relative">
+                      <img src={`/downloads/${img}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                        <ExternalLink className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                      </div>
+                    </a>
+                    <div className="mt-2 flex items-center justify-between">
+                      <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
+                      <button
+                        onClick={() => deleteGalleryImage(img)}
+                        className="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors"
+                        title="彻底删除源文件"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button onClick={() => setShowGalleryModal(false)} className="mt-6 w-full text-gray-500 hover:text-gray-700 py-2 font-medium">关闭</button>
           </div>
         </div>
       )}

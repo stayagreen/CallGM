@@ -51,7 +51,12 @@ export function startAutomationWatcher() {
         const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         
         // Execute task (Physical Simulation)
-        await executeWithPhysicalSimulation(taskData);
+        const updatedTaskData = await executeWithPhysicalSimulation(taskData);
+        
+        // Update the file with downloadedFiles info before moving
+        if (updatedTaskData) {
+            fs.writeFileSync(filePath, JSON.stringify(updatedTaskData, null, 2));
+        }
         
         // Move to history
         const historyPath = path.join(historyDir, file);
@@ -215,15 +220,12 @@ async function executeWithPhysicalSimulation(tasks: any) {
     await new Promise(r => setTimeout(r, 8000));
 
     for (const task of tasks) {
+      if (!task.downloadedFiles) task.downloadedFiles = [];
       for (let i = 0; i < task.count; i++) {
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
         
-        // 2. 智能定位：通过地址栏注入 JS 代码
-        console.log('正在智能定位输入框 (通过地址栏注入)...');
-        const focusScript = `void((() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })());`;
-        await injectJsViaAddressBar(focusScript);
-
-        // 3. 复制提示词并粘贴 (支持中文)
+        // 2. 复制提示词并粘贴 (支持中文)
+        // (注: Gemini 网页加载或刷新后默认会自动聚焦输入框，因此直接粘贴即可)
         console.log('输入提示词...');
         await clipboard.setContent(task.prompt);
         if (isMac) {
@@ -359,7 +361,10 @@ async function executeWithPhysicalSimulation(tasks: any) {
                     // 如果开启了下载，并且成功记录了下载触发时间，则开始监控系统下载目录
                     if (task.download && downloadStartTime > 0) {
                         const systemDownloadsDir = path.join(os.homedir(), 'Downloads');
-                        await waitForAndMoveDownloads(downloadStartTime, systemDownloadsDir, downloadDir);
+                        const files = await waitForAndMoveDownloads(downloadStartTime, systemDownloadsDir, downloadDir);
+                        if (files && files.length > 0) {
+                            task.downloadedFiles.push(...files);
+                        }
                     }
                     
                     console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
@@ -393,6 +398,16 @@ async function executeWithPhysicalSimulation(tasks: any) {
     }
     
     console.log('\n🎉 所有任务物理模拟执行完毕！');
+    console.log('关闭当前浏览器标签页...');
+    if (isMac) {
+        await keyboard.pressKey(Key.LeftSuper, Key.W);
+        await keyboard.releaseKey(Key.LeftSuper, Key.W);
+    } else {
+        await keyboard.pressKey(Key.LeftControl, Key.W);
+        await keyboard.releaseKey(Key.LeftControl, Key.W);
+    }
+    
+    return tasks;
   } catch (error: any) {
     console.error('\n❌ 自动化执行过程中发生严重错误:');
     console.error(error.message || error);
