@@ -87,8 +87,12 @@ async function executeWithPhysicalSimulation(tasks: any) {
         await new Promise(r => setTimeout(r, 3000)); // 等待控制台打开
 
         // 2. 自动输入 allow pasting 解除 Chrome 的粘贴保护
-        // 即使是中文版 Chrome，输入英文的 allow pasting 也能解锁
-        await keyboard.type('allow pasting');
+        // 截图显示 keyboard.type('allow pasting') 吞掉了空格变成了 allowpasting
+        // 所以我们手动拆分输入，强制敲击空格键
+        await keyboard.type('allow');
+        await keyboard.pressKey(Key.Space);
+        await keyboard.releaseKey(Key.Space);
+        await keyboard.type('pasting');
         await keyboard.pressKey(Key.Enter);
         await keyboard.releaseKey(Key.Enter);
         await new Promise(r => setTimeout(r, 500));
