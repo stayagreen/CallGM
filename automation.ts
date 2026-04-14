@@ -143,75 +143,82 @@ async function executeWithPhysicalSimulation(tasks: any) {
         await clipboard.setContent('WAITING_FOR_GEMINI');
         
         const pollScript = `void((() => {
+            function copyToClip(text) {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            }
+
             let attempts = 0;
+            let imageFoundAttempts = 0;
+
             const checkInterval = setInterval(() => {
                 attempts++;
                 if (attempts > 60) { // 最多等待 120 秒
                     clearInterval(checkInterval);
-                    const ta = document.createElement('textarea');
-                    ta.value = 'GEMINI_TIMEOUT';
-                    document.body.appendChild(ta);
-                    ta.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(ta);
+                    copyToClip('GEMINI_TIMEOUT');
                     return;
                 }
 
-                // 只在最后一个模型回复区块中寻找，避免点到历史记录里的按钮
+                // 只在最后一个模型回复区块中寻找
                 const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
                 const lastMessage = messages.length > 0 ? messages[messages.length - 1] : document;
                 
-                // 1. 模拟鼠标悬浮在所有图片上，强制触发 React/Angular 渲染隐藏的下载按钮
+                // 1. 首先检查图片是否已经生成出来
                 const images = lastMessage.querySelectorAll('img');
-                images.forEach(img => {
-                    const hoverEvent = new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window });
-                    const enterEvent = new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window });
-                    img.dispatchEvent(hoverEvent);
-                    img.dispatchEvent(enterEvent);
-                    // 通常悬浮事件可能绑定在图片的父容器上
-                    if (img.parentElement) {
-                        img.parentElement.dispatchEvent(hoverEvent);
-                        img.parentElement.dispatchEvent(enterEvent);
-                    }
-                });
+                if (images.length === 0) return; // 还没图片，继续等
+                
+                imageFoundAttempts++;
 
-                // 2. 寻找下载按钮 (扩大属性搜索范围，包含 data-tooltip 等)
-                const btns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"]'));
+                // 2. 图片出现了！尝试找下载按钮
+                // 使用 outerHTML 进行最宽泛的匹配，哪怕文字写在 SVG 标签内部也能找到
+                const btns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id]'));
                 const targetBtns = btns.filter(b => {
-                    const str = (
-                        (b.getAttribute('aria-label') || '') + ' ' +
-                        (b.getAttribute('title') || '') + ' ' +
-                        (b.getAttribute('data-tooltip') || '') + ' ' +
-                        (b.getAttribute('data-tooltip-content') || '') + ' ' +
-                        (b.textContent || '')
-                    ).toLowerCase();
-                    return str.includes('下载完整尺寸') || 
-                           str.includes('download full size') ||
-                           str.includes('下载全部') ||
-                           str.includes('download all');
+                    const html = b.outerHTML.toLowerCase();
+                    return html.includes('下载完整尺寸') || 
+                           html.includes('download full size') ||
+                           html.includes('下载全部') ||
+                           html.includes('download all') ||
+                           html.includes('下载') || 
+                           html.includes('download'); // 放宽条件，只要包含下载字眼就行
                 });
                 
                 if (targetBtns.length > 0) {
                     clearInterval(checkInterval);
                     
                     if (${task.download}) {
-                        // 触发点击。为了防止原生 click() 被拦截，同时派发 MouseEvent
-                        targetBtns.forEach(btn => {
-                            btn.click();
-                            btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-                            btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                        // 模拟悬浮，强制渲染隐藏按钮
+                        images.forEach(img => {
+                            img.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                            img.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+                            if(img.parentElement) {
+                                img.parentElement.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                            }
                         });
+                        
+                        // 稍微等一下悬浮动画
+                        setTimeout(() => {
+                            targetBtns.forEach(btn => {
+                                btn.click();
+                                btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                                btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                            });
+                            // 延迟通知，确保点击生效
+                            setTimeout(() => copyToClip('GEMINI_DONE'), 1500);
+                        }, 500);
+                    } else {
+                        copyToClip('GEMINI_DONE');
                     }
-                    
-                    // 延迟 1.5 秒后通知 Node.js 已完成，确保点击事件已触发并开始下载
-                    setTimeout(() => {
-                        const ta = document.createElement('textarea');
-                        ta.value = 'GEMINI_DONE';
-                        document.body.appendChild(ta);
-                        ta.select();
-                        document.execCommand('copy');
-                        document.body.removeChild(ta);
-                    }, 1500);
+                } else {
+                    // 图片生成了，但是没找到下载按钮！
+                    // 给它 10 秒钟的时间渲染按钮 (5次循环)
+                    if (imageFoundAttempts > 5) { 
+                        clearInterval(checkInterval);
+                        copyToClip('GEMINI_NO_BTN');
+                    }
                 }
             }, 2000);
         })());`;
@@ -227,8 +234,11 @@ async function executeWithPhysicalSimulation(tasks: any) {
             if (clipText === 'GEMINI_DONE') {
                 console.log('检测到图片已生成！' + (task.download ? '已触发自动下载。' : '未开启自动下载，跳过。'));
                 isDone = true;
+            } else if (clipText === 'GEMINI_NO_BTN') {
+                console.log('⚠️ 图片已生成，但未能找到“下载”按钮！可能是 Gemini 界面更新了。');
+                isDone = true;
             } else if (clipText === 'GEMINI_TIMEOUT') {
-                console.log('等待超时 (120秒)，未检测到下载按钮。');
+                console.log('等待超时 (120秒)，未检测到图片。');
                 isDone = true;
             }
             waitTime++;
