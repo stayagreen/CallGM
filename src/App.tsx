@@ -492,12 +492,12 @@ export default function App() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
               {galleryImages.map(img => (
                 <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
-                  <a href={`/downloads/${img}`} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative">
+                  <div onClick={() => setViewingImage(`/downloads/${img}`)} className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
                     <img src={`/downloads/${img}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                      <ExternalLink className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                      <ImageIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                     </div>
-                  </a>
+                  </div>
                   <div className="mt-3 flex items-center justify-between px-1">
                     <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
                     <button
