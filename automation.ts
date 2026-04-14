@@ -56,6 +56,45 @@ async function executeWithPhysicalSimulation(tasks: any) {
     const open = (await import('open')).default;
     const isMac = os.platform() === 'darwin';
 
+    // 封装控制台注入逻辑，方便复用
+    const injectJsViaConsole = async (script: string) => {
+        // 打开控制台
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
+            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
+        }
+        await new Promise(r => setTimeout(r, 2000)); // 等待控制台打开
+
+        // 粘贴代码
+        await clipboard.setContent(script);
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.V);
+            await keyboard.releaseKey(Key.LeftSuper, Key.V);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.V);
+            await keyboard.releaseKey(Key.LeftControl, Key.V);
+        }
+        await new Promise(r => setTimeout(r, 500));
+
+        // 执行
+        await keyboard.pressKey(Key.Enter);
+        await keyboard.releaseKey(Key.Enter);
+        await new Promise(r => setTimeout(r, 500));
+
+        // 关闭控制台
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
+            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
+        }
+        await new Promise(r => setTimeout(r, 1000)); // 等待控制台关闭，焦点回到页面
+    };
+
     console.log('\n====================================================');
     console.log('准备开始【物理键鼠模拟】执行！');
     console.log('正在自动唤起默认浏览器并打开 Gemini...');
@@ -73,46 +112,9 @@ async function executeWithPhysicalSimulation(tasks: any) {
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
         
         // 2. 智能定位：通过开发者工具(Console)注入 JS 代码
-        // 这完美避开了地址栏被中文输入法拦截，以及 Chrome 自动搜索的问题
         console.log('正在智能定位输入框 (通过开发者工具)...');
-        
-        // 打开开发者工具 (Console)
-        if (isMac) {
-            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-        } else {
-            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
-            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
-        }
-        await new Promise(r => setTimeout(r, 2000)); // 等待控制台打开
-
-        // 粘贴 JS 代码
-        const focusScript = `(() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })();`;
-        await clipboard.setContent(focusScript);
-        
-        if (isMac) {
-            await keyboard.pressKey(Key.LeftSuper, Key.V);
-            await keyboard.releaseKey(Key.LeftSuper, Key.V);
-        } else {
-            await keyboard.pressKey(Key.LeftControl, Key.V);
-            await keyboard.releaseKey(Key.LeftControl, Key.V);
-        }
-        await new Promise(r => setTimeout(r, 500));
-
-        // 执行代码
-        await keyboard.pressKey(Key.Enter);
-        await keyboard.releaseKey(Key.Enter);
-        await new Promise(r => setTimeout(r, 500));
-
-        // 关闭开发者工具
-        if (isMac) {
-            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-        } else {
-            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
-            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
-        }
-        await new Promise(r => setTimeout(r, 1000)); // 等待控制台关闭，焦点回到页面
+        const focusScript = `void((() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })());`;
+        await injectJsViaConsole(focusScript);
 
         // 3. 复制提示词并粘贴 (支持中文)
         console.log('输入提示词...');
@@ -131,10 +133,75 @@ async function executeWithPhysicalSimulation(tasks: any) {
         await keyboard.pressKey(Key.Enter);
         await keyboard.releaseKey(Key.Enter);
 
-        // 5. 等待生成完成
-        console.log('等待生图完成 (15秒)...');
-        await new Promise(r => setTimeout(r, 15000));
+        // 等待 5 秒，确保新的对话气泡已经出现在 DOM 中，避免获取到上一次的旧按钮
+        await new Promise(r => setTimeout(r, 5000));
+
+        // 5. 动态等待生成完成并根据设置下载
+        console.log(`等待生图完成... (自动下载: ${task.download ? '开启' : '关闭'})`);
         
+        // 清空剪贴板并设置初始状态
+        await clipboard.setContent('WAITING_FOR_GEMINI');
+        
+        const pollScript = `void((() => {
+            let attempts = 0;
+            const checkInterval = setInterval(() => {
+                attempts++;
+                if (attempts > 60) { // 最多等待 120 秒
+                    clearInterval(checkInterval);
+                    const ta = document.createElement('textarea');
+                    ta.value = 'GEMINI_TIMEOUT';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    return;
+                }
+
+                // 只在最后一个模型回复区块中寻找，避免点到历史记录里的按钮
+                const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
+                const lastMessage = messages.length > 0 ? messages[messages.length - 1] : document;
+                
+                const btns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [aria-label], [title]'));
+                const targetBtn = btns.find(b => {
+                    const str = ((b.getAttribute('aria-label')||'') + ' ' + (b.getAttribute('title')||'') + ' ' + (b.textContent||'')).toLowerCase();
+                    return str.includes('下载完整尺寸') || str.includes('download full size');
+                });
+                
+                if (targetBtn) {
+                    clearInterval(checkInterval);
+                    ${task.download ? 'targetBtn.click();' : ''}
+                    
+                    // 延迟 1 秒后通知 Node.js 已完成，确保点击事件已触发
+                    setTimeout(() => {
+                        const ta = document.createElement('textarea');
+                        ta.value = 'GEMINI_DONE';
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                    }, 1000);
+                }
+            }, 2000);
+        })());`;
+        
+        await injectJsViaConsole(pollScript);
+
+        // 轮询剪贴板，等待网页发回的完成信号
+        let isDone = false;
+        let waitTime = 0;
+        while (!isDone && waitTime < 130) {
+            await new Promise(r => setTimeout(r, 1000));
+            const clipText = await clipboard.getContent();
+            if (clipText === 'GEMINI_DONE') {
+                console.log('检测到图片已生成！' + (task.download ? '已触发自动下载。' : '未开启自动下载，跳过。'));
+                isDone = true;
+            } else if (clipText === 'GEMINI_TIMEOUT') {
+                console.log('等待超时 (120秒)，未检测到下载按钮。');
+                isDone = true;
+            }
+            waitTime++;
+        }
+
         // 如果还有下一次循环，刷新页面以重置状态
         if (i < task.count - 1 || tasks.indexOf(task) < tasks.length - 1) {
             console.log('刷新页面准备下一次任务...');
