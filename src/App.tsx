@@ -68,6 +68,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [submittingJobs, setSubmittingJobs] = useState<Job[]>([]);
+  const [uploadingCount, setUploadingCount] = useState(0);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -254,6 +255,11 @@ export default function App() {
 
   const handleGalleryImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []) as File[];
+    if (files.length === 0) return;
+    
+    setUploadingCount(prev => prev + files.length);
+    setShowGalleryUploadMenu(false);
+
     const promises = files.map(f => {
       return new Promise<string>((resolve) => {
         const reader = new FileReader();
@@ -263,14 +269,19 @@ export default function App() {
     });
     const base64Images = await Promise.all(promises);
     
-    await fetch('/api/images/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ images: base64Images })
-    });
-    
-    fetchGallery();
-    setShowGalleryUploadMenu(false);
+    try {
+      await fetch('/api/images/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images: base64Images })
+      });
+      fetchGallery();
+    } catch (error) {
+      console.error('Upload failed:', error);
+      alert('图片上传失败，请检查网络');
+    } finally {
+      setUploadingCount(prev => Math.max(0, prev - files.length));
+    }
   };
 
   const handleGalleryPaste = async (e: React.ClipboardEvent) => {
@@ -289,14 +300,22 @@ export default function App() {
       }
     }
     if (promises.length > 0) {
-      const base64Images = await Promise.all(promises);
-      await fetch('/api/images/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images: base64Images })
-      });
-      fetchGallery();
+      setUploadingCount(prev => prev + promises.length);
       setShowGalleryUploadMenu(false);
+      const base64Images = await Promise.all(promises);
+      try {
+        await fetch('/api/images/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ images: base64Images })
+        });
+        fetchGallery();
+      } catch (error) {
+        console.error('Paste upload failed:', error);
+        alert('图片上传失败，请检查网络');
+      } finally {
+        setUploadingCount(prev => Math.max(0, prev - promises.length));
+      }
     }
   };
 
@@ -307,7 +326,7 @@ export default function App() {
       return;
     }
     
-    setIsExecuting(true);
+    // setIsExecuting(true); // 不再禁用按钮，允许连续提交
     
     // 创建一个乐观UI的任务记录
     const tempId = `submitting_${Date.now()}`;
@@ -342,7 +361,7 @@ export default function App() {
       console.error('Execution failed:', error);
       alert('任务提交失败，请检查网络');
     } finally {
-      setIsExecuting(false);
+      // setIsExecuting(false);
       setSubmittingJobs(prev => prev.filter(j => j.id !== tempId));
     }
   };
@@ -824,7 +843,7 @@ export default function App() {
             tabIndex={0}
             className="outline-none"
           >
-            {galleryImages.length === 0 ? (
+            {galleryImages.length === 0 && uploadingCount === 0 ? (
             <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
               <ImageIcon className="w-16 h-16 mx-auto mb-4 text-gray-300" />
               <p className="text-lg font-medium text-gray-600">暂无下载的图片</p>
@@ -832,6 +851,17 @@ export default function App() {
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              {Array.from({ length: uploadingCount }).map((_, i) => (
+                <div key={`uploading-${i}`} className="group relative bg-white p-2 rounded-xl border border-blue-200 shadow-sm animate-pulse">
+                  <div className="block aspect-square overflow-hidden rounded-lg bg-gray-50 flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <Clock className="w-8 h-8 text-blue-400 animate-spin" />
+                      <span className="text-[10px] text-blue-500 font-bold">正在上传...</span>
+                    </div>
+                  </div>
+                  <div className="mt-3 h-4 bg-gray-100 rounded w-2/3 mx-auto"></div>
+                </div>
+              ))}
               {galleryImages.map(img => (
                 <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
                   <div onClick={() => setViewingImage(`/downloads/${img}`)} className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
