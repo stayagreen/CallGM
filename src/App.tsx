@@ -67,6 +67,7 @@ export default function App() {
   const [selectedGalleryImages, setSelectedGalleryImages] = useState<Set<string>>(new Set());
   const [isMobile, setIsMobile] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [submittingJobs, setSubmittingJobs] = useState<Job[]>([]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -307,6 +308,23 @@ export default function App() {
     }
     
     setIsExecuting(true);
+    
+    // 创建一个乐观UI的任务记录
+    const tempId = `submitting_${Date.now()}`;
+    const optimisticJob: Job = {
+      id: tempId,
+      timestamp: Date.now(),
+      tasks: [...validTasks],
+      status: 'pending',
+      progress: 0
+    };
+
+    // 立即更新UI，让用户感觉任务已经提交
+    setSubmittingJobs(prev => [optimisticJob, ...prev]);
+    setTasks([]);
+    setActiveTaskId('');
+    setActiveTab('records');
+
     try {
       const response = await fetch('/api/execute', {
         method: 'POST',
@@ -315,15 +333,17 @@ export default function App() {
       });
 
       if (response.ok) {
-        setTasks([]);
-        setActiveTaskId('');
-        setActiveTab('records');
+        // 提交成功后，触发一次刷新，并移除乐观UI记录
+        await fetchJobs();
+      } else {
+        alert('任务提交失败，请检查网络');
       }
     } catch (error) {
       console.error('Execution failed:', error);
-      alert('执行失败，请重试');
+      alert('任务提交失败，请检查网络');
     } finally {
       setIsExecuting(false);
+      setSubmittingJobs(prev => prev.filter(j => j.id !== tempId));
     }
   };
 
@@ -576,13 +596,43 @@ export default function App() {
             </div>
           </div>
           
-          {jobs.length === 0 ? (
+          {jobs.length === 0 && submittingJobs.length === 0 ? (
             <div className="text-center py-12 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
               <ListIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
               <p>暂无任务记录</p>
             </div>
           ) : (
-            jobs.map(job => (
+            <>
+              {submittingJobs.map(job => (
+                <div key={job.id} className="bg-white border border-blue-200 rounded-2xl p-5 shadow-sm opacity-70 animate-pulse">
+                  <div className="flex items-start gap-4">
+                    <div className="pt-1">
+                      <div className="w-5 h-5 rounded border-gray-200 bg-gray-100" />
+                    </div>
+                    <div className="flex-grow">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-bold text-gray-800">正在提交新任务...</span>
+                            <span className="px-2 py-0.5 rounded text-xs font-bold bg-blue-100 text-blue-600 flex items-center gap-1">
+                              <Clock size={12} className="animate-spin" /> 等待中
+                            </span>
+                          </div>
+                          <p className="text-xs text-gray-400">{new Date(job.timestamp).toLocaleString()}</p>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        {job.tasks.map((t, idx) => (
+                          <div key={idx} className="text-sm text-gray-500 bg-gray-50 p-2 rounded">
+                            任务 {idx + 1}: {t.prompt}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {jobs.map(job => (
               <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
                 <div className="flex items-start gap-4">
                   <div className="pt-1">
@@ -693,7 +743,8 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            ))
+            ))}
+            </>
           )}
         </div>
       )}
