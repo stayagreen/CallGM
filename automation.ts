@@ -288,8 +288,8 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                             await keyboard.pressKey(Key.LeftControl, Key.V);
                             await keyboard.releaseKey(Key.LeftControl, Key.V);
                         }
-                        console.log(`粘贴完成，等待 5 秒让浏览器上传解析图片...`);
-                        await new Promise(r => setTimeout(r, 5000)); // 等待 5 秒让图片上传解析
+                        console.log(`粘贴完成，等待配置的粘贴后等待时间...`);
+                        await new Promise(r => setTimeout(r, getRandomTime(config.pasteWait))); // 等待 5 秒让图片上传解析
                     } else {
                         console.log(`❌ 复制图片到剪贴板失败`);
                     }
@@ -335,16 +335,20 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         
         // 在注入脚本前，提前给系统的 Downloads 文件夹拍个“快照”，防止错过 GEMINI_FOUND 信号
         let systemDownloadsDir = path.join(os.homedir(), 'Downloads');
+        let config = { systemDownloadsDir: '', pasteWait: '5-5', clickWait: '8-8', downloadTimeout: '120-120', taskInterval: '5-5' };
         const configPath = path.join(__dirname, 'config.json');
         if (fs.existsSync(configPath)) {
             try {
-                const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-                if (config.systemDownloadsDir) {
-                    systemDownloadsDir = config.systemDownloadsDir;
-                }
+                config = { ...config, ...JSON.parse(fs.readFileSync(configPath, 'utf-8')) };
+                if (config.systemDownloadsDir) systemDownloadsDir = config.systemDownloadsDir;
             } catch (e) {}
         }
         
+        const getRandomTime = (rangeStr: string) => {
+            const [min, max] = rangeStr.split('-').map(Number);
+            return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
+        };
+
         const rawPollScript = `void((() => {
             let hud = document.getElementById('callgm-hud');
             if (!hud) {
@@ -363,9 +367,9 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             let imageFoundAttempts = 0;
             const checkInterval = setInterval(() => {
                 attempts++;
-                if (attempts > 60) {
+                if (attempts > 120) { // 增加超时上限
                     clearInterval(checkInterval);
-                    updateStatus('GEMINI_TIMEOUT\\n❌ 等待超时 (120秒)', true);
+                    updateStatus('GEMINI_TIMEOUT\\n❌ 等待超时');
                     return;
                 }
                 const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
@@ -400,7 +404,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                 updateStatus(debugInfo);
                 if (targetBtns.length > 0 && images.length > 0) {
                     clearInterval(checkInterval);
-                    updateStatus('GEMINI_FOUND\\n✅ 找到图片和按钮，等待 5 秒后下载...');
+                    updateStatus('GEMINI_FOUND\\n✅ 找到图片和按钮，等待触发...');
                     if (${task.download}) {
                         setTimeout(() => {
                             updateStatus('GEMINI_TRIGGERING\\n⬇️ 正在触发下载...');
@@ -424,7 +428,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                                 });
                                 updateStatus('GEMINI_CLICKED\\n⏳ 已触发下载！Node.js 正在后台监控文件...');
                             }, 500);
-                        }, 5000);
+                        }, ${getRandomTime(config.clickWait)});
                     } else {
                         setTimeout(() => {
                             updateStatus('GEMINI_DONE\\n🎉 任务完成！(未开启下载)');
@@ -433,7 +437,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                 } else if (images.length > 0) {
                     imageFoundAttempts++;
                     /* 只要有图片，就一直等，直到找到下载按钮，不轻易报错 */
-                    if (imageFoundAttempts > 30) {
+                    if (imageFoundAttempts > 60) { // 增加等待时长
                         clearInterval(checkInterval);
                         updateStatus('GEMINI_NO_BTN\\n⚠️ 图片已生成，但长时间未找到下载按钮');
                     }
@@ -449,14 +453,18 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         if (task.download) {
             console.log('✅ 脚本已注入！Node.js 开始死守下载目录，等待图片出现...');
             const injectTime = Date.now();
-            // 给足 130 秒等待图片生成和下载
-            const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, downloadDir, 130);
+            
+            // 使用配置的超时时间
+            const timeoutSeconds = Math.floor(getRandomTime(config.downloadTimeout) / 1000);
+            
+            // 给足等待图片生成和下载
+            const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, downloadDir, timeoutSeconds);
             if (files && files.length > 0) {
                 task.downloadedFiles.push(...files);
                 console.log(`📦 成功移动 ${files.length} 个文件`);
                 task.status = 'completed';
             } else {
-                console.log(`⚠️ 130秒内未检测到新图片，任务失败。`);
+                console.log(`⚠️ ${timeoutSeconds}秒内未检测到新图片，任务失败。`);
                 task.status = 'failed';
                 throw new Error('下载超时或未检测到图片');
             }
@@ -469,7 +477,9 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
         completedLoops++;
         jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
-        await new Promise(r => setTimeout(r, 2000));
+        
+        // 使用配置的任务间隔时间
+        await new Promise(r => setTimeout(r, getRandomTime(config.taskInterval)));
 
         // 如果还有下一次循环，关闭当前标签页，重新打开新标签页
         if (i < task.count - 1 || tasks.indexOf(task) < tasks.length - 1) {

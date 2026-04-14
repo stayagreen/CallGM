@@ -537,16 +537,35 @@ export default function App() {
               <h2 className="text-2xl font-bold text-gray-800">系统设置</h2>
               <button onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
             </div>
-            <div className="mb-6">
-              <label className="block mb-2 font-semibold text-gray-700">浏览器默认下载目录 (绝对路径)：</label>
-              <p className="text-sm text-gray-500 mb-3">请填写你浏览器默认保存下载文件的文件夹路径。程序需要监控此目录来获取下载的图片。</p>
-              <input
-                type="text"
-                className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                value={systemConfig.systemDownloadsDir}
-                onChange={(e) => setSystemConfig({...systemConfig, systemDownloadsDir: e.target.value})}
-                placeholder="例如: C:\Users\YourName\Downloads 或 /Users/YourName/Downloads"
-              />
+            <div className="mb-6 space-y-4">
+              <div>
+                <label className="block mb-1 font-semibold text-gray-700">浏览器默认下载目录 (绝对路径)：</label>
+                <input
+                  type="text"
+                  className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  value={systemConfig.systemDownloadsDir}
+                  onChange={(e) => setSystemConfig({...systemConfig, systemDownloadsDir: e.target.value})}
+                  placeholder="例如: C:\Users\YourName\Downloads 或 /Users/YourName/Downloads"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">粘贴图后等待(秒):</label>
+                  <input type="text" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.pasteWait || '5-5'} onChange={(e) => setSystemConfig({...systemConfig, pasteWait: e.target.value})} placeholder="5-5" />
+                </div>
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">图片出现后等待(秒):</label>
+                  <input type="text" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.clickWait || '8-8'} onChange={(e) => setSystemConfig({...systemConfig, clickWait: e.target.value})} placeholder="8-8" />
+                </div>
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">下载超时等待(秒):</label>
+                  <input type="text" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadTimeout || '120-120'} onChange={(e) => setSystemConfig({...systemConfig, downloadTimeout: e.target.value})} placeholder="120-120" />
+                </div>
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">任务间隔等待(秒):</label>
+                  <input type="text" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskInterval || '5-5'} onChange={(e) => setSystemConfig({...systemConfig, taskInterval: e.target.value})} placeholder="5-5" />
+                </div>
+              </div>
             </div>
             <div className="flex gap-3">
               <button onClick={() => setShowConfigModal(false)} className="flex-1 py-3 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition">取消</button>
