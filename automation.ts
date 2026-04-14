@@ -99,7 +99,16 @@ export function handleBrowserDebug(msg: string) {
 }
 
 async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string): Promise<string[]> {
-    console.log(`\n⏳ 开始监控系统下载目录: ${systemDownloadsDir}`);
+    const logFilePath = path.join(process.cwd(), 'download_monitor.log');
+    const log = (msg: string) => {
+        const timestamp = new Date().toISOString();
+        console.log(msg);
+        fs.appendFileSync(logFilePath, `[${timestamp}] ${msg}\n`);
+    };
+
+    log(`\n⏳ [监控开始] 系统下载目录: ${systemDownloadsDir}`);
+    log(`   点击下载按钮时间: ${new Date(clickTime).toLocaleTimeString()}`);
+    
     let attempts = 0;
     const maxAttempts = 60; // 最多等 60 秒
     const movedFiles: string[] = [];
@@ -110,22 +119,25 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
 
         try {
             if (!fs.existsSync(systemDownloadsDir)) {
-                console.log(`⚠️ 找不到系统下载目录: ${systemDownloadsDir}`);
+                log(`⚠️ 找不到系统下载目录: ${systemDownloadsDir}`);
                 return movedFiles;
             }
 
             const currentFiles = fs.readdirSync(systemDownloadsDir);
+            const validFiles = currentFiles.filter(file => file !== '.DS_Store' && file !== 'desktop.ini' && !file.startsWith('.'));
+            
+            if (attempts % 5 === 0) {
+                log(`   ...正在监控... (当前下载目录文件总数: ${validFiles.length} 个)`);
+            }
+
             let newestFile = null;
             let newestTime = 0;
             let isDownloading = false;
 
-            for (const file of currentFiles) {
-                if (file === '.DS_Store' || file === 'desktop.ini' || file.startsWith('.')) continue;
-                
+            for (const file of validFiles) {
                 const filePath = path.join(systemDownloadsDir, file);
                 try {
                     const stat = fs.statSync(filePath);
-                    // 使用 ctime (change time) 或 mtime (modify time)
                     const fileTime = Math.max(stat.ctimeMs, stat.mtimeMs, stat.birthtimeMs || 0);
                     
                     if (fileTime > newestTime) {
@@ -140,15 +152,14 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
             }
 
             if (isDownloading) {
-                if (attempts % 5 === 0) console.log(`   ...文件正在下载中，请稍候... (已等待 ${attempts} 秒)`);
+                if (attempts % 5 === 0) log(`   ...文件正在下载中... (已等待 ${attempts} 秒)`);
                 continue;
             }
 
-            // 如果最新文件是在点击下载按钮之后（或者点击前 5 秒内，考虑到系统时间误差）创建/修改的
-            // 扩大时间窗口，允许点击前 10 秒内创建的文件
+            // 如果最新文件是在点击下载按钮之后（或者点击前 10 秒内，考虑到系统时间误差）创建/修改的
             if (newestFile && newestTime > clickTime - 10000) {
-                console.log(`✅ [DEBUG] 成功监测到新下载的文件: ${newestFile}`);
-                console.log(`   详细信息: 创建时间: ${new Date(newestTime).toLocaleTimeString()}, 点击时间: ${new Date(clickTime).toLocaleTimeString()}`);
+                log(`✅ [DEBUG] 成功监测到新下载的文件: ${newestFile}`);
+                log(`   详细信息: 创建时间: ${new Date(newestTime).toLocaleTimeString()}, 点击时间: ${new Date(clickTime).toLocaleTimeString()}`);
                 
                 // 额外等待 5 秒，确保浏览器彻底释放文件占用锁
                 await new Promise(r => setTimeout(r, 5000));
@@ -164,23 +175,23 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
                             fs.copyFileSync(oldPath, newPath);
                             fs.unlinkSync(oldPath);
                         }
-                        console.log(`📦 成功移动文件: ${newestFile} -> 项目 download 目录`);
+                        log(`📦 成功移动文件: ${newestFile} -> 项目 download 目录`);
                         movedFiles.push(newestFile);
                         return movedFiles;
                     }
                 } catch (moveErr) {
-                    console.error(`❌ 移动文件失败: ${newestFile}`, moveErr);
+                    log(`❌ 移动文件失败: ${newestFile}, 错误: ${moveErr}`);
                 }
             } else {
                 if (attempts % 5 === 0) {
-                    console.log(`   ...等待新文件出现... (最新文件是 ${newestFile || '无'}, 时间: ${newestTime ? new Date(newestTime).toLocaleTimeString() : 'N/A'}, 点击时间: ${new Date(clickTime).toLocaleTimeString()})`);
+                    log(`   ...等待新文件出现... (最新文件是 ${newestFile || '无'}, 时间: ${newestTime ? new Date(newestTime).toLocaleTimeString() : 'N/A'})`);
                 }
             }
         } catch (err) {
-            console.error('监控下载目录时出错:', err);
+            log(`❌ 监控下载目录时出错: ${err}`);
         }
     }
-    console.log('⚠️ 等待下载超时或未检测到新文件。请检查：1. 浏览器是否弹出了"另存为"对话框？ 2. 浏览器的默认下载路径是否被修改？');
+    log('⚠️ 等待下载超时或未检测到新文件。');
     return movedFiles;
 }
 
