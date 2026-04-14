@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+task/
+download/
+uploads/
+data/
+config.json

@@ -36,13 +36,13 @@ interface HistoryItem {
 }
 
 export default function App() {
-  const [tasks, setTasks] = useState<Task[]>([{ id: '1', prompt: '', images: [], count: 1, download: false }]);
+  const [tasks, setTasks] = useState<Task[]>([{ id: '1', prompt: '', images: [], count: 1, download: true }]);
   const [activeTaskId, setActiveTaskId] = useState<string>('1');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery'>('tasks');
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const [systemConfig, setSystemConfig] = useState({ systemDownloadsDir: '' });
+  const [systemConfig, setSystemConfig] = useState({ systemDownloadsDir: '', pasteMin: 5, pasteMax: 5, clickMin: 8, clickMax: 8, downloadMin: 120, downloadMax: 120, taskMin: 5, taskMax: 5 });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
@@ -50,7 +50,17 @@ export default function App() {
 
   useEffect(() => {
     fetch('/api/config').then(res => res.json()).then(data => setSystemConfig(data));
+    fetch('/api/templates').then(res => res.json()).then(data => setTemplates(data));
   }, []);
+
+  const saveTemplates = async (newTemplates: Template[]) => {
+    setTemplates(newTemplates);
+    await fetch('/api/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newTemplates)
+    });
+  };
 
   const fetchJobs = async () => {
     try {
@@ -135,7 +145,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addTask = () => {
-    const newTask = { id: Date.now().toString(), prompt: '', images: [], count: 1, download: false };
+    const newTask = { id: Date.now().toString(), prompt: '', images: [], count: 1, download: true };
     setTasks([...tasks, newTask]);
     setActiveTaskId(newTask.id);
   };
@@ -175,14 +185,19 @@ export default function App() {
   };
 
   const handleExecute = async () => {
+    const validTasks = tasks.filter(t => t.prompt.trim() !== '');
+    if (validTasks.length === 0) {
+      alert('没有有效的任务！');
+      return;
+    }
     const response = await fetch('/api/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tasks }),
+      body: JSON.stringify({ tasks: validTasks }),
     });
 
     if (response.ok) {
-      setTasks([{ id: '1', prompt: '', images: [], count: 1, download: false }]);
+      setTasks([{ id: '1', prompt: '', images: [], count: 1, download: true }]);
       setActiveTaskId('1');
       setActiveTab('records');
     }
@@ -509,7 +524,7 @@ export default function App() {
             {templates.map(t => (
               <div key={t.id} className="flex justify-between items-center mb-3 p-3 bg-gray-50 rounded-lg">
                 <span className="font-medium">{t.name}</span>
-                <button onClick={() => setTemplates(templates.filter(x => x.id !== t.id))} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={18}/></button>
+                <button onClick={() => saveTemplates(templates.filter(x => x.id !== t.id))} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={18}/></button>
               </div>
             ))}
             <input className="w-full p-3 border border-gray-200 rounded-xl mb-3" placeholder="模板名称" id="new-t-name" />
@@ -519,7 +534,7 @@ export default function App() {
                 const name = (document.getElementById('new-t-name') as HTMLInputElement).value;
                 const prompt = (document.getElementById('new-t-prompt') as HTMLTextAreaElement).value;
                 if (name && prompt) {
-                  setTemplates([...templates, { id: Date.now().toString(), name, prompt }]);
+                  saveTemplates([...templates, { id: Date.now().toString(), name, prompt }]);
                   (document.getElementById('new-t-name') as HTMLInputElement).value = '';
                   (document.getElementById('new-t-prompt') as HTMLTextAreaElement).value = '';
                 }

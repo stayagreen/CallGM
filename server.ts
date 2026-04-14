@@ -134,6 +134,28 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  const dataDir = path.join(__dirname, "data");
+  const templatesPath = path.join(dataDir, "templates.json");
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+  // API route for templates
+  app.get('/api/templates', (req, res) => {
+    if (fs.existsSync(templatesPath)) {
+      try {
+        res.json(JSON.parse(fs.readFileSync(templatesPath, 'utf-8')));
+      } catch (e) {
+        res.json([]);
+      }
+    } else {
+      res.json([]);
+    }
+  });
+
+  app.post('/api/templates', (req, res) => {
+    fs.writeFileSync(templatesPath, JSON.stringify(req.body, null, 2));
+    res.json({ success: true });
+  });
+
   // API route for config
   const configPath = path.join(__dirname, 'config.json');
   app.get('/api/config', (req, res) => {
