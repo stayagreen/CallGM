@@ -355,12 +355,20 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                 hud.innerText = text;
                 hud.style.backgroundColor = 'rgba(0,0,0,0.85)';
                 
-                /* 使用 fetch 发送状态，不依赖剪贴板，兼容远程控制 */
-                fetch('http://localhost:3000/api/debug', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text })
-                }).catch(e => {});
+                /* 使用下载空文件发送状态，完美绕过跨域和焦点限制 */
+                if (text.startsWith('GEMINI_')) {
+                    try {
+                        const blob = new Blob([text], { type: 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'GEMINI_STATUS_' + Date.now() + '.txt';
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    } catch(e) {}
+                }
             }
             let attempts = 0;
             let imageFoundAttempts = 0;
@@ -453,7 +461,27 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             await new Promise(r => setTimeout(r, 1000));
             waitTime++;
             
-            // 直接使用 browserDebugState (由 fetch API 更新)，不再轮询剪贴板
+            // 扫描系统下载目录，寻找状态文件 (方案一：通过下载文件通信)
+            try {
+                if (fs.existsSync(systemDownloadsDir)) {
+                    const files = fs.readdirSync(systemDownloadsDir);
+                    const statusFiles = files.filter(f => f.startsWith('GEMINI_STATUS_') && f.endsWith('.txt'));
+                    
+                    if (statusFiles.length > 0) {
+                        statusFiles.sort(); // 按时间排序
+                        for (const file of statusFiles) {
+                            const filePath = path.join(systemDownloadsDir, file);
+                            try {
+                                const content = fs.readFileSync(filePath, 'utf-8');
+                                browserDebugState = content;
+                                fs.unlinkSync(filePath); // 读取后立即删除
+                            } catch(e) {}
+                        }
+                    }
+                }
+            } catch (e) {}
+
+            // 直接使用 browserDebugState (由文件通信更新)
             if (browserDebugState !== lastHandledState) {
                 const currentState = browserDebugState;
                 lastHandledState = currentState;
