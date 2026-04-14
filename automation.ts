@@ -92,8 +92,9 @@ export function startAutomationWatcher() {
   }, 3000); // Check every 3 seconds
 }
 
-async function waitForAndMoveDownloads(initialSnapshot: Set<string>, systemDownloadsDir: string, projectDownloadDir: string): Promise<string[]> {
+async function waitForAndMoveDownloads(startTime: number, systemDownloadsDir: string, projectDownloadDir: string): Promise<string[]> {
     console.log(`\n⏳ 开始监控系统下载目录: ${systemDownloadsDir}`);
+    console.log(`⏳ 寻找修改时间在 ${new Date(startTime).toLocaleTimeString()} 之后的文件`);
     let attempts = 0;
     const maxAttempts = 60; // 最多等 60 秒
     const movedFiles: string[] = [];
@@ -109,11 +110,18 @@ async function waitForAndMoveDownloads(initialSnapshot: Set<string>, systemDownl
             }
 
             const currentFiles = fs.readdirSync(systemDownloadsDir);
-            // 找出在触发下载后新出现的文件
-            const newFiles = currentFiles.filter(f => !initialSnapshot.has(f));
+            // 找出在触发下载后新出现或修改的文件
+            const newFiles = currentFiles.filter(f => {
+                try {
+                    const stat = fs.statSync(path.join(systemDownloadsDir, f));
+                    return stat.mtimeMs > startTime || stat.birthtimeMs > startTime;
+                } catch (e) {
+                    return false;
+                }
+            });
 
             if (newFiles.length === 0) {
-                if (attempts % 5 === 0) console.log('   ...等待新文件出现...');
+                if (attempts % 5 === 0) console.log(`   ...等待新文件出现... (已等待 ${attempts} 秒)`);
                 continue;
             }
 
@@ -133,7 +141,7 @@ async function waitForAndMoveDownloads(initialSnapshot: Set<string>, systemDownl
             }
 
             if (isDownloading) {
-                if (attempts % 5 === 0) console.log('   ...文件正在下载中，请稍候...');
+                if (attempts % 5 === 0) console.log(`   ...文件正在下载中，请稍候... (已等待 ${attempts} 秒)`);
                 continue; // 继续等待下载完成
             }
 
@@ -304,6 +312,9 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         // 清空剪贴板并设置初始状态
         await clipboard.setContent('WAITING_FOR_GEMINI');
         
+        // 记录任务开始时间，用于后续通过文件修改时间查找下载的文件
+        const taskStartTime = Date.now();
+        
         // 在注入脚本前，提前给系统的 Downloads 文件夹拍个“快照”，防止错过 GEMINI_FOUND 信号
         let systemDownloadsDir = path.join(os.homedir(), 'Downloads');
         const configPath = path.join(__dirname, 'config.json');
@@ -314,11 +325,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                     systemDownloadsDir = config.systemDownloadsDir;
                 }
             } catch (e) {}
-        }
-        
-        let initialDownloadsSnapshot = new Set<string>();
-        if (fs.existsSync(systemDownloadsDir)) {
-            initialDownloadsSnapshot = new Set(fs.readdirSync(systemDownloadsDir));
         }
         
         const rawPollScript = `void((() => {
@@ -448,7 +454,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                             jobProgress.set(filename, { completed: completedLoops + 0.9, total: totalLoops, status: 'running' });
                             // 浏览器已经点击了下载按钮，Node.js 接管后续的监控工作
                             if (task.download) {
-                                const files = await waitForAndMoveDownloads(initialDownloadsSnapshot, systemDownloadsDir, downloadDir);
+                                const files = await waitForAndMoveDownloads(taskStartTime, systemDownloadsDir, downloadDir);
                                 if (files && files.length > 0) {
                                     task.downloadedFiles.push(...files);
                                 }
