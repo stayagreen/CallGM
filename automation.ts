@@ -74,19 +74,23 @@ async function executeWithPhysicalSimulation(tasks: any) {
     const open = (await import('open')).default;
     const isMac = os.platform() === 'darwin';
 
-    // 封装控制台注入逻辑，方便复用
-    const injectJsViaConsole = async (script: string) => {
-        // 打开控制台
+    // 封装地址栏注入逻辑 (完美绕过 Chrome 控制台的 "allow pasting" 保护)
+    const injectJsViaAddressBar = async (script: string) => {
+        // 1. 聚焦地址栏 (Ctrl+L / Cmd+L)
         if (isMac) {
-            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+            await keyboard.pressKey(Key.LeftSuper, Key.L);
+            await keyboard.releaseKey(Key.LeftSuper, Key.L);
         } else {
-            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
-            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
+            await keyboard.pressKey(Key.LeftControl, Key.L);
+            await keyboard.releaseKey(Key.LeftControl, Key.L);
         }
-        await new Promise(r => setTimeout(r, 3000)); // 等待控制台打开 (增加到3秒，防止电脑卡顿)
+        await new Promise(r => setTimeout(r, 500));
 
-        // 粘贴代码
+        // 2. 手动输入 javascript: (防止直接粘贴被 Chrome 吞掉前缀导致变成搜索)
+        await keyboard.type('javascript:');
+        await new Promise(r => setTimeout(r, 100));
+
+        // 3. 粘贴单行压缩后的 JS 代码
         await clipboard.setContent(script);
         if (isMac) {
             await keyboard.pressKey(Key.LeftSuper, Key.V);
@@ -97,20 +101,10 @@ async function executeWithPhysicalSimulation(tasks: any) {
         }
         await new Promise(r => setTimeout(r, 500));
 
-        // 执行
+        // 4. 回车执行
         await keyboard.pressKey(Key.Enter);
         await keyboard.releaseKey(Key.Enter);
-        await new Promise(r => setTimeout(r, 500));
-
-        // 关闭控制台
-        if (isMac) {
-            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-        } else {
-            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
-            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
-        }
-        await new Promise(r => setTimeout(r, 1000)); // 等待控制台关闭，焦点回到页面
+        await new Promise(r => setTimeout(r, 1000));
     };
 
     console.log('\n====================================================');
@@ -129,10 +123,10 @@ async function executeWithPhysicalSimulation(tasks: any) {
       for (let i = 0; i < task.count; i++) {
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
         
-        // 2. 智能定位：通过开发者工具(Console)注入 JS 代码
-        console.log('正在智能定位输入框 (通过开发者工具)...');
+        // 2. 智能定位：通过地址栏注入 JS 代码
+        console.log('正在智能定位输入框 (通过地址栏注入)...');
         const focusScript = `void((() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })());`;
-        await injectJsViaConsole(focusScript);
+        await injectJsViaAddressBar(focusScript);
 
         // 3. 复制提示词并粘贴 (支持中文)
         console.log('输入提示词...');
@@ -160,8 +154,7 @@ async function executeWithPhysicalSimulation(tasks: any) {
         // 清空剪贴板并设置初始状态
         await clipboard.setContent('WAITING_FOR_GEMINI');
         
-        const pollScript = `void((() => {
-            // 1. 创建悬浮窗 (HUD) 显示在页面顶部，用于终极视觉调试
+        const rawPollScript = `void((() => {
             let hud = document.getElementById('callgm-hud');
             if (!hud) {
                 hud = document.createElement('div');
@@ -169,13 +162,11 @@ async function executeWithPhysicalSimulation(tasks: any) {
                 hud.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#00ff00;padding:20px;z-index:9999999;font-size:18px;border-radius:10px;pointer-events:none;font-family:monospace;white-space:pre-wrap;text-align:center;box-shadow:0 4px 6px rgba(0,0,0,0.3);border:2px solid #00ff00;';
                 document.body.appendChild(hud);
             }
-
             function updateStatus(text, copyToClipboard = false) {
                 hud.innerText = text;
                 if (copyToClipboard) {
                     try {
                         const ta = document.createElement('textarea');
-                        // 只复制第一行作为状态码给 Node.js
                         ta.value = text.split('\\n')[0]; 
                         document.body.appendChild(ta);
                         ta.select();
@@ -184,47 +175,29 @@ async function executeWithPhysicalSimulation(tasks: any) {
                     } catch(e) {}
                 }
             }
-
             let attempts = 0;
             let imageFoundAttempts = 0;
-
             const checkInterval = setInterval(() => {
                 attempts++;
-                if (attempts > 60) { // 最多等待 120 秒
+                if (attempts > 60) {
                     clearInterval(checkInterval);
                     updateStatus('GEMINI_TIMEOUT\\n❌ 等待超时 (120秒)', true);
                     return;
                 }
-
-                // 尝试定位最后一个模型回复区块
                 const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
                 const lastMessage = messages.length > 0 ? messages[messages.length - 1] : document;
-                
-                // 1. 检查图片
                 const images = lastMessage.querySelectorAll('img');
-                
-                // 2. 检查按钮
                 const allBtns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id]'));
                 const targetBtns = allBtns.filter(b => {
                     const html = b.outerHTML.toLowerCase();
-                    return html.includes('下载完整尺寸') || 
-                           html.includes('download full size') ||
-                           html.includes('下载全部') ||
-                           html.includes('download all') ||
-                           html.includes('下载') || 
-                           html.includes('download');
+                    return html.includes('下载完整尺寸') || html.includes('download full size') || html.includes('下载全部') || html.includes('download all') || html.includes('下载') || html.includes('download');
                 });
-
-                // 实时更新 HUD 和剪贴板
-                const debugInfo = \`DEBUG: 第\${attempts}次扫描\\n找到图片: \${images.length} 张\\n找到所有按钮: \${allBtns.length} 个\\n匹配到下载按钮: \${targetBtns.length} 个\`;
+                const debugInfo = 'DEBUG: 第' + attempts + '次扫描\\n找到图片: ' + images.length + ' 张\\n找到所有按钮: ' + allBtns.length + ' 个\\n匹配到下载按钮: ' + targetBtns.length + ' 个';
                 updateStatus(debugInfo, true);
-                
                 if (targetBtns.length > 0 && images.length > 0) {
                     clearInterval(checkInterval);
                     updateStatus('GEMINI_DONE\\n✅ 找到按钮，准备下载...', true);
-                    
                     if (${task.download}) {
-                        // 模拟悬浮，强制渲染隐藏按钮
                         images.forEach(img => {
                             img.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
                             img.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
@@ -232,8 +205,6 @@ async function executeWithPhysicalSimulation(tasks: any) {
                                 img.parentElement.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
                             }
                         });
-                        
-                        // 稍微等一下悬浮动画
                         setTimeout(() => {
                             targetBtns.forEach(btn => {
                                 btn.click();
@@ -243,9 +214,8 @@ async function executeWithPhysicalSimulation(tasks: any) {
                         }, 500);
                     }
                 } else if (images.length > 0) {
-                    // 图片生成了，但是没找到下载按钮！
                     imageFoundAttempts++;
-                    if (imageFoundAttempts > 8) { // 宽限 16 秒寻找按钮
+                    if (imageFoundAttempts > 8) {
                         clearInterval(checkInterval);
                         updateStatus('GEMINI_NO_BTN\\n⚠️ 图片已生成，但未找到下载按钮', true);
                     }
@@ -253,7 +223,9 @@ async function executeWithPhysicalSimulation(tasks: any) {
             }, 2000);
         })());`;
         
-        await injectJsViaConsole(pollScript);
+        // 将多行脚本压缩成单行，以便在地址栏中执行
+        const pollScript = rawPollScript.replace(/\n/g, ' ').replace(/\s{2,}/g, ' ');
+        await injectJsViaAddressBar(pollScript);
 
         // 轮询剪贴板，等待网页发回的完成信号
         let isDone = false;
