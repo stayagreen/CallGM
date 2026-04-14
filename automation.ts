@@ -190,16 +190,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
 
     // 封装地址栏注入逻辑 (终极无敌版：完美绕过 Chrome 粘贴保护 + 完美绕过中文输入法)
     const injectJsViaAddressBar = async (script: string) => {
-        // 0. 夺回焦点：如果有其他弹窗抢走焦点，尝试点击屏幕中上方安全区域恢复浏览器焦点
-        try {
-            const screenWidth = await screen.width();
-            await mouse.setPosition(new Point(screenWidth / 2, 200));
-            await mouse.leftClick();
-            await new Promise(r => setTimeout(r, 500));
-        } catch (e) {
-            console.log('恢复焦点失败，继续尝试...');
-        }
-
         // 1. 聚焦地址栏 (Ctrl+L / Cmd+L)
         if (isMac) {
             await keyboard.pressKey(Key.LeftSuper, Key.L);
@@ -356,13 +346,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             function updateStatus(text) {
                 hud.innerText = text;
                 
-                // 尝试 fetch (如果跨域可能会失败)
-                fetch('http://localhost:3000/api/debug', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ message: text })
-                }).catch(e => {});
-
                 // 尝试剪贴板 (如果失去焦点可能会失败)
                 try {
                     const ta = document.createElement('textarea');
