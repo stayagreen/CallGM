@@ -41,10 +41,16 @@ export default function App() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery'>('tasks');
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [systemConfig, setSystemConfig] = useState({ systemDownloadsDir: '' });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch('/api/config').then(res => res.json()).then(data => setSystemConfig(data));
+  }, []);
 
   const fetchJobs = async () => {
     try {
@@ -170,26 +176,45 @@ export default function App() {
     }
   };
 
+  const saveConfig = async () => {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(systemConfig)
+    });
+    setShowConfigModal(false);
+  };
+
   return (
     <div className="p-6 max-w-4xl mx-auto bg-gray-50 min-h-screen">
-      <div className="flex gap-4 border-b border-gray-200 mb-6">
+      <div className="flex justify-between items-end border-b border-gray-200 mb-6">
+        <div className="flex gap-4">
+          <button 
+            onClick={() => setActiveTab('tasks')} 
+            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'tasks' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+          >
+            创建任务
+          </button>
+          <button 
+            onClick={() => setActiveTab('records')} 
+            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+          >
+            任务记录
+          </button>
+          <button 
+            onClick={() => setActiveTab('gallery')} 
+            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+          >
+            本地图库
+          </button>
+        </div>
         <button 
-          onClick={() => setActiveTab('tasks')} 
-          className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'tasks' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+          onClick={() => setShowConfigModal(true)} 
+          className="mb-2 p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-2" 
+          title="系统设置"
         >
-          创建任务
-        </button>
-        <button 
-          onClick={() => setActiveTab('records')} 
-          className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
-        >
-          任务记录
-        </button>
-        <button 
-          onClick={() => setActiveTab('gallery')} 
-          className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
-        >
-          本地图库
+          <Settings size={18} />
+          <span className="text-sm font-medium">系统设置</span>
         </button>
       </div>
       
@@ -454,7 +479,7 @@ export default function App() {
       )}
 
       {showTemplateModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
             <h2 className="text-2xl font-bold mb-6">模板管理</h2>
             {templates.map(t => (
@@ -478,6 +503,31 @@ export default function App() {
               className="bg-blue-600 text-white px-6 py-3 rounded-xl w-full font-bold hover:bg-blue-700"
             >添加模板</button>
             <button onClick={() => setShowTemplateModal(false)} className="mt-3 w-full text-gray-500 hover:text-gray-700">关闭</button>
+          </div>
+        </div>
+      )}
+      {showConfigModal && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-lg">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-800">系统设置</h2>
+              <button onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
+            </div>
+            <div className="mb-6">
+              <label className="block mb-2 font-semibold text-gray-700">浏览器默认下载目录 (绝对路径)：</label>
+              <p className="text-sm text-gray-500 mb-3">请填写你浏览器默认保存下载文件的文件夹路径。程序需要监控此目录来获取下载的图片。</p>
+              <input
+                type="text"
+                className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                value={systemConfig.systemDownloadsDir}
+                onChange={(e) => setSystemConfig({...systemConfig, systemDownloadsDir: e.target.value})}
+                placeholder="例如: C:\Users\YourName\Downloads 或 /Users/YourName/Downloads"
+              />
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setShowConfigModal(false)} className="flex-1 py-3 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition">取消</button>
+              <button onClick={saveConfig} className="flex-1 py-3 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition">保存设置</button>
+            </div>
           </div>
         </div>
       )}

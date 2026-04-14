@@ -261,7 +261,17 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         await clipboard.setContent('WAITING_FOR_GEMINI');
         
         // 在注入脚本前，提前给系统的 Downloads 文件夹拍个“快照”，防止错过 GEMINI_FOUND 信号
-        const systemDownloadsDir = path.join(os.homedir(), 'Downloads');
+        let systemDownloadsDir = path.join(os.homedir(), 'Downloads');
+        const configPath = path.join(__dirname, 'config.json');
+        if (fs.existsSync(configPath)) {
+            try {
+                const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+                if (config.systemDownloadsDir) {
+                    systemDownloadsDir = config.systemDownloadsDir;
+                }
+            } catch (e) {}
+        }
+        
         let initialDownloadsSnapshot = new Set<string>();
         if (fs.existsSync(systemDownloadsDir)) {
             initialDownloadsSnapshot = new Set(fs.readdirSync(systemDownloadsDir));
@@ -280,7 +290,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                 if (copyToClipboard) {
                     try {
                         const ta = document.createElement('textarea');
-                        ta.value = text.split('\\n')[0]; 
+                        ta.value = text; 
                         document.body.appendChild(ta);
                         ta.select();
                         document.execCommand('copy');
@@ -329,7 +339,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                 updateStatus(debugInfo, true);
                 if (targetBtns.length > 0 && images.length > 0) {
                     clearInterval(checkInterval);
-                    updateStatus('GEMINI_FOUND\\n✅ 找到图片和按钮，等待 3 秒后下载...', true);
+                    updateStatus('GEMINI_FOUND\\n✅ 找到图片和按钮，等待 5 秒后下载...', true);
                     if (${task.download}) {
                         setTimeout(() => {
                             updateStatus('GEMINI_TRIGGERING\\n⬇️ 正在触发下载...', true);
@@ -350,7 +360,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                                 });
                                 updateStatus('GEMINI_CLICKED\\n⏳ 已点击下载，等待系统保存文件...', true);
                             }, 500);
-                        }, 3000);
+                        }, 5000);
                     } else {
                         setTimeout(() => {
                             updateStatus('GEMINI_DONE\\n🎉 任务完成！(未开启下载)', true);

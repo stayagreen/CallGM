@@ -3,6 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
+import os from "os";
 import { startAutomationWatcher, jobProgress } from "./automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -100,6 +101,25 @@ async function startServer() {
       if (fs.existsSync(historyPath)) fs.unlinkSync(historyPath);
       if (fs.existsSync(taskPath)) fs.unlinkSync(taskPath);
     }
+    res.json({ success: true });
+  });
+
+  // API route for config
+  const configPath = path.join(__dirname, 'config.json');
+  app.get('/api/config', (req, res) => {
+    if (fs.existsSync(configPath)) {
+      try {
+        res.json(JSON.parse(fs.readFileSync(configPath, 'utf-8')));
+      } catch (e) {
+        res.json({ systemDownloadsDir: path.join(os.homedir(), 'Downloads') });
+      }
+    } else {
+      res.json({ systemDownloadsDir: path.join(os.homedir(), 'Downloads') });
+    }
+  });
+
+  app.post('/api/config', (req, res) => {
+    fs.writeFileSync(configPath, JSON.stringify(req.body, null, 2));
     res.json({ success: true });
   });
 
