@@ -62,6 +62,7 @@ export default function App() {
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [showUploadMenu, setShowUploadMenu] = useState(false);
+  const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
   const [selectedGalleryImages, setSelectedGalleryImages] = useState<Set<string>>(new Set());
   const [isMobile, setIsMobile] = useState(false);
@@ -70,6 +71,9 @@ export default function App() {
     const handleClickOutside = (event: MouseEvent) => {
       if (showUploadMenu && !(event.target as HTMLElement).closest('.upload-container')) {
         setShowUploadMenu(false);
+      }
+      if (showGalleryUploadMenu && !(event.target as HTMLElement).closest('.gallery-upload-container')) {
+        setShowGalleryUploadMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -181,6 +185,8 @@ export default function App() {
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryFileInputRef = useRef<HTMLInputElement>(null);
+  const galleryCameraInputRef = useRef<HTMLInputElement>(null);
 
   const addTask = () => {
     const newTask = { id: Date.now().toString(), prompt: '', images: [], count: 1, download: true };
@@ -230,6 +236,54 @@ export default function App() {
     updateTask({ images: [...activeTask.images, ...selectedUrls].slice(0, 10) });
     setShowGalleryPicker(false);
     setSelectedGalleryImages(new Set());
+  };
+
+  const handleGalleryImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []) as File[];
+    const promises = files.map(f => {
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => resolve(ev.target?.result as string);
+        reader.readAsDataURL(f);
+      });
+    });
+    const base64Images = await Promise.all(promises);
+    
+    await fetch('/api/images/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ images: base64Images })
+    });
+    
+    fetchGallery();
+    setShowGalleryUploadMenu(false);
+  };
+
+  const handleGalleryPaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    const promises: Promise<string>[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (file) {
+          promises.push(new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (ev) => resolve(ev.target?.result as string);
+            reader.readAsDataURL(file);
+          }));
+        }
+      }
+    }
+    if (promises.length > 0) {
+      const base64Images = await Promise.all(promises);
+      await fetch('/api/images/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images: base64Images })
+      });
+      fetchGallery();
+      setShowGalleryUploadMenu(false);
+    }
   };
 
   const handleExecute = async () => {
@@ -620,10 +674,78 @@ export default function App() {
         <div className="space-y-6">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-2xl font-bold text-gray-800">本地图库</h2>
-            <button onClick={fetchGallery} className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm">刷新图库</button>
+            <div className="flex gap-2">
+              <div className="relative gallery-upload-container">
+                <input type="file" multiple onChange={handleGalleryImageUpload} className="hidden" ref={galleryFileInputRef} accept="image/*" />
+                <input type="file" capture="environment" accept="image/*" className="hidden" ref={galleryCameraInputRef} onChange={handleGalleryImageUpload} />
+                
+                <button 
+                  onClick={() => setShowGalleryUploadMenu(!showGalleryUploadMenu)}
+                  className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm flex items-center gap-2"
+                >
+                  <Upload size={16} /> 上传图片
+                </button>
+
+                {showGalleryUploadMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-2xl border border-gray-100 z-50 overflow-hidden py-1">
+                    {!isMobile ? (
+                      <>
+                        <div className="px-4 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider bg-gray-50 border-b border-gray-100 mb-1">电脑端选项</div>
+                        <button 
+                          onClick={() => {
+                            alert('请在图库页面直接按 Ctrl+V 进行粘贴');
+                            setShowGalleryUploadMenu(false);
+                          }}
+                          className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3"
+                        >
+                          <History size={18} className="text-gray-400" /> 粘贴图片 (Ctrl+V)
+                        </button>
+                        <button 
+                          onClick={() => {
+                            galleryFileInputRef.current?.click();
+                            setShowGalleryUploadMenu(false);
+                          }}
+                          className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3"
+                        >
+                          <Upload size={18} className="text-gray-400" /> 电脑上传 (可多选)
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="px-4 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider bg-gray-50 border-b border-gray-100 mb-1">手机端选项</div>
+                        <button 
+                          onClick={() => {
+                            galleryCameraInputRef.current?.click();
+                            setShowGalleryUploadMenu(false);
+                          }}
+                          className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3"
+                        >
+                          <Camera size={18} className="text-gray-400" /> 拍照上传
+                        </button>
+                        <button 
+                          onClick={() => {
+                            galleryFileInputRef.current?.click();
+                            setShowGalleryUploadMenu(false);
+                          }}
+                          className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3"
+                        >
+                          <ImageIcon size={18} className="text-gray-400" /> 图册上传 (可多选)
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button onClick={fetchGallery} className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm">刷新图库</button>
+            </div>
           </div>
           
-          {galleryImages.length === 0 ? (
+          <div 
+            onPaste={handleGalleryPaste}
+            tabIndex={0}
+            className="outline-none"
+          >
+            {galleryImages.length === 0 ? (
             <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
               <ImageIcon className="w-16 h-16 mx-auto mb-4 text-gray-300" />
               <p className="text-lg font-medium text-gray-600">暂无下载的图片</p>
@@ -653,6 +775,7 @@ export default function App() {
               ))}
             </div>
           )}
+          </div>
         </div>
       )}
 

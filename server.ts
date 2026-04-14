@@ -220,6 +220,33 @@ async function startServer() {
     }
   });
 
+  // Upload images to gallery
+  app.post('/api/images/upload', express.json({ limit: '50mb' }), (req, res) => {
+    const { images } = req.body;
+    if (!images || !Array.isArray(images)) return res.status(400).json({ error: 'Invalid images' });
+    
+    if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
+    
+    const savedFiles: string[] = [];
+    images.forEach((base64: string) => {
+      try {
+        const matches = base64.match(/^data:image\/([a-zA-Z+]+);base64,(.+)$/);
+        if (!matches) return;
+        
+        const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+        const data = matches[2];
+        const buffer = Buffer.from(data, 'base64');
+        const filename = `upload_${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
+        fs.writeFileSync(path.join(downloadDir, filename), buffer);
+        savedFiles.push(filename);
+      } catch (e) {
+        console.error('Failed to save uploaded image:', e);
+      }
+    });
+    
+    res.json({ success: true, files: savedFiles });
+  });
+
   // Start the automation watcher
   startAutomationWatcher();
 
