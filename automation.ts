@@ -333,10 +333,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         // 记录任务开始时间，用于后续通过文件修改时间查找下载的文件
         const taskStartTime = Date.now();
         
-        const getRandomTime = (min: number, max: number) => {
-            return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
-        };
-
         // 在注入脚本前，提前给系统的 Downloads 文件夹拍个“快照”，防止错过 GEMINI_FOUND 信号
         let systemDownloadsDir = path.join(os.homedir(), 'Downloads');
         let config = { systemDownloadsDir: '', pasteMin: 5, pasteMax: 5, clickMin: 8, clickMax: 8, downloadMin: 120, downloadMax: 120, taskMin: 5, taskMax: 5 };
@@ -347,6 +343,10 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                 if (config.systemDownloadsDir) systemDownloadsDir = config.systemDownloadsDir;
             } catch (e) {}
         }
+        
+        const getRandomTime = (min: number, max: number) => {
+            return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
+        };
 
         const rawPollScript = `void((() => {
             let hud = document.getElementById('callgm-hud');
