@@ -432,7 +432,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                     }
                 } else if (images.length > 0) {
                     imageFoundAttempts++;
-                    // 只要有图片，就一直等，直到找到下载按钮，不轻易报错
+                    /* 只要有图片，就一直等，直到找到下载按钮，不轻易报错 */
                     if (imageFoundAttempts > 30) {
                         clearInterval(checkInterval);
                         updateStatus('GEMINI_NO_BTN\\n⚠️ 图片已生成，但长时间未找到下载按钮');
