@@ -74,31 +74,37 @@ async function executeWithPhysicalSimulation(tasks: any) {
     const open = (await import('open')).default;
     const isMac = os.platform() === 'darwin';
 
-    // 封装控制台注入逻辑 (带 allow pasting 绕过保护)
-    const injectJsViaConsole = async (script: string) => {
-        // 1. 打开控制台
+    // 封装地址栏注入逻辑 (终极无敌版：完美绕过 Chrome 粘贴保护 + 完美绕过中文输入法)
+    const injectJsViaAddressBar = async (script: string) => {
+        // 1. 聚焦地址栏 (Ctrl+L / Cmd+L)
         if (isMac) {
-            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+            await keyboard.pressKey(Key.LeftSuper, Key.L);
+            await keyboard.releaseKey(Key.LeftSuper, Key.L);
         } else {
-            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
-            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
+            await keyboard.pressKey(Key.LeftControl, Key.L);
+            await keyboard.releaseKey(Key.LeftControl, Key.L);
         }
-        await new Promise(r => setTimeout(r, 3000)); // 等待控制台打开
-
-        // 2. 自动输入 allow pasting 解除 Chrome 的粘贴保护
-        // 截图显示 keyboard.type('allow pasting') 吞掉了空格变成了 allowpasting
-        // 所以我们手动拆分输入，强制敲击空格键
-        await keyboard.type('allow');
-        await keyboard.pressKey(Key.Space);
-        await keyboard.releaseKey(Key.Space);
-        await keyboard.type('pasting');
-        await keyboard.pressKey(Key.Enter);
-        await keyboard.releaseKey(Key.Enter);
         await new Promise(r => setTimeout(r, 500));
 
-        // 3. 粘贴代码
-        await clipboard.setContent(script);
+        // 2. 终极 Trick：分段粘贴！
+        // 为什么这么做？
+        // - 如果直接粘贴 javascript:... Chrome 会为了安全自动删掉 javascript: 前缀。
+        // - 如果用 keyboard.type('javascript:')，中文输入法会把它变成中文字符，导致回车后变成 Google 搜索。
+        // - 解决方案：先复制粘贴一个 'j'，再复制粘贴 'avascript:...'。全程只用 Ctrl+V，绝对不触发输入法！
+
+        // 2.1 复制并粘贴 'j'
+        await clipboard.setContent('j');
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.V);
+            await keyboard.releaseKey(Key.LeftSuper, Key.V);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.V);
+            await keyboard.releaseKey(Key.LeftControl, Key.V);
+        }
+        await new Promise(r => setTimeout(r, 100));
+
+        // 2.2 复制并粘贴剩下的部分
+        await clipboard.setContent('avascript:' + script);
         if (isMac) {
             await keyboard.pressKey(Key.LeftSuper, Key.V);
             await keyboard.releaseKey(Key.LeftSuper, Key.V);
@@ -108,20 +114,10 @@ async function executeWithPhysicalSimulation(tasks: any) {
         }
         await new Promise(r => setTimeout(r, 500));
 
-        // 4. 执行
+        // 3. 回车执行
         await keyboard.pressKey(Key.Enter);
         await keyboard.releaseKey(Key.Enter);
-        await new Promise(r => setTimeout(r, 500));
-
-        // 5. 关闭控制台
-        if (isMac) {
-            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
-        } else {
-            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
-            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
-        }
-        await new Promise(r => setTimeout(r, 1000)); // 等待控制台关闭，焦点回到页面
+        await new Promise(r => setTimeout(r, 1000));
     };
 
     console.log('\n====================================================');
@@ -140,10 +136,10 @@ async function executeWithPhysicalSimulation(tasks: any) {
       for (let i = 0; i < task.count; i++) {
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
         
-        // 2. 智能定位：通过控制台注入 JS 代码
-        console.log('正在智能定位输入框 (通过控制台注入)...');
+        // 2. 智能定位：通过地址栏注入 JS 代码
+        console.log('正在智能定位输入框 (通过地址栏注入)...');
         const focusScript = `void((() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })());`;
-        await injectJsViaConsole(focusScript);
+        await injectJsViaAddressBar(focusScript);
 
         // 3. 复制提示词并粘贴 (支持中文)
         console.log('输入提示词...');
@@ -240,9 +236,9 @@ async function executeWithPhysicalSimulation(tasks: any) {
             }, 2000);
         })());`;
         
-        // 将多行脚本压缩成单行 (虽然控制台支持多行，但压缩一下更稳妥)
+        // 将多行脚本压缩成单行 (虽然控制台支持多行，但地址栏必须单行)
         const pollScript = rawPollScript.replace(/\n/g, ' ').replace(/\s{2,}/g, ' ');
-        await injectJsViaConsole(pollScript);
+        await injectJsViaAddressBar(pollScript);
 
         // 轮询剪贴板，等待网页发回的完成信号
         let isDone = false;
