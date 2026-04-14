@@ -356,8 +356,8 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             function updateStatus(text) {
                 hud.innerText = text;
                 hud.style.backgroundColor = 'rgba(0,0,0,0.85)';
-                // 彻底移除所有通信代码 (Fetch/Clipboard/Blob下载)
-                // 仅保留视觉 UI 提示，Node.js 端将直接通过监控文件系统来判断进度
+                /* 彻底移除所有通信代码 (Fetch/Clipboard/Blob下载) */
+                /* 仅保留视觉 UI 提示，Node.js 端将直接通过监控文件系统来判断进度 */
             }
             let attempts = 0;
             let imageFoundAttempts = 0;
@@ -414,7 +414,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                                 
                                 const btnsToClick = currentBtns.length > 0 ? currentBtns : targetBtns;
                                 
-                                // 延迟逐个点击，防止浏览器拦截批量下载
+                                /* 延迟逐个点击，防止浏览器拦截批量下载 */
                                 btnsToClick.forEach((btn, index) => {
                                     setTimeout(() => {
                                         btn.click();
