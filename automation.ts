@@ -161,17 +161,49 @@ async function executeWithPhysicalSimulation(tasks: any) {
                 const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
                 const lastMessage = messages.length > 0 ? messages[messages.length - 1] : document;
                 
-                const btns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [aria-label], [title]'));
-                const targetBtn = btns.find(b => {
-                    const str = ((b.getAttribute('aria-label')||'') + ' ' + (b.getAttribute('title')||'') + ' ' + (b.textContent||'')).toLowerCase();
-                    return str.includes('下载完整尺寸') || str.includes('download full size');
+                // 1. 模拟鼠标悬浮在所有图片上，强制触发 React/Angular 渲染隐藏的下载按钮
+                const images = lastMessage.querySelectorAll('img');
+                images.forEach(img => {
+                    const hoverEvent = new MouseEvent('mouseover', { bubbles: true, cancelable: true, view: window });
+                    const enterEvent = new MouseEvent('mouseenter', { bubbles: true, cancelable: true, view: window });
+                    img.dispatchEvent(hoverEvent);
+                    img.dispatchEvent(enterEvent);
+                    // 通常悬浮事件可能绑定在图片的父容器上
+                    if (img.parentElement) {
+                        img.parentElement.dispatchEvent(hoverEvent);
+                        img.parentElement.dispatchEvent(enterEvent);
+                    }
+                });
+
+                // 2. 寻找下载按钮 (扩大属性搜索范围，包含 data-tooltip 等)
+                const btns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"]'));
+                const targetBtns = btns.filter(b => {
+                    const str = (
+                        (b.getAttribute('aria-label') || '') + ' ' +
+                        (b.getAttribute('title') || '') + ' ' +
+                        (b.getAttribute('data-tooltip') || '') + ' ' +
+                        (b.getAttribute('data-tooltip-content') || '') + ' ' +
+                        (b.textContent || '')
+                    ).toLowerCase();
+                    return str.includes('下载完整尺寸') || 
+                           str.includes('download full size') ||
+                           str.includes('下载全部') ||
+                           str.includes('download all');
                 });
                 
-                if (targetBtn) {
+                if (targetBtns.length > 0) {
                     clearInterval(checkInterval);
-                    ${task.download ? 'targetBtn.click();' : ''}
                     
-                    // 延迟 1 秒后通知 Node.js 已完成，确保点击事件已触发
+                    if (${task.download}) {
+                        // 触发点击。为了防止原生 click() 被拦截，同时派发 MouseEvent
+                        targetBtns.forEach(btn => {
+                            btn.click();
+                            btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                            btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                        });
+                    }
+                    
+                    // 延迟 1.5 秒后通知 Node.js 已完成，确保点击事件已触发并开始下载
                     setTimeout(() => {
                         const ta = document.createElement('textarea');
                         ta.value = 'GEMINI_DONE';
@@ -179,7 +211,7 @@ async function executeWithPhysicalSimulation(tasks: any) {
                         ta.select();
                         document.execCommand('copy');
                         document.body.removeChild(ta);
-                    }, 1000);
+                    }, 1500);
                 }
             }, 2000);
         })());`;
