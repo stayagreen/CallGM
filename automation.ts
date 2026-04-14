@@ -60,7 +60,6 @@ async function executeWithPhysicalSimulation(tasks: any) {
     console.log('====================================================\n');
     
     // 1. 使用系统命令自动打开/唤起浏览器，直接进入 Gemini
-    // 这取代了视觉识别，是最稳定、最原生的方式
     await open('https://gemini.google.com/');
     
     // 等待浏览器启动、页面加载并自动获取焦点
@@ -71,21 +70,37 @@ async function executeWithPhysicalSimulation(tasks: any) {
       for (let i = 0; i < task.count; i++) {
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
         
-        // 2. 盲点：将鼠标移动到屏幕中下方并点击，以确保输入框被激活
-        // 假设输入框在屏幕水平居中，垂直方向靠下 150 像素的位置
-        const width = await screen.width();
-        const height = await screen.height();
-        await mouse.setPosition({ x: width / 2, y: height - 150 });
-        await mouse.leftClick();
+        // 2. 智能定位：通过地址栏注入 JS 代码来让输入框自动获取焦点
+        // 这完美解决了不同分辨率、不同语言、不同主题下的定位问题
+        console.log('正在智能定位输入框...');
+        await keyboard.pressKey(Key.LeftControl, Key.L); // Mac 用户如果是 Cmd+L，可在此修改为 Key.LeftSuper
+        await keyboard.releaseKey(Key.LeftControl, Key.L);
         await new Promise(r => setTimeout(r, 500));
 
+        // 输入 javascript: 协议头 (必须手动输入，浏览器禁止直接粘贴协议头)
+        await keyboard.type('javascript:');
+        
+        // 注入寻找输入框并聚焦的代码 (兼容各种富文本框)
+        const focusScript = `(() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })();`;
+        await clipboard.setContent(focusScript);
+        await keyboard.pressKey(Key.LeftControl, Key.V); // Mac 为 Cmd+V
+        await keyboard.releaseKey(Key.LeftControl, Key.V);
+        await new Promise(r => setTimeout(r, 500));
+        
+        // 执行注入的脚本，此时光标会自动跳到 Gemini 的输入框内
+        await keyboard.pressKey(Key.Enter);
+        await keyboard.releaseKey(Key.Enter);
+        await new Promise(r => setTimeout(r, 1000));
+
         // 3. 复制提示词并粘贴 (支持中文)
+        console.log('输入提示词...');
         await clipboard.setContent(task.prompt);
         await keyboard.pressKey(Key.LeftControl, Key.V);
         await keyboard.releaseKey(Key.LeftControl, Key.V);
         await new Promise(r => setTimeout(r, 1000));
 
         // 4. 发送 (回车)
+        console.log('发送任务...');
         await keyboard.pressKey(Key.Enter);
         await keyboard.releaseKey(Key.Enter);
 
