@@ -108,6 +108,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (activeTab === 'records') fetchJobs();
     if (activeTab === 'gallery') fetchGallery();
   }, [activeTab]);
 
