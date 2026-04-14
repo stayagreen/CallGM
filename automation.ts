@@ -266,6 +266,11 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         if (task.images && task.images.length > 0) {
             console.log(`准备粘贴 ${task.images.length} 张参考图...`);
             for (const imgUrl of task.images) {
+                if (imgUrl.startsWith('blob:')) {
+                    console.log(`⚠️ 发现旧版失效的参考图链接 (${imgUrl})，已跳过。请在网页端删除此任务并重新上传图片创建新任务！`);
+                    continue;
+                }
+                
                 // 修复路径拼接问题：如果 imgUrl 以 / 开头，path.join 可能会将其视为绝对路径（在某些系统上）
                 const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
                 const localPath = path.join(__dirname, relativeUrl);
