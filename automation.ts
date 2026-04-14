@@ -81,7 +81,8 @@ async function executeWithPhysicalSimulation(tasks: any) {
         await keyboard.type('javascript:');
         
         // 注入寻找输入框并聚焦的代码 (兼容各种富文本框)
-        const focusScript = `(() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })();`;
+        // 注意：必须以 javascript: 开头，并且不能有返回值，否则浏览器可能会跳转
+        const focusScript = `void((() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })());`;
         await clipboard.setContent(focusScript);
         await keyboard.pressKey(Key.LeftControl, Key.V); // Mac 为 Cmd+V
         await keyboard.releaseKey(Key.LeftControl, Key.V);
