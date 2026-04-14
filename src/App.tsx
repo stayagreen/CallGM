@@ -66,6 +66,7 @@ export default function App() {
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
   const [selectedGalleryImages, setSelectedGalleryImages] = useState<Set<string>>(new Set());
   const [isMobile, setIsMobile] = useState(false);
+  const [isExecuting, setIsExecuting] = useState(false);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -304,16 +305,25 @@ export default function App() {
       alert('没有有效的任务！');
       return;
     }
-    const response = await fetch('/api/execute', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tasks: validTasks }),
-    });
+    
+    setIsExecuting(true);
+    try {
+      const response = await fetch('/api/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tasks: validTasks }),
+      });
 
-    if (response.ok) {
-      setTasks([]);
-      setActiveTaskId('');
-      setActiveTab('records');
+      if (response.ok) {
+        setTasks([]);
+        setActiveTaskId('');
+        setActiveTab('records');
+      }
+    } catch (error) {
+      console.error('Execution failed:', error);
+      alert('执行失败，请重试');
+    } finally {
+      setIsExecuting(false);
     }
   };
 
@@ -529,7 +539,13 @@ export default function App() {
           <label className="flex items-center gap-2"><input type="checkbox" checked={activeTask?.download || false} onChange={(e) => updateTask({ download: e.target.checked })} className="w-5 h-5" /> 自动下载</label>
         </div>
 
-        <button onClick={handleExecute} className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-lg shadow-blue-200">执行所有任务</button>
+        <button 
+          onClick={handleExecute} 
+          disabled={isExecuting}
+          className={`w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-lg shadow-blue-200 ${isExecuting ? 'opacity-50 cursor-not-allowed' : ''}`}
+        >
+          {isExecuting ? '正在提交任务...' : '执行所有任务'}
+        </button>
       </div>
       )}
       </>
