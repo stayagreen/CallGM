@@ -8,6 +8,29 @@ import { startAutomationWatcher, jobProgress, handleBrowserDebug } from "./autom
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// --- Global Logger Setup ---
+const logFilePath = path.join(__dirname, "logger.txt");
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+
+function appendToLogFile(level: string, ...args: any[]) {
+  const timestamp = new Date().toISOString();
+  const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+  const logLine = `[${timestamp}] [${level}] ${message}\n`;
+  fs.appendFileSync(logFilePath, logLine);
+}
+
+console.log = (...args) => {
+  originalConsoleLog(...args);
+  appendToLogFile('INFO', ...args);
+};
+
+console.error = (...args) => {
+  originalConsoleError(...args);
+  appendToLogFile('ERROR', ...args);
+};
+// ---------------------------
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -180,6 +203,33 @@ async function startServer() {
       }
     } else {
       res.status(404).json({ error: 'Image not found' });
+    }
+  });
+
+  // API route to get logs
+  app.get("/api/logs", (req, res) => {
+    try {
+      if (fs.existsSync(logFilePath)) {
+        // Read the last 100000 bytes to avoid sending huge files
+        const stats = fs.statSync(logFilePath);
+        const maxBytes = 100000;
+        const start = Math.max(0, stats.size - maxBytes);
+        
+        const stream = fs.createReadStream(logFilePath, { start, encoding: 'utf-8' });
+        let logs = '';
+        stream.on('data', chunk => logs += chunk);
+        stream.on('end', () => {
+          // If we didn't read from the start, cut off the first partial line
+          if (start > 0) {
+            logs = logs.substring(logs.indexOf('\n') + 1);
+          }
+          res.send(logs);
+        });
+      } else {
+        res.send("暂无日志 / No logs yet.");
+      }
+    } catch (error) {
+      res.status(500).send("Error reading logs");
     }
   });
 

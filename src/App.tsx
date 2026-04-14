@@ -40,13 +40,15 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState<string>('1');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery'>('tasks');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery' | 'logs'>('tasks');
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [systemConfig, setSystemConfig] = useState({ systemDownloadsDir: '' });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
+  const [logs, setLogs] = useState<string>('');
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetch('/api/config').then(res => res.json()).then(data => setSystemConfig(data));
@@ -67,9 +69,28 @@ export default function App() {
     if (activeTab === 'records') {
       fetchJobs();
       interval = setInterval(fetchJobs, 2000);
+    } else if (activeTab === 'logs') {
+      fetchLogs();
+      interval = setInterval(fetchLogs, 2000);
     }
     return () => clearInterval(interval);
   }, [activeTab]);
+
+  const fetchLogs = async () => {
+    try {
+      const res = await fetch('/api/logs');
+      const data = await res.text();
+      setLogs(data);
+    } catch (error) {
+      console.error('Failed to fetch logs:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'logs' && logsEndRef.current) {
+      logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs, activeTab]);
 
   const fetchGallery = async () => {
     try {
@@ -218,6 +239,12 @@ export default function App() {
             className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
           >
             本地图库
+          </button>
+          <button 
+            onClick={() => setActiveTab('logs')} 
+            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'logs' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+          >
+            操作日志
           </button>
         </div>
         <button 
@@ -487,6 +514,19 @@ export default function App() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {activeTab === 'logs' && (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-800">操作日志</h2>
+            <button onClick={fetchLogs} className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm">手动刷新</button>
+          </div>
+          <div className="bg-gray-900 text-green-400 p-4 rounded-xl font-mono text-sm h-[600px] overflow-y-auto shadow-inner whitespace-pre-wrap break-all">
+            {logs || '暂无日志...'}
+            <div ref={logsEndRef} />
+          </div>
         </div>
       )}
 
