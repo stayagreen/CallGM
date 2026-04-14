@@ -4,7 +4,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import os from "os";
-import { startAutomationWatcher, jobProgress } from "./automation.js";
+import { startAutomationWatcher, jobProgress, handleBrowserDebug } from "./automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -57,6 +57,14 @@ async function startServer() {
     fs.writeFileSync(filePath, JSON.stringify(tasks, null, 2));
 
     res.json({ status: "ok", message: "Tasks queued", filename });
+  });
+
+  // API route for browser to send debug info
+  app.post("/api/debug", (req, res) => {
+    if (req.body && req.body.message) {
+      handleBrowserDebug(req.body.message);
+    }
+    res.json({ status: "ok" });
   });
 
   // API route to get jobs (pending, running, completed)

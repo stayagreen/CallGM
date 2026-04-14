@@ -92,9 +92,14 @@ export function startAutomationWatcher() {
   }, 3000); // Check every 3 seconds
 }
 
-async function waitForAndMoveDownloads(startTime: number, systemDownloadsDir: string, projectDownloadDir: string): Promise<string[]> {
+let browserDebugState = '';
+export function handleBrowserDebug(msg: string) {
+    browserDebugState = msg;
+    console.log(`  👉 [浏览器内部视角] ${msg.replace(/\\n/g, ' ')}`);
+}
+
+async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string): Promise<string[]> {
     console.log(`\n⏳ 开始监控系统下载目录: ${systemDownloadsDir}`);
-    console.log(`⏳ 寻找修改时间在 ${new Date(startTime).toLocaleTimeString()} 之后的文件`);
     let attempts = 0;
     const maxAttempts = 60; // 最多等 60 秒
     const movedFiles: string[] = [];
@@ -110,61 +115,58 @@ async function waitForAndMoveDownloads(startTime: number, systemDownloadsDir: st
             }
 
             const currentFiles = fs.readdirSync(systemDownloadsDir);
-            // 找出在触发下载后新出现或修改的文件
-            const newFiles = currentFiles.filter(f => {
-                try {
-                    const stat = fs.statSync(path.join(systemDownloadsDir, f));
-                    return stat.mtimeMs > startTime || stat.birthtimeMs > startTime;
-                } catch (e) {
-                    return false;
-                }
-            });
-
-            if (newFiles.length === 0) {
-                if (attempts % 5 === 0) console.log(`   ...等待新文件出现... (已等待 ${attempts} 秒)`);
-                continue;
-            }
-
+            let newestFile = null;
+            let newestTime = 0;
             let isDownloading = false;
-            let readyFiles = [];
 
-            for (const file of newFiles) {
-                // 如果存在 Chrome/Firefox 等浏览器的临时下载文件后缀，说明还没下载完
-                if (file.endsWith('.crdownload') || file.endsWith('.part') || file.endsWith('.tmp')) {
-                    isDownloading = true;
-                    break; 
-                }
-                // 只要不是临时文件，且不是系统隐藏文件，就认为是下载完成的文件！
-                if (file !== '.DS_Store' && file !== 'desktop.ini' && !file.startsWith('.')) {
-                    readyFiles.push(file);
-                }
+            for (const file of currentFiles) {
+                if (file === '.DS_Store' || file === 'desktop.ini' || file.startsWith('.')) continue;
+                
+                const filePath = path.join(systemDownloadsDir, file);
+                try {
+                    const stat = fs.statSync(filePath);
+                    // 使用 ctime (change time) 或 mtime (modify time)
+                    const fileTime = Math.max(stat.ctimeMs, stat.mtimeMs, stat.birthtimeMs || 0);
+                    
+                    if (fileTime > newestTime) {
+                        newestTime = fileTime;
+                        newestFile = file;
+                    }
+                    
+                    if (file.endsWith('.crdownload') || file.endsWith('.part') || file.endsWith('.tmp')) {
+                        isDownloading = true;
+                    }
+                } catch (e) {}
             }
 
             if (isDownloading) {
                 if (attempts % 5 === 0) console.log(`   ...文件正在下载中，请稍候... (已等待 ${attempts} 秒)`);
-                continue; // 继续等待下载完成
+                continue;
             }
 
-            if (readyFiles.length > 0) {
+            // 如果最新文件是在点击下载按钮之后（或者点击前 5 秒内，考虑到系统时间误差）创建/修改的
+            if (newestFile && newestTime > clickTime - 5000) {
+                console.log(`✅ 检测到最新下载的文件: ${newestFile}`);
                 // 额外等待 2 秒，确保浏览器彻底释放文件占用锁
                 await new Promise(r => setTimeout(r, 2000));
                 
-                for (const file of readyFiles) {
-                    const oldPath = path.join(systemDownloadsDir, file);
-                    const newPath = path.join(projectDownloadDir, file);
-                    try {
-                        if (fs.existsSync(oldPath)) {
-                            // 使用 copy + unlink 避免跨盘符移动报错 (EXDEV)
-                            fs.copyFileSync(oldPath, newPath);
-                            fs.unlinkSync(oldPath);
-                            console.log(`📦 成功剪切文件: ${file} -> 项目 download 目录`);
-                            movedFiles.push(file);
-                        }
-                    } catch (moveErr) {
-                        console.error(`❌ 移动文件失败: ${file}`, moveErr);
+                const oldPath = path.join(systemDownloadsDir, newestFile);
+                const newPath = path.join(projectDownloadDir, newestFile);
+                try {
+                    if (fs.existsSync(oldPath)) {
+                        fs.copyFileSync(oldPath, newPath);
+                        fs.unlinkSync(oldPath);
+                        console.log(`📦 成功剪切文件: ${newestFile} -> 项目 download 目录`);
+                        movedFiles.push(newestFile);
+                        return movedFiles;
                     }
+                } catch (moveErr) {
+                    console.error(`❌ 移动文件失败: ${newestFile}`, moveErr);
                 }
-                return movedFiles; // 移动完毕，退出等待
+            } else {
+                if (attempts % 5 === 0) {
+                    console.log(`   ...等待新文件出现... (最新文件是 ${newestFile || '无'}, 但时间不匹配)`);
+                }
             }
         } catch (err) {
             console.error('监控下载目录时出错:', err);
@@ -320,8 +322,8 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         // 5. 动态等待生成完成并根据设置下载
         console.log(`等待生图完成... (自动下载: ${task.download ? '开启' : '关闭'})`);
         
-        // 清空剪贴板并设置初始状态
-        await clipboard.setContent('WAITING_FOR_GEMINI');
+        // 清空状态
+        browserDebugState = 'WAITING_FOR_GEMINI';
         
         // 记录任务开始时间，用于后续通过文件修改时间查找下载的文件
         const taskStartTime = Date.now();
@@ -346,18 +348,13 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                 hud.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#00ff00;padding:20px;z-index:9999999;font-size:18px;border-radius:10px;pointer-events:none;font-family:monospace;white-space:pre-wrap;text-align:center;box-shadow:0 4px 6px rgba(0,0,0,0.3);border:2px solid #00ff00;';
                 document.body.appendChild(hud);
             }
-            function updateStatus(text, copyToClipboard = false) {
+            function updateStatus(text) {
                 hud.innerText = text;
-                if (copyToClipboard) {
-                    try {
-                        const ta = document.createElement('textarea');
-                        ta.value = text; 
-                        document.body.appendChild(ta);
-                        ta.select();
-                        document.execCommand('copy');
-                        document.body.removeChild(ta);
-                    } catch(e) {}
-                }
+                fetch('http://localhost:3000/api/debug', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                }).catch(e => {});
             }
             let attempts = 0;
             let imageFoundAttempts = 0;
@@ -397,13 +394,13 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                            dataTooltip.includes('下载') || dataTooltip.includes('download');
                 });
                 const debugInfo = 'DEBUG: 第' + attempts + '次扫描\\n找到图片: ' + images.length + ' 张\\n找到所有按钮: ' + allBtns.length + ' 个\\n匹配到下载按钮: ' + targetBtns.length + ' 个';
-                updateStatus(debugInfo, true);
+                updateStatus(debugInfo);
                 if (targetBtns.length > 0 && images.length > 0) {
                     clearInterval(checkInterval);
-                    updateStatus('GEMINI_FOUND\\n✅ 找到图片和按钮，等待 5 秒后下载...', true);
+                    updateStatus('GEMINI_FOUND\\n✅ 找到图片和按钮，等待 5 秒后下载...');
                     if (${task.download}) {
                         setTimeout(() => {
-                            updateStatus('GEMINI_TRIGGERING\\n⬇️ 正在触发下载...', true);
+                            updateStatus('GEMINI_TRIGGERING\\n⬇️ 正在触发下载...');
                             setTimeout(() => {
                                 const currentBtns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id]')).filter(b => {
                                     const html = b.outerHTML.toLowerCase();
@@ -419,19 +416,19 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                                     btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
                                     btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
                                 });
-                                updateStatus('GEMINI_CLICKED\\n⏳ 已点击下载，等待系统保存文件...', true);
+                                updateStatus('GEMINI_CLICKED\\n⏳ 已点击下载，等待系统保存文件...');
                             }, 500);
                         }, 5000);
                     } else {
                         setTimeout(() => {
-                            updateStatus('GEMINI_DONE\\n🎉 任务完成！(未开启下载)', true);
+                            updateStatus('GEMINI_DONE\\n🎉 任务完成！(未开启下载)');
                         }, 1000);
                     }
                 } else if (images.length > 0) {
                     imageFoundAttempts++;
                     if (imageFoundAttempts > 8) {
                         clearInterval(checkInterval);
-                        updateStatus('GEMINI_NO_BTN\\n⚠️ 图片已生成，但未找到下载按钮', true);
+                        updateStatus('GEMINI_NO_BTN\\n⚠️ 图片已生成，但未找到下载按钮');
                     }
                 }
             }, 2000);
@@ -441,53 +438,46 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         const pollScript = rawPollScript.replace(/\n/g, ' ').replace(/\s{2,}/g, ' ');
         await injectJsViaAddressBar(pollScript);
 
-        // 轮询剪贴板，等待网页发回的完成信号
+        // 轮询状态，等待网页发回的完成信号
         let isDone = false;
         let waitTime = 0;
-        let lastDebugMsg = '';
+        let lastHandledState = '';
         
         while (!isDone && waitTime < 130) {
             await new Promise(r => setTimeout(r, 1000));
-            try {
-                const clipText = await clipboard.getContent();
+            waitTime++;
+            
+            if (browserDebugState !== lastHandledState) {
+                const currentState = browserDebugState;
+                lastHandledState = currentState;
                 
-                if (clipText.startsWith('DEBUG:') || clipText.startsWith('GEMINI_')) {
-                    if (clipText !== lastDebugMsg) {
-                        console.log(`  👉 [浏览器内部视角] ${clipText.replace(/\\n/g, ' ')}`);
-                        lastDebugMsg = clipText;
-                        
-                        if (clipText.startsWith('GEMINI_FOUND')) {
-                            jobProgress.set(filename, { completed: completedLoops + 0.6, total: totalLoops, status: 'running' });
-                            // Snapshot is now taken before script injection
-                        } else if (clipText.startsWith('GEMINI_TRIGGERING')) {
-                            jobProgress.set(filename, { completed: completedLoops + 0.8, total: totalLoops, status: 'running' });
-                        } else if (clipText.startsWith('GEMINI_CLICKED')) {
-                            jobProgress.set(filename, { completed: completedLoops + 0.9, total: totalLoops, status: 'running' });
-                            // 浏览器已经点击了下载按钮，Node.js 接管后续的监控工作
-                            if (task.download) {
-                                const files = await waitForAndMoveDownloads(taskStartTime, systemDownloadsDir, downloadDir);
-                                if (files && files.length > 0) {
-                                    task.downloadedFiles.push(...files);
-                                }
-                            }
-                            console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
-                            isDone = true;
-                            completedLoops++;
-                            jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
-                            await new Promise(r => setTimeout(r, 2000)); // 额外缓冲时间
-                        } else if (clipText.startsWith('GEMINI_DONE') || clipText.startsWith('GEMINI_NO_BTN') || clipText.startsWith('GEMINI_TIMEOUT')) {
-                            console.log('✅ 当前任务执行完毕！准备进入下一个任务。');
-                            isDone = true;
-                            completedLoops++;
-                            jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
-                            await new Promise(r => setTimeout(r, 2000));
+                if (currentState.startsWith('GEMINI_FOUND')) {
+                    jobProgress.set(filename, { completed: completedLoops + 0.6, total: totalLoops, status: 'running' });
+                } else if (currentState.startsWith('GEMINI_TRIGGERING')) {
+                    jobProgress.set(filename, { completed: completedLoops + 0.8, total: totalLoops, status: 'running' });
+                } else if (currentState.startsWith('GEMINI_CLICKED')) {
+                    jobProgress.set(filename, { completed: completedLoops + 0.9, total: totalLoops, status: 'running' });
+                    // 浏览器已经点击了下载按钮，Node.js 接管后续的监控工作
+                    if (task.download) {
+                        const clickTime = Date.now();
+                        const files = await waitForAndMoveDownloads(clickTime, systemDownloadsDir, downloadDir);
+                        if (files && files.length > 0) {
+                            task.downloadedFiles.push(...files);
                         }
                     }
+                    console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
+                    isDone = true;
+                    completedLoops++;
+                    jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+                    await new Promise(r => setTimeout(r, 2000)); // 额外缓冲时间
+                } else if (currentState.startsWith('GEMINI_DONE') || currentState.startsWith('GEMINI_NO_BTN') || currentState.startsWith('GEMINI_TIMEOUT')) {
+                    console.log('✅ 当前任务执行完毕！准备进入下一个任务。');
+                    isDone = true;
+                    completedLoops++;
+                    jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+                    await new Promise(r => setTimeout(r, 2000));
                 }
-            } catch (clipErr) {
-                // 忽略剪贴板读取偶尔失败的情况
             }
-            waitTime++;
         }
 
         // 如果还有下一次循环，刷新页面以重置状态
