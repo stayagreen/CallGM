@@ -522,9 +522,19 @@ export default function App() {
           <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
             <h2 className="text-2xl font-bold mb-6">模板管理</h2>
             {templates.map(t => (
-              <div key={t.id} className="flex justify-between items-center mb-3 p-3 bg-gray-50 rounded-lg">
-                <span className="font-medium">{t.name}</span>
-                <button onClick={() => saveTemplates(templates.filter(x => x.id !== t.id))} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={18}/></button>
+              <div key={t.id} className="flex flex-col mb-3 p-3 bg-gray-50 rounded-lg">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-medium">{t.name}</span>
+                  <div className="flex gap-2">
+                    <button onClick={() => {
+                      (document.getElementById('new-t-name') as HTMLInputElement).value = t.name;
+                      (document.getElementById('new-t-prompt') as HTMLTextAreaElement).value = t.prompt;
+                      saveTemplates(templates.filter(x => x.id !== t.id));
+                    }} className="text-blue-500 hover:bg-blue-50 p-1 rounded"><Edit2 size={18}/></button>
+                    <button onClick={() => saveTemplates(templates.filter(x => x.id !== t.id))} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={18}/></button>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-600 truncate">{t.prompt}</p>
               </div>
             ))}
             <input className="w-full p-3 border border-gray-200 rounded-xl mb-3" placeholder="模板名称" id="new-t-name" />
@@ -540,7 +550,7 @@ export default function App() {
                 }
               }}
               className="bg-blue-600 text-white px-6 py-3 rounded-xl w-full font-bold hover:bg-blue-700"
-            >添加模板</button>
+            >保存模板</button>
             <button onClick={() => setShowTemplateModal(false)} className="mt-3 w-full text-gray-500 hover:text-gray-700">关闭</button>
           </div>
         </div>
