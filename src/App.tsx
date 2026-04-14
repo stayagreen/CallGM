@@ -551,19 +551,31 @@ export default function App() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block mb-1 font-semibold text-gray-700">粘贴图后等待(秒):</label>
-                  <input type="text" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.pasteWait || '5-5'} onChange={(e) => setSystemConfig({...systemConfig, pasteWait: e.target.value})} placeholder="5-5" />
+                  <div className="flex gap-1">
+                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.pasteMin || 5} onChange={(e) => setSystemConfig({...systemConfig, pasteMin: parseInt(e.target.value)})} />
+                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.pasteMax || 5} onChange={(e) => setSystemConfig({...systemConfig, pasteMax: parseInt(e.target.value)})} />
+                  </div>
                 </div>
                 <div>
                   <label className="block mb-1 font-semibold text-gray-700">图片出现后等待(秒):</label>
-                  <input type="text" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.clickWait || '8-8'} onChange={(e) => setSystemConfig({...systemConfig, clickWait: e.target.value})} placeholder="8-8" />
+                  <div className="flex gap-1">
+                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.clickMin || 8} onChange={(e) => setSystemConfig({...systemConfig, clickMin: parseInt(e.target.value)})} />
+                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.clickMax || 8} onChange={(e) => setSystemConfig({...systemConfig, clickMax: parseInt(e.target.value)})} />
+                  </div>
                 </div>
                 <div>
                   <label className="block mb-1 font-semibold text-gray-700">下载超时等待(秒):</label>
-                  <input type="text" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadTimeout || '120-120'} onChange={(e) => setSystemConfig({...systemConfig, downloadTimeout: e.target.value})} placeholder="120-120" />
+                  <div className="flex gap-1">
+                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadMin || 120} onChange={(e) => setSystemConfig({...systemConfig, downloadMin: parseInt(e.target.value)})} />
+                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadMax || 120} onChange={(e) => setSystemConfig({...systemConfig, downloadMax: parseInt(e.target.value)})} />
+                  </div>
                 </div>
                 <div>
                   <label className="block mb-1 font-semibold text-gray-700">任务间隔等待(秒):</label>
-                  <input type="text" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskInterval || '5-5'} onChange={(e) => setSystemConfig({...systemConfig, taskInterval: e.target.value})} placeholder="5-5" />
+                  <div className="flex gap-1">
+                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskMin || 5} onChange={(e) => setSystemConfig({...systemConfig, taskMin: parseInt(e.target.value)})} />
+                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskMax || 5} onChange={(e) => setSystemConfig({...systemConfig, taskMax: parseInt(e.target.value)})} />
+                  </div>
                 </div>
               </div>
             </div>
