@@ -36,8 +36,9 @@ interface HistoryItem {
 }
 
 export default function App() {
-  const [tasks, setTasks] = useState<Task[]>([{ id: '1', prompt: '', images: [], count: 1, download: true }]);
-  const [activeTaskId, setActiveTaskId] = useState<string>('1');
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [activeTaskId, setActiveTaskId] = useState<string>('');
+  const [showAddTaskMenu, setShowAddTaskMenu] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery'>('tasks');
@@ -127,6 +128,7 @@ export default function App() {
   const activeTask = tasks.find(t => t.id === activeTaskId) || tasks[0];
 
   const updateTask = (updates: Partial<Task>) => {
+    if (!activeTaskId) return;
     setTasks(tasks.map(t => t.id === activeTaskId ? { ...t, ...updates } : t));
   };
 
@@ -153,14 +155,10 @@ export default function App() {
 
   const removeTask = (e: React.MouseEvent, idToRemove: string) => {
     e.stopPropagation();
-    if (tasks.length === 1) {
-      alert('至少保留一个任务！');
-      return;
-    }
     const newTasks = tasks.filter(t => t.id !== idToRemove);
     setTasks(newTasks);
     if (activeTaskId === idToRemove) {
-      setActiveTaskId(newTasks[0].id);
+      setActiveTaskId(newTasks.length > 0 ? newTasks[0].id : '');
     }
   };
 
@@ -198,8 +196,8 @@ export default function App() {
     });
 
     if (response.ok) {
-      setTasks([{ id: '1', prompt: '', images: [], count: 1, download: true }]);
-      setActiveTaskId('1');
+      setTasks([]);
+      setActiveTaskId('');
       setActiveTab('records');
     }
   };
@@ -267,9 +265,43 @@ export default function App() {
             )}
           </div>
         ))}
-        <button onClick={addTask} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200"><Plus /></button>
+        <div className="relative">
+          <button onClick={() => setShowAddTaskMenu(!showAddTaskMenu)} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition shadow-sm"><Plus /></button>
+          {showAddTaskMenu && (
+            <div className="absolute left-0 top-full mt-2 w-40 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden py-1">
+              <button 
+                onClick={() => {
+                  addTask();
+                  setShowAddTaskMenu(false);
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
+              >
+                <ImageIcon size={16} /> 生图任务
+              </button>
+              <button 
+                onClick={() => {
+                  alert('视频任务开发中...');
+                  setShowAddTaskMenu(false);
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
+              >
+                <PlayCircle size={16} /> 视频任务
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
+      {tasks.length === 0 ? (
+        <div className="bg-white p-12 rounded-2xl shadow-sm border border-gray-100 text-center">
+          <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Plus className="text-blue-400 w-10 h-10" />
+          </div>
+          <h3 className="text-xl font-bold text-gray-800 mb-2">开始创建任务</h3>
+          <p className="text-gray-500 mb-6">点击上方的加号按钮，选择任务类型开始创作</p>
+          <button onClick={addTask} className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-200">创建第一个任务</button>
+        </div>
+      ) : (
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <div className="mb-6">
           <label className="block mb-2 font-semibold text-gray-700">提示词模板：</label>
@@ -286,7 +318,7 @@ export default function App() {
           className="w-full p-4 border border-gray-200 rounded-xl mb-6 focus:ring-2 focus:ring-blue-500 outline-none"
           placeholder="输入提示词..."
           rows={4}
-          value={activeTask.prompt}
+          value={activeTask?.prompt || ''}
           onChange={(e) => updateTask({ prompt: e.target.value })}
         />
 
@@ -303,7 +335,7 @@ export default function App() {
             <span className="text-gray-600 font-medium">单击此处后按 Ctrl+V 粘贴，或双击上传图片 (最多 10 张)</span>
           </div>
           <div className="flex gap-3 mt-4 flex-wrap">
-            {activeTask.images.map((img, i) => (
+            {activeTask?.images.map((img, i) => (
               <div key={i} className="relative group">
                 <img src={img} className="h-20 w-20 object-cover rounded-lg border border-gray-200" />
                 <button 
@@ -319,12 +351,13 @@ export default function App() {
         </div>
 
         <div className="flex gap-6 mb-6 text-gray-700">
-          <label className="flex items-center gap-2">执行次数: <input type="number" value={activeTask.count} onChange={(e) => updateTask({ count: parseInt(e.target.value) })} className="w-20 border border-gray-200 p-2 rounded-lg" /></label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={activeTask.download} onChange={(e) => updateTask({ download: e.target.checked })} className="w-5 h-5" /> 自动下载</label>
+          <label className="flex items-center gap-2">执行次数: <input type="number" value={activeTask?.count || 1} onChange={(e) => updateTask({ count: parseInt(e.target.value) })} className="w-20 border border-gray-200 p-2 rounded-lg" /></label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={activeTask?.download || false} onChange={(e) => updateTask({ download: e.target.checked })} className="w-5 h-5" /> 自动下载</label>
         </div>
 
         <button onClick={handleExecute} className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-lg shadow-blue-200">执行所有任务</button>
       </div>
+      )}
       </>
       )}
 
