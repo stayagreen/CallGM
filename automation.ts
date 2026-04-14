@@ -108,8 +108,8 @@ async function waitForAndMoveDownloads(initialSnapshot: Set<string>, systemDownl
                     isDownloading = true;
                     break; 
                 }
-                // 匹配常见的图片格式和 zip 压缩包
-                if (file.match(/\.(jpg|jpeg|png|webp|gif|zip)$/i)) {
+                // 只要不是临时文件，且不是系统隐藏文件，就认为是下载完成的文件！
+                if (file !== '.DS_Store' && file !== 'desktop.ini' && !file.startsWith('.')) {
                     readyFiles.push(file);
                 }
             }
@@ -260,6 +260,13 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         // 清空剪贴板并设置初始状态
         await clipboard.setContent('WAITING_FOR_GEMINI');
         
+        // 在注入脚本前，提前给系统的 Downloads 文件夹拍个“快照”，防止错过 GEMINI_FOUND 信号
+        const systemDownloadsDir = path.join(os.homedir(), 'Downloads');
+        let initialDownloadsSnapshot = new Set<string>();
+        if (fs.existsSync(systemDownloadsDir)) {
+            initialDownloadsSnapshot = new Set(fs.readdirSync(systemDownloadsDir));
+        }
+        
         const rawPollScript = `void((() => {
             let hud = document.getElementById('callgm-hud');
             if (!hud) {
@@ -293,10 +300,30 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                 const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
                 const lastMessage = messages.length > 0 ? messages[messages.length - 1] : document;
                 const images = lastMessage.querySelectorAll('img');
+                
+                images.forEach(img => {
+                    img.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                    img.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+                    if(img.parentElement) {
+                        img.parentElement.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                    }
+                });
+
                 const allBtns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id]'));
                 const targetBtns = allBtns.filter(b => {
                     const html = b.outerHTML.toLowerCase();
-                    return html.includes('下载完整尺寸') || html.includes('download full size') || html.includes('下载全部') || html.includes('download all') || html.includes('下载') || html.includes('download');
+                    const text = b.innerText.toLowerCase();
+                    const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                    const title = (b.getAttribute('title') || '').toLowerCase();
+                    const tooltip = (b.getAttribute('mat-tooltip') || '').toLowerCase();
+                    const dataTooltip = (b.getAttribute('data-tooltip') || '').toLowerCase();
+                    
+                    return html.includes('下载') || html.includes('download') || 
+                           text.includes('下载') || text.includes('download') ||
+                           aria.includes('下载') || aria.includes('download') ||
+                           title.includes('下载') || title.includes('download') ||
+                           tooltip.includes('下载') || tooltip.includes('download') ||
+                           dataTooltip.includes('下载') || dataTooltip.includes('download');
                 });
                 const debugInfo = 'DEBUG: 第' + attempts + '次扫描\\n找到图片: ' + images.length + ' 张\\n找到所有按钮: ' + allBtns.length + ' 个\\n匹配到下载按钮: ' + targetBtns.length + ' 个';
                 updateStatus(debugInfo, true);
@@ -306,15 +333,17 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                     if (${task.download}) {
                         setTimeout(() => {
                             updateStatus('GEMINI_TRIGGERING\\n⬇️ 正在触发下载...', true);
-                            images.forEach(img => {
-                                img.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-                                img.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-                                if(img.parentElement) {
-                                    img.parentElement.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-                                }
-                            });
                             setTimeout(() => {
-                                targetBtns.forEach(btn => {
+                                const currentBtns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id]')).filter(b => {
+                                    const html = b.outerHTML.toLowerCase();
+                                    const text = b.innerText.toLowerCase();
+                                    const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                                    return html.includes('下载') || html.includes('download') || text.includes('下载') || text.includes('download') || aria.includes('下载') || aria.includes('download');
+                                });
+                                
+                                const btnsToClick = currentBtns.length > 0 ? currentBtns : targetBtns;
+                                
+                                btnsToClick.forEach(btn => {
                                     btn.click();
                                     btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
                                     btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
@@ -345,8 +374,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         let isDone = false;
         let waitTime = 0;
         let lastDebugMsg = '';
-        let initialDownloadsSnapshot = new Set<string>();
-        const systemDownloadsDir = path.join(os.homedir(), 'Downloads');
         
         while (!isDone && waitTime < 130) {
             await new Promise(r => setTimeout(r, 1000));
@@ -359,10 +386,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                         lastDebugMsg = clipText;
                         
                         if (clipText.startsWith('GEMINI_FOUND')) {
-                            // 在触发下载前，给系统的 Downloads 文件夹拍个“快照”
-                            if (fs.existsSync(systemDownloadsDir)) {
-                                initialDownloadsSnapshot = new Set(fs.readdirSync(systemDownloadsDir));
-                            }
+                            // Snapshot is now taken before script injection
                         } else if (clipText.startsWith('GEMINI_CLICKED')) {
                             // 浏览器已经点击了下载按钮，Node.js 接管后续的监控工作
                             if (task.download) {
