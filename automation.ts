@@ -346,7 +346,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             function updateStatus(text) {
                 hud.innerText = text;
                 
-                // 尝试剪贴板 (如果失去焦点可能会失败)
+                /* 尝试剪贴板 (如果失去焦点可能会失败) */
                 try {
                     const ta = document.createElement('textarea');
                     ta.value = text; 
