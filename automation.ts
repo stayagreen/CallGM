@@ -347,7 +347,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                 hud.innerText = text;
                 hud.style.backgroundColor = 'rgba(0,0,0,0.85)';
                 
-                // 使用 fetch 发送状态，不依赖剪贴板，兼容远程控制
+                /* 使用 fetch 发送状态，不依赖剪贴板，兼容远程控制 */
                 fetch('http://localhost:3000/api/debug', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
