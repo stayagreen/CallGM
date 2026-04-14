@@ -195,6 +195,17 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
   let completedLoops = 0;
   jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
 
+  // 提前加载配置
+  let systemDownloadsDir = path.join(os.homedir(), 'Downloads');
+  let config = { systemDownloadsDir: '', pasteMin: 5, pasteMax: 5, clickMin: 8, clickMax: 8, downloadMin: 120, downloadMax: 120, taskMin: 5, taskMax: 5 };
+  const configPath = path.join(__dirname, 'config.json');
+  if (fs.existsSync(configPath)) {
+      try {
+          config = { ...config, ...JSON.parse(fs.readFileSync(configPath, 'utf-8')) };
+          if (config.systemDownloadsDir) systemDownloadsDir = config.systemDownloadsDir;
+      } catch (e) {}
+  }
+
   try {
     // Dynamically import nut.js (using the maintained fork) and open
     const nutjs = await import('@nut-tree-fork/nut-js');
@@ -338,15 +349,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         const taskStartTime = Date.now();
         
         // 在注入脚本前，提前给系统的 Downloads 文件夹拍个“快照”，防止错过 GEMINI_FOUND 信号
-        let systemDownloadsDir = path.join(os.homedir(), 'Downloads');
-        let config = { systemDownloadsDir: '', pasteMin: 5, pasteMax: 5, clickMin: 8, clickMax: 8, downloadMin: 120, downloadMax: 120, taskMin: 5, taskMax: 5 };
-        const configPath = path.join(__dirname, 'config.json');
-        if (fs.existsSync(configPath)) {
-            try {
-                config = { ...config, ...JSON.parse(fs.readFileSync(configPath, 'utf-8')) };
-                if (config.systemDownloadsDir) systemDownloadsDir = config.systemDownloadsDir;
-            } catch (e) {}
-        }
+        // (config 和 systemDownloadsDir 已在函数开头加载)
         
         const rawPollScript = `void((() => {
             let hud = document.getElementById('callgm-hud');
