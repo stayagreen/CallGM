@@ -36,6 +36,10 @@ let lastHeartbeat = Date.now();
 
 export const jobProgress = new Map<string, { completed: number, total: number, status: string }>();
 
+const getRandomTime = (min: number, max: number) => {
+    return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
+};
+
 export function startAutomationWatcher() {
   console.log('\n====================================================');
   console.log('🚀 CallGM 自动化引擎已成功启动！');
@@ -344,10 +348,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             } catch (e) {}
         }
         
-        const getRandomTime = (min: number, max: number) => {
-            return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
-        };
-
         const rawPollScript = `void((() => {
             let hud = document.getElementById('callgm-hud');
             if (!hud) {
