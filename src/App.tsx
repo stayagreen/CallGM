@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2 } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera } from 'lucide-react';
 
 interface Task {
   id: string;
@@ -61,6 +61,29 @@ export default function App() {
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [showUploadMenu, setShowUploadMenu] = useState(false);
+  const [showGalleryPicker, setShowGalleryPicker] = useState(false);
+  const [selectedGalleryImages, setSelectedGalleryImages] = useState<Set<string>>(new Set());
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showUploadMenu && !(event.target as HTMLElement).closest('.upload-container')) {
+        setShowUploadMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showUploadMenu]);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent));
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   useEffect(() => {
     fetch('/api/config').then(res => res.json()).then(data => setSystemConfig(data));
@@ -174,6 +197,8 @@ export default function App() {
     }
   };
 
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
   const handlePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
     const items = e.clipboardData.items;
     const promises: Promise<string>[] = [];
@@ -193,6 +218,18 @@ export default function App() {
       const base64Images = await Promise.all(promises);
       updateTask({ images: [...activeTask.images, ...base64Images].slice(0, 10) });
     }
+  };
+
+  const handlePasteFromMenu = async () => {
+    setShowUploadMenu(false);
+    alert('请直接在页面上按 Ctrl+V 进行粘贴');
+  };
+
+  const selectFromGallery = () => {
+    const selectedUrls = Array.from(selectedGalleryImages).map(img => `/downloads/${img}`);
+    updateTask({ images: [...activeTask.images, ...selectedUrls].slice(0, 10) });
+    setShowGalleryPicker(false);
+    setSelectedGalleryImages(new Set());
   };
 
   const handleExecute = async () => {
@@ -336,15 +373,74 @@ export default function App() {
 
         <div className="mb-6">
           <input type="file" multiple onChange={handleImageUpload} className="hidden" ref={fileInputRef} accept="image/*" />
-          <div 
-            tabIndex={0}
-            onPaste={handlePaste}
-            onDoubleClick={() => fileInputRef.current?.click()}
-            className="cursor-pointer bg-gray-50 p-6 block rounded-2xl border-2 border-dashed border-gray-200 text-center hover:border-blue-300 focus:border-blue-500 focus:bg-blue-50 outline-none transition"
-            title="单击选中后按 Ctrl+V 粘贴，双击选择文件"
-          >
-            <Upload className="mx-auto text-gray-400 mb-2" />
-            <span className="text-gray-600 font-medium">单击此处后按 Ctrl+V 粘贴，或双击上传图片 (最多 10 张)</span>
+          <input type="file" capture="environment" accept="image/*" className="hidden" ref={cameraInputRef} onChange={handleImageUpload} />
+          
+          <div className="relative upload-container">
+            <div 
+              tabIndex={0}
+              onPaste={handlePaste}
+              onClick={() => setShowUploadMenu(!showUploadMenu)}
+              className="cursor-pointer bg-gray-50 p-6 block rounded-2xl border-2 border-dashed border-gray-200 text-center hover:border-blue-300 focus:border-blue-500 focus:bg-blue-50 outline-none transition"
+              title="点击选择上传方式"
+            >
+              <Upload className="mx-auto text-gray-400 mb-2" />
+              <span className="text-gray-600 font-medium">点击此处选择上传图片 (最多 10 张)</span>
+            </div>
+
+            {showUploadMenu && (
+              <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 w-56 bg-white rounded-xl shadow-2xl border border-gray-100 z-50 overflow-hidden py-1">
+                {!isMobile ? (
+                  <>
+                    <button 
+                      onClick={handlePasteFromMenu}
+                      className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3"
+                    >
+                      <History size={18} className="text-gray-400" /> 粘贴图片 (Ctrl+V)
+                    </button>
+                    <button 
+                      onClick={() => {
+                        fileInputRef.current?.click();
+                        setShowUploadMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3"
+                    >
+                      <Upload size={18} className="text-gray-400" /> 电脑上传 (可多选)
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button 
+                      onClick={() => {
+                        cameraInputRef.current?.click();
+                        setShowUploadMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3"
+                    >
+                      <Camera size={18} className="text-gray-400" /> 拍照上传
+                    </button>
+                    <button 
+                      onClick={() => {
+                        fileInputRef.current?.click();
+                        setShowUploadMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3"
+                    >
+                      <ImageIcon size={18} className="text-gray-400" /> 图册上传 (可多选)
+                    </button>
+                  </>
+                )}
+                <button 
+                  onClick={() => {
+                    fetchGallery();
+                    setShowGalleryPicker(true);
+                    setShowUploadMenu(false);
+                  }}
+                  className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition border-t border-gray-50 flex items-center gap-3"
+                >
+                  <History size={18} className="text-gray-400" /> 本地图库上传 (可多选)
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex gap-3 mt-4 flex-wrap">
             {activeTask?.images.map((img, i) => (
@@ -658,6 +754,58 @@ export default function App() {
             <div className="flex gap-3">
               <button onClick={() => setShowConfigModal(false)} className="flex-1 py-3 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition">取消</button>
               <button onClick={saveConfig} className="flex-1 py-3 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition">保存设置</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showGalleryPicker && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">从本地图库选择</h2>
+              <button onClick={() => setShowGalleryPicker(false)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
+            </div>
+            
+            <div className="flex-grow overflow-y-auto mb-6 pr-2">
+              {galleryImages.length === 0 ? (
+                <div className="text-center py-12 text-gray-500">
+                  <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>图库中暂无图片</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                  {galleryImages.map(img => (
+                    <div 
+                      key={img} 
+                      onClick={() => {
+                        const newSet = new Set(selectedGalleryImages);
+                        if (newSet.has(img)) newSet.delete(img);
+                        else newSet.add(img);
+                        setSelectedGalleryImages(newSet);
+                      }}
+                      className={`relative aspect-square rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${selectedGalleryImages.has(img) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300'}`}
+                    >
+                      <img src={`/downloads/${img}`} className="w-full h-full object-cover" />
+                      {selectedGalleryImages.has(img) && (
+                        <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
+                          <CheckCircle2 className="text-white drop-shadow-md" size={32} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex gap-3">
+              <button onClick={() => setShowGalleryPicker(false)} className="flex-1 py-3 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition">取消</button>
+              <button 
+                onClick={selectFromGallery} 
+                disabled={selectedGalleryImages.size === 0}
+                className="flex-1 py-3 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                确认选择 ({selectedGalleryImages.size})
+              </button>
             </div>
           </div>
         </div>
