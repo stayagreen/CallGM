@@ -181,30 +181,31 @@ async function executeWithPhysicalSimulation(tasks: any) {
                     return;
                 }
 
-                // 只在最后一个模型回复区块中寻找
+                // 尝试定位最后一个模型回复区块
                 const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
                 const lastMessage = messages.length > 0 ? messages[messages.length - 1] : document;
                 
-                // 1. 首先检查图片是否已经生成出来
+                // 1. 检查图片
                 const images = lastMessage.querySelectorAll('img');
-                if (images.length === 0) return; // 还没图片，继续等
                 
-                imageFoundAttempts++;
-
-                // 2. 图片出现了！尝试找下载按钮
-                // 使用 outerHTML 进行最宽泛的匹配，哪怕文字写在 SVG 标签内部也能找到
-                const btns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id]'));
-                const targetBtns = btns.filter(b => {
+                // 2. 检查按钮
+                const allBtns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id]'));
+                const targetBtns = allBtns.filter(b => {
                     const html = b.outerHTML.toLowerCase();
                     return html.includes('下载完整尺寸') || 
                            html.includes('download full size') ||
                            html.includes('下载全部') ||
                            html.includes('download all') ||
                            html.includes('下载') || 
-                           html.includes('download'); // 放宽条件，只要包含下载字眼就行
+                           html.includes('download');
                 });
+
+                // 实时汇报状态给 Node.js (通过剪贴板)
+                const debugInfo = \`DEBUG: 第\${attempts}次扫描 | 找到图片:\${images.length}张 | 找到所有按钮:\${allBtns.length}个 | 匹配到下载按钮:\${targetBtns.length}个\`;
+                console.log(debugInfo); // 同时也打印在浏览器的 F12 控制台里
+                copyToClip(debugInfo);
                 
-                if (targetBtns.length > 0) {
+                if (targetBtns.length > 0 && images.length > 0) {
                     clearInterval(checkInterval);
                     
                     if (${task.download}) {
@@ -228,12 +229,12 @@ async function executeWithPhysicalSimulation(tasks: any) {
                             setTimeout(() => copyToClip('GEMINI_DONE'), 1500);
                         }, 500);
                     } else {
-                        copyToClip('GEMINI_DONE');
+                        setTimeout(() => copyToClip('GEMINI_DONE'), 500);
                     }
-                } else {
+                } else if (images.length > 0) {
                     // 图片生成了，但是没找到下载按钮！
-                    // 给它 10 秒钟的时间渲染按钮 (5次循环)
-                    if (imageFoundAttempts > 5) { 
+                    imageFoundAttempts++;
+                    if (imageFoundAttempts > 8) { // 宽限 16 秒寻找按钮
                         clearInterval(checkInterval);
                         copyToClip('GEMINI_NO_BTN');
                     }
@@ -246,11 +247,19 @@ async function executeWithPhysicalSimulation(tasks: any) {
         // 轮询剪贴板，等待网页发回的完成信号
         let isDone = false;
         let waitTime = 0;
+        let lastDebugMsg = '';
+        
         while (!isDone && waitTime < 130) {
             await new Promise(r => setTimeout(r, 1000));
             try {
                 const clipText = await clipboard.getContent();
-                if (clipText === 'GEMINI_DONE') {
+                
+                if (clipText.startsWith('DEBUG:')) {
+                    if (clipText !== lastDebugMsg) {
+                        console.log(`  👉 [浏览器内部视角] ${clipText.substring(7)}`);
+                        lastDebugMsg = clipText;
+                    }
+                } else if (clipText === 'GEMINI_DONE') {
                     console.log('✅ 检测到图片已生成！' + (task.download ? '已触发自动下载。' : '未开启自动下载，跳过。'));
                     isDone = true;
                 } else if (clipText === 'GEMINI_NO_BTN') {
@@ -261,8 +270,7 @@ async function executeWithPhysicalSimulation(tasks: any) {
                     isDone = true;
                 }
             } catch (clipErr) {
-                // 忽略剪贴板读取偶尔失败的情况 (例如被系统或其他程序短暂占用)
-                // 只要不崩溃，下一次循环继续读即可
+                // 忽略剪贴板读取偶尔失败的情况
             }
             waitTime++;
         }
