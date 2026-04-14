@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle } from 'lucide-react';
 
 interface Task {
   id: string;
@@ -13,6 +13,14 @@ interface Task {
   count: number;
   download: boolean;
   downloadedFiles?: string[];
+}
+
+interface Job {
+  id: string;
+  timestamp: number;
+  tasks: Task[];
+  status: 'pending' | 'running' | 'completed';
+  progress: number;
 }
 
 interface Template {
@@ -32,34 +40,30 @@ export default function App() {
   const [activeTaskId, setActiveTaskId] = useState<string>('1');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [showGalleryModal, setShowGalleryModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery'>('tasks');
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
+  const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
-  
-  const [history, setHistory] = useState<HistoryItem[]>(() => {
-    const saved = localStorage.getItem('task_history');
-    return saved ? JSON.parse(saved) : [];
-  });
 
-  useEffect(() => {
-    localStorage.setItem('task_history', JSON.stringify(history));
-  }, [history]);
-
-  const fetchHistory = async () => {
+  const fetchJobs = async () => {
     try {
-      const res = await fetch('/api/history');
+      const res = await fetch('/api/jobs');
       const data = await res.json();
-      // Update local history with backend data (which includes downloadedFiles)
-      const formattedHistory = data.map((item: any) => ({
-        id: item.filename,
-        timestamp: item.timestamp,
-        tasks: item.tasks
-      }));
-      setHistory(formattedHistory);
+      setJobs(data);
     } catch (error) {
-      console.error('Failed to fetch history:', error);
+      console.error('Failed to fetch jobs:', error);
     }
   };
+
+  useEffect(() => {
+    let interval: any;
+    if (activeTab === 'records') {
+      fetchJobs();
+      interval = setInterval(fetchJobs, 2000);
+    }
+    return () => clearInterval(interval);
+  }, [activeTab]);
 
   const fetchGallery = async () => {
     try {
@@ -72,23 +76,23 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (showHistoryModal) fetchHistory();
-  }, [showHistoryModal]);
+    if (activeTab === 'gallery') fetchGallery();
+  }, [activeTab]);
 
-  useEffect(() => {
-    if (showGalleryModal) fetchGallery();
-  }, [showGalleryModal]);
-
-  const deleteHistory = async (filename: string) => {
-    if (!window.confirm('确定要删除这条历史记录吗？')) return;
-    
-    const deleteFiles = window.confirm('是否同时删除相关的本地图片源文件？\n\n点击"确定"删除源文件，点击"取消"仅删除历史记录。');
+  const deleteSelectedJobs = async () => {
+    if (selectedJobs.size === 0) return;
+    if (!window.confirm(`确定要删除选中的 ${selectedJobs.size} 条记录吗？\n(生成的图片不会被删除)`)) return;
     
     try {
-      await fetch(`/api/history/${filename}?deleteFiles=${deleteFiles}`, { method: 'DELETE' });
-      fetchHistory();
+      await fetch('/api/jobs/delete', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filenames: Array.from(selectedJobs) })
+      });
+      setSelectedJobs(new Set());
+      fetchJobs();
     } catch (error) {
-      console.error('Failed to delete history:', error);
+      console.error('Failed to delete jobs:', error);
     }
   };
 
@@ -110,7 +114,7 @@ export default function App() {
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []) as File[];
     const newImages = files.map(f => URL.createObjectURL(f));
     updateTask({ images: [...activeTask.images, ...newImages].slice(0, 10) });
   };
@@ -160,35 +164,38 @@ export default function App() {
     });
 
     if (response.ok) {
-      const newHistoryItem = { id: Date.now().toString(), timestamp: Date.now(), tasks: JSON.parse(JSON.stringify(tasks)) };
-      setHistory([newHistoryItem, ...history]);
-      alert('任务已保存到 task 目录，自动化脚本将自动执行！');
+      setTasks([{ id: '1', prompt: '', images: [], count: 1, download: false }]);
+      setActiveTaskId('1');
+      setActiveTab('records');
     }
   };
 
   return (
     <div className="p-6 max-w-4xl mx-auto bg-gray-50 min-h-screen">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-extrabold text-gray-900">CallGM 任务管理器</h1>
-        <div className="flex gap-2">
-          <button 
-            onClick={() => setShowGalleryModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50 shadow-sm transition font-medium"
-          >
-            <ImageIcon size={18} />
-            图库
-          </button>
-          <button 
-            onClick={() => setShowHistoryModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50 shadow-sm transition font-medium"
-          >
-            <History size={18} />
-            历史记录
-          </button>
-        </div>
+      <div className="flex gap-4 border-b border-gray-200 mb-6">
+        <button 
+          onClick={() => setActiveTab('tasks')} 
+          className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'tasks' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+        >
+          创建任务
+        </button>
+        <button 
+          onClick={() => setActiveTab('records')} 
+          className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+        >
+          任务记录
+        </button>
+        <button 
+          onClick={() => setActiveTab('gallery')} 
+          className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+        >
+          本地图库
+        </button>
       </div>
       
-      <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+      {activeTab === 'tasks' && (
+        <>
+          <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
         {tasks.map((t, index) => (
           <div 
             key={t.id} 
@@ -265,96 +272,184 @@ export default function App() {
 
         <button onClick={handleExecute} className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-lg shadow-blue-200">执行所有任务</button>
       </div>
+      </>
+      )}
 
-      {showHistoryModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] overflow-y-auto">
-            <h2 className="text-2xl font-bold mb-6">执行历史记录</h2>
-            {history.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">暂无历史记录</p>
-            ) : (
-              history.map(h => (
-                <div key={h.id} className="flex justify-between items-center mb-3 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                  <div>
-                    <div className="font-bold text-gray-800">{new Date(h.timestamp).toLocaleString()}</div>
-                    <div className="text-sm text-gray-500">包含 {h.tasks.length} 个任务</div>
-                    
-                    {/* Display downloaded files for this history record */}
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {h.tasks.map(t => t.downloadedFiles?.map(img => (
-                        <a key={img} href={`/downloads/${img}`} target="_blank" rel="noreferrer" className="block w-12 h-12 rounded border border-gray-200 overflow-hidden hover:border-blue-500 transition-colors shadow-sm">
-                          <img src={`/downloads/${img}`} alt="downloaded" className="w-full h-full object-cover" />
-                        </a>
-                      )))}
-                    </div>
-                  </div>
-                  <div className="flex gap-2 items-start">
-                    <button 
-                      onClick={() => {
-                        setTasks(h.tasks);
-                        setActiveTaskId(h.tasks[0].id);
-                        setShowHistoryModal(false);
+      {activeTab === 'records' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold text-gray-800">执行进度与记录</h2>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => {
+                  if (selectedJobs.size === jobs.length && jobs.length > 0) setSelectedJobs(new Set());
+                  else setSelectedJobs(new Set(jobs.map(j => j.id)));
+                }} 
+                className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm"
+              >
+                {selectedJobs.size === jobs.length && jobs.length > 0 ? '取消全选' : '全选'}
+              </button>
+              <button 
+                onClick={deleteSelectedJobs} 
+                disabled={selectedJobs.size === 0} 
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-100 rounded-lg hover:bg-red-100 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+              >
+                <Trash2 size={16} />
+                批量删除 ({selectedJobs.size})
+              </button>
+            </div>
+          </div>
+          
+          {jobs.length === 0 ? (
+            <div className="text-center py-12 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
+              <ListIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+              <p>暂无任务记录</p>
+            </div>
+          ) : (
+            jobs.map(job => (
+              <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
+                <div className="flex items-start gap-4">
+                  <div className="pt-1">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedJobs.has(job.id)} 
+                      onChange={(e) => {
+                        const newSet = new Set(selectedJobs);
+                        if (e.target.checked) newSet.add(job.id);
+                        else newSet.delete(job.id);
+                        setSelectedJobs(newSet);
                       }} 
-                      className="px-4 py-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 font-medium transition"
+                      className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" 
+                    />
+                  </div>
+                  
+                  <div className="flex-grow">
+                    <div 
+                      className="cursor-pointer select-none"
+                      onClick={() => {
+                        const newSet = new Set(expandedJobs);
+                        if (newSet.has(job.id)) newSet.delete(job.id);
+                        else newSet.add(job.id);
+                        setExpandedJobs(newSet);
+                      }}
                     >
-                      重载此任务
-                    </button>
-                    <button 
-                      onClick={() => deleteHistory(h.id)} 
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
-                      title="删除记录"
-                    >
-                      <Trash2 size={18}/>
-                    </button>
+                      <div className="flex justify-between items-center mb-3">
+                        <div className="flex items-center gap-3">
+                          <span className="font-bold text-gray-900 text-lg">{new Date(job.timestamp).toLocaleString()}</span>
+                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
+                            job.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                            job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
+                            'bg-yellow-100 text-yellow-700'
+                          }`}>
+                            {job.status === 'completed' && <CheckCircle2 size={14} />}
+                            {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
+                            {job.status === 'pending' && <Clock size={14} />}
+                            {job.status === 'completed' ? '已完成' : job.status === 'running' ? '执行中' : '排队中'}
+                          </span>
+                        </div>
+                        <div className="text-sm text-gray-500 font-medium">
+                          {expandedJobs.has(job.id) ? '收起详情' : '查看详情'}
+                        </div>
+                      </div>
+                      
+                      {job.status === 'running' && (
+                        <div className="w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden border border-gray-200">
+                          <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
+                            <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="text-sm text-gray-600 flex items-center gap-4">
+                        <span>包含 {job.tasks.length} 个任务项</span>
+                        {job.status === 'running' && <span className="font-bold text-blue-600">总进度: {job.progress}%</span>}
+                      </div>
+                    </div>
+                    
+                    {expandedJobs.has(job.id) && (
+                      <div className="mt-5 pt-5 border-t border-gray-100 space-y-4">
+                        {job.tasks.map((t: any, idx: number) => (
+                          <div key={idx} className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                            <div className="flex justify-between items-start mb-3">
+                              <p className="text-sm font-bold text-gray-800 flex-grow">任务 {idx + 1}: <span className="font-normal text-gray-600">{t.prompt}</span></p>
+                              <span className="text-xs font-medium text-gray-500 bg-gray-200 px-2 py-1 rounded">循环 {t.count} 次</span>
+                            </div>
+                            
+                            {t.images && t.images.length > 0 && (
+                              <div className="mb-4">
+                                <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1"><ImageIcon size={14}/> 参考图片:</p>
+                                <div className="flex gap-2 flex-wrap">
+                                  {t.images.map((img: string, i: number) => (
+                                    <img key={i} src={img} className="w-16 h-16 object-cover rounded-lg border border-gray-300 shadow-sm" />
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            
+                            {t.downloadedFiles && t.downloadedFiles.length > 0 && (
+                              <div>
+                                <p className="text-xs font-bold text-green-600 mb-2 flex items-center gap-1"><Download size={14}/> 生成的图片 ({t.downloadedFiles.length}):</p>
+                                <div className="flex gap-2 flex-wrap">
+                                  {t.downloadedFiles.map((img: string, i: number) => (
+                                    <a key={i} href={`/downloads/${img}`} target="_blank" rel="noreferrer" className="block w-20 h-20 rounded-lg border border-gray-300 overflow-hidden hover:border-blue-500 transition-colors shadow-sm relative group">
+                                      <img src={`/downloads/${img}`} className="w-full h-full object-cover" />
+                                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                                        <ExternalLink className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                                      </div>
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
-              ))
-            )}
-            <button onClick={() => setShowHistoryModal(false)} className="mt-4 w-full text-gray-500 hover:text-gray-700 py-2 font-medium">关闭</button>
-          </div>
+              </div>
+            ))
+          )}
         </div>
       )}
 
-      {showGalleryModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-4xl max-h-[80vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold">本地图库</h2>
-              <button onClick={fetchGallery} className="text-sm text-blue-600 hover:text-blue-700 font-medium">刷新图库</button>
-            </div>
-            
-            {galleryImages.length === 0 ? (
-              <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-lg border border-gray-200 border-dashed">
-                <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-400" />
-                <p>暂无下载的图片</p>
-                <p className="text-sm mt-1">执行带有开启下载选项的任务后，图片会显示在这里</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                {galleryImages.map(img => (
-                  <div key={img} className="group relative bg-white p-2 rounded-lg border border-gray-200 shadow-sm hover:shadow-md transition-all">
-                    <a href={`/downloads/${img}`} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden rounded bg-gray-100 relative">
-                      <img src={`/downloads/${img}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                        <ExternalLink className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
-                      </div>
-                    </a>
-                    <div className="mt-2 flex items-center justify-between">
-                      <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
-                      <button
-                        onClick={() => deleteGalleryImage(img)}
-                        className="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors"
-                        title="彻底删除源文件"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <button onClick={() => setShowGalleryModal(false)} className="mt-6 w-full text-gray-500 hover:text-gray-700 py-2 font-medium">关闭</button>
+      {activeTab === 'gallery' && (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-800">本地图库</h2>
+            <button onClick={fetchGallery} className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm">刷新图库</button>
           </div>
+          
+          {galleryImages.length === 0 ? (
+            <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
+              <ImageIcon className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+              <p className="text-lg font-medium text-gray-600">暂无下载的图片</p>
+              <p className="text-sm mt-2">执行带有开启下载选项的任务后，图片会显示在这里</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              {galleryImages.map(img => (
+                <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
+                  <a href={`/downloads/${img}`} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative">
+                    <img src={`/downloads/${img}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                      <ExternalLink className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                    </div>
+                  </a>
+                  <div className="mt-3 flex items-center justify-between px-1">
+                    <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
+                    <button
+                      onClick={() => deleteGalleryImage(img)}
+                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                      title="彻底删除源文件"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

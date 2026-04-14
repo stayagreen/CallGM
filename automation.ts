@@ -14,8 +14,9 @@ if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
 if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
 
 let isRunning = false;
-
 let lastHeartbeat = Date.now();
+
+export const jobProgress = new Map<string, { completed: number, total: number, status: string }>();
 
 export function startAutomationWatcher() {
   console.log('\n====================================================');
@@ -51,7 +52,7 @@ export function startAutomationWatcher() {
         const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         
         // Execute task (Physical Simulation)
-        const updatedTaskData = await executeWithPhysicalSimulation(taskData);
+        const updatedTaskData = await executeWithPhysicalSimulation(taskData, file);
         
         // Update the file with downloadedFiles info before moving
         if (updatedTaskData) {
@@ -73,10 +74,11 @@ export function startAutomationWatcher() {
   }, 3000); // Check every 3 seconds
 }
 
-async function waitForAndMoveDownloads(startTime: number, systemDownloadsDir: string, projectDownloadDir: string) {
+async function waitForAndMoveDownloads(initialSnapshot: Set<string>, systemDownloadsDir: string, projectDownloadDir: string): Promise<string[]> {
     console.log(`\n⏳ 开始监控系统下载目录: ${systemDownloadsDir}`);
     let attempts = 0;
     const maxAttempts = 60; // 最多等 60 秒
+    const movedFiles: string[] = [];
 
     while (attempts < maxAttempts) {
         await new Promise(r => setTimeout(r, 1000));
@@ -85,65 +87,72 @@ async function waitForAndMoveDownloads(startTime: number, systemDownloadsDir: st
         try {
             if (!fs.existsSync(systemDownloadsDir)) {
                 console.log(`⚠️ 找不到系统下载目录: ${systemDownloadsDir}`);
-                return;
+                return movedFiles;
             }
 
-            const files = fs.readdirSync(systemDownloadsDir);
-            let hasTempFiles = false;
-            let recentFiles = [];
+            const currentFiles = fs.readdirSync(systemDownloadsDir);
+            // 找出在触发下载后新出现的文件
+            const newFiles = currentFiles.filter(f => !initialSnapshot.has(f));
 
-            for (const file of files) {
-                const filePath = path.join(systemDownloadsDir, file);
-                try {
-                    const stat = fs.statSync(filePath);
-                    // 检查是否是刚下载的文件 (给 5 秒的容错时间)
-                    if (stat.mtimeMs > startTime - 5000 || stat.ctimeMs > startTime - 5000) {
-                        // 如果存在 Chrome/Firefox 等浏览器的临时下载文件后缀，说明还没下载完
-                        if (file.endsWith('.crdownload') || file.endsWith('.part') || file.endsWith('.tmp')) {
-                            hasTempFiles = true;
-                            break; 
-                        }
-                        // 匹配常见的图片格式和 zip 压缩包
-                        if (file.match(/\.(jpg|jpeg|png|webp|gif|zip)$/i)) {
-                            recentFiles.push(file);
-                        }
-                    }
-                } catch (e) {
-                    // 忽略无法读取状态的文件
+            if (newFiles.length === 0) {
+                if (attempts % 5 === 0) console.log('   ...等待新文件出现...');
+                continue;
+            }
+
+            let isDownloading = false;
+            let readyFiles = [];
+
+            for (const file of newFiles) {
+                // 如果存在 Chrome/Firefox 等浏览器的临时下载文件后缀，说明还没下载完
+                if (file.endsWith('.crdownload') || file.endsWith('.part') || file.endsWith('.tmp')) {
+                    isDownloading = true;
+                    break; 
+                }
+                // 匹配常见的图片格式和 zip 压缩包
+                if (file.match(/\.(jpg|jpeg|png|webp|gif|zip)$/i)) {
+                    readyFiles.push(file);
                 }
             }
 
-            if (hasTempFiles) {
+            if (isDownloading) {
                 if (attempts % 5 === 0) console.log('   ...文件正在下载中，请稍候...');
                 continue; // 继续等待下载完成
             }
 
-            if (recentFiles.length > 0) {
-                // 额外等待 1.5 秒，确保浏览器彻底释放文件占用
-                await new Promise(r => setTimeout(r, 1500));
+            if (readyFiles.length > 0) {
+                // 额外等待 2 秒，确保浏览器彻底释放文件占用锁
+                await new Promise(r => setTimeout(r, 2000));
                 
-                for (const file of recentFiles) {
+                for (const file of readyFiles) {
                     const oldPath = path.join(systemDownloadsDir, file);
                     const newPath = path.join(projectDownloadDir, file);
                     try {
-                        // 使用 copy + unlink 避免跨盘符移动报错 (EXDEV)
-                        fs.copyFileSync(oldPath, newPath);
-                        fs.unlinkSync(oldPath);
-                        console.log(`📦 成功剪切文件: ${file} -> 项目 download 目录`);
+                        if (fs.existsSync(oldPath)) {
+                            // 使用 copy + unlink 避免跨盘符移动报错 (EXDEV)
+                            fs.copyFileSync(oldPath, newPath);
+                            fs.unlinkSync(oldPath);
+                            console.log(`📦 成功剪切文件: ${file} -> 项目 download 目录`);
+                            movedFiles.push(file);
+                        }
                     } catch (moveErr) {
                         console.error(`❌ 移动文件失败: ${file}`, moveErr);
                     }
                 }
-                return; // 移动完毕，退出等待
+                return movedFiles; // 移动完毕，退出等待
             }
         } catch (err) {
             console.error('监控下载目录时出错:', err);
         }
     }
-    console.log('⚠️ 等待下载超时或未检测到新文件。如果文件已下载，可能保存在了非默认路径。');
+    console.log('⚠️ 等待下载超时或未检测到新文件。请检查：1. 浏览器是否弹出了"另存为"对话框？ 2. 浏览器的默认下载路径是否被修改？');
+    return movedFiles;
 }
 
-async function executeWithPhysicalSimulation(tasks: any) {
+async function executeWithPhysicalSimulation(tasks: any, filename: string) {
+  const totalLoops = tasks.reduce((acc: number, t: any) => acc + t.count, 0);
+  let completedLoops = 0;
+  jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+
   try {
     // Dynamically import nut.js (using the maintained fork) and open
     const nutjs = await import('@nut-tree-fork/nut-js');
@@ -296,7 +305,7 @@ async function executeWithPhysicalSimulation(tasks: any) {
                     updateStatus('GEMINI_FOUND\\n✅ 找到图片和按钮，等待 3 秒后下载...', true);
                     if (${task.download}) {
                         setTimeout(() => {
-                            updateStatus('GEMINI_DOWNLOADING\\n⬇️ 正在触发下载...', true);
+                            updateStatus('GEMINI_TRIGGERING\\n⬇️ 正在触发下载...', true);
                             images.forEach(img => {
                                 img.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
                                 img.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
@@ -310,9 +319,7 @@ async function executeWithPhysicalSimulation(tasks: any) {
                                     btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
                                     btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
                                 });
-                                setTimeout(() => {
-                                    updateStatus('GEMINI_DONE\\n🎉 下载任务完成！', true);
-                                }, 2000);
+                                updateStatus('GEMINI_CLICKED\\n⏳ 已点击下载，等待系统保存文件...', true);
                             }, 500);
                         }, 3000);
                     } else {
@@ -338,43 +345,45 @@ async function executeWithPhysicalSimulation(tasks: any) {
         let isDone = false;
         let waitTime = 0;
         let lastDebugMsg = '';
-        let downloadStartTime = 0;
+        let initialDownloadsSnapshot = new Set<string>();
+        const systemDownloadsDir = path.join(os.homedir(), 'Downloads');
         
         while (!isDone && waitTime < 130) {
             await new Promise(r => setTimeout(r, 1000));
             try {
                 const clipText = await clipboard.getContent();
                 
-                if (clipText.startsWith('DEBUG:') || clipText.startsWith('GEMINI_FOUND') || clipText.startsWith('GEMINI_DOWNLOADING')) {
+                if (clipText.startsWith('DEBUG:') || clipText.startsWith('GEMINI_')) {
                     if (clipText !== lastDebugMsg) {
                         console.log(`  👉 [浏览器内部视角] ${clipText.replace(/\\n/g, ' ')}`);
                         lastDebugMsg = clipText;
-                        // 记录触发下载的精确时间点
-                        if (clipText.startsWith('GEMINI_DOWNLOADING')) {
-                            downloadStartTime = Date.now();
+                        
+                        if (clipText.startsWith('GEMINI_FOUND')) {
+                            // 在触发下载前，给系统的 Downloads 文件夹拍个“快照”
+                            if (fs.existsSync(systemDownloadsDir)) {
+                                initialDownloadsSnapshot = new Set(fs.readdirSync(systemDownloadsDir));
+                            }
+                        } else if (clipText.startsWith('GEMINI_CLICKED')) {
+                            // 浏览器已经点击了下载按钮，Node.js 接管后续的监控工作
+                            if (task.download) {
+                                const files = await waitForAndMoveDownloads(initialDownloadsSnapshot, systemDownloadsDir, downloadDir);
+                                if (files && files.length > 0) {
+                                    task.downloadedFiles.push(...files);
+                                }
+                            }
+                            console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
+                            isDone = true;
+                            completedLoops++;
+                            jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+                            await new Promise(r => setTimeout(r, 2000)); // 额外缓冲时间
+                        } else if (clipText.startsWith('GEMINI_DONE') || clipText.startsWith('GEMINI_NO_BTN') || clipText.startsWith('GEMINI_TIMEOUT')) {
+                            console.log('✅ 当前任务执行完毕！准备进入下一个任务。');
+                            isDone = true;
+                            completedLoops++;
+                            jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+                            await new Promise(r => setTimeout(r, 2000));
                         }
                     }
-                } else if (clipText === 'GEMINI_DONE') {
-                    console.log('✅ 浏览器端点击操作完毕！');
-                    isDone = true;
-                    
-                    // 如果开启了下载，并且成功记录了下载触发时间，则开始监控系统下载目录
-                    if (task.download && downloadStartTime > 0) {
-                        const systemDownloadsDir = path.join(os.homedir(), 'Downloads');
-                        const files = await waitForAndMoveDownloads(downloadStartTime, systemDownloadsDir, downloadDir);
-                        if (files && files.length > 0) {
-                            task.downloadedFiles.push(...files);
-                        }
-                    }
-                    
-                    console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
-                    await new Promise(r => setTimeout(r, 2000)); // 额外缓冲时间
-                } else if (clipText === 'GEMINI_NO_BTN') {
-                    console.log('⚠️ 图片已生成，但未能找到“下载”按钮！可能是 Gemini 界面更新了。');
-                    isDone = true;
-                } else if (clipText === 'GEMINI_TIMEOUT') {
-                    console.log('❌ 等待超时 (120秒)，未检测到图片。');
-                    isDone = true;
                 }
             } catch (clipErr) {
                 // 忽略剪贴板读取偶尔失败的情况
@@ -415,5 +424,7 @@ async function executeWithPhysicalSimulation(tasks: any) {
         console.error('详细堆栈:', error.stack);
     }
     console.log('\n(提示: 如果上方报错提示找不到模块，请在本地运行 npm install @nut-tree-fork/nut-js open)');
+  } finally {
+    jobProgress.delete(filename);
   }
 }

@@ -3,7 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { startAutomationWatcher } from "./automation.js";
+import { startAutomationWatcher, jobProgress } from "./automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -36,52 +36,71 @@ async function startServer() {
     res.json({ status: "ok", message: "Tasks queued", filename });
   });
 
-  // API route to get history
-  app.get("/api/history", (req, res) => {
-    if (!fs.existsSync(historyDir)) return res.json([]);
-    const files = fs.readdirSync(historyDir).filter(f => f.endsWith('.json'));
-    const history = files.map(file => {
-      const filePath = path.join(historyDir, file);
-      const stat = fs.statSync(filePath);
-      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      return {
-        filename: file,
-        timestamp: stat.mtimeMs,
-        tasks: data
-      };
-    });
-    history.sort((a, b) => b.timestamp - a.timestamp);
-    res.json(history);
+  // API route to get jobs (pending, running, completed)
+  app.get("/api/jobs", (req, res) => {
+    const jobs: any[] = [];
+    
+    // Read completed jobs from history
+    if (fs.existsSync(historyDir)) {
+      const files = fs.readdirSync(historyDir).filter(f => f.endsWith('.json'));
+      for (const file of files) {
+        try {
+          const stat = fs.statSync(path.join(historyDir, file));
+          const data = JSON.parse(fs.readFileSync(path.join(historyDir, file), 'utf-8'));
+          jobs.push({
+            id: file,
+            timestamp: stat.mtimeMs,
+            tasks: data,
+            status: 'completed',
+            progress: 100
+          });
+        } catch (e) {}
+      }
+    }
+
+    // Read pending/running jobs from task dir
+    if (fs.existsSync(taskDir)) {
+      const files = fs.readdirSync(taskDir).filter(f => f.endsWith('.json') && fs.statSync(path.join(taskDir, f)).isFile());
+      for (const file of files) {
+        try {
+          const stat = fs.statSync(path.join(taskDir, file));
+          const data = JSON.parse(fs.readFileSync(path.join(taskDir, file), 'utf-8'));
+          const progressInfo = jobProgress.get(file);
+          
+          let progress = 0;
+          let status = 'pending';
+          if (progressInfo) {
+            status = progressInfo.status;
+            progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
+          }
+
+          jobs.push({
+            id: file,
+            timestamp: stat.mtimeMs,
+            tasks: data,
+            status: status,
+            progress: progress
+          });
+        } catch (e) {}
+      }
+    }
+
+    jobs.sort((a, b) => b.timestamp - a.timestamp);
+    res.json(jobs);
   });
 
-  // API route to delete history
-  app.delete("/api/history/:filename", (req, res) => {
-    const filePath = path.join(historyDir, req.params.filename);
-    const deleteFiles = req.query.deleteFiles === 'true';
-
-    if (fs.existsSync(filePath)) {
-      if (deleteFiles) {
-        try {
-          const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-          taskData.forEach((task: any) => {
-            if (task.downloadedFiles && Array.isArray(task.downloadedFiles)) {
-              task.downloadedFiles.forEach((file: string) => {
-                const imgPath = path.join(downloadDir, file);
-                if (fs.existsSync(imgPath)) {
-                  fs.unlinkSync(imgPath);
-                }
-              });
-            }
-          });
-        } catch (e) {
-          console.error('Error deleting associated files:', e);
-        }
-      }
-      fs.unlinkSync(filePath);
-      res.json({ success: true });
-    } else {
-      res.status(404).json({ error: "File not found" });
+  // API route to batch delete jobs
+  app.post("/api/jobs/delete", (req, res) => {
+    const { filenames } = req.body;
+    if (!Array.isArray(filenames)) return res.status(400).json({error: 'Invalid request'});
+    
+    for (const file of filenames) {
+      const historyPath = path.join(historyDir, file);
+      const taskPath = path.join(taskDir, file);
+      if (fs.existsSync(historyPath)) fs.unlinkSync(historyPath);
+      if (fs.existsSync(taskPath)) fs.unlinkSync(taskPath);
     }
+    res.json({ success: true });
   });
 
   // Get all downloaded images
