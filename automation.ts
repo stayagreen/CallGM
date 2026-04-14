@@ -13,8 +13,14 @@ if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
 
 let isRunning = false;
 
+let lastHeartbeat = Date.now();
+
 export function startAutomationWatcher() {
-  console.log('Starting task watcher on:', taskDir);
+  console.log('\n====================================================');
+  console.log('🚀 CallGM 自动化引擎已成功启动！');
+  console.log(`📂 正在实时监听任务目录: ${taskDir}`);
+  console.log('👀 等待接收前端发送的任务...');
+  console.log('====================================================\n');
   
   // Simple polling to avoid fs.watch cross-platform quirks
   setInterval(async () => {
@@ -23,25 +29,37 @@ export function startAutomationWatcher() {
 
     try {
       const files = fs.readdirSync(taskDir);
-      for (const file of files) {
+      const taskFiles = files.filter(f => f.endsWith('.json') && fs.statSync(path.join(taskDir, f)).isFile());
+
+      if (taskFiles.length > 0) {
+          console.log(`\n🔔 [${new Date().toLocaleTimeString()}] 检测到 ${taskFiles.length} 个新任务文件！准备开始执行...`);
+      } else {
+          // 每 60 秒打印一次心跳日志，让用户知道脚本还在正常工作
+          if (Date.now() - lastHeartbeat > 60000) {
+              console.log(`⏳ [${new Date().toLocaleTimeString()}] 自动化引擎持续监听中... (暂无新任务)`);
+              lastHeartbeat = Date.now();
+          }
+      }
+
+      for (const file of taskFiles) {
         const filePath = path.join(taskDir, file);
-        if (file.endsWith('.json') && fs.statSync(filePath).isFile()) {
-          console.log(`Found new task file: ${file}`);
-          
-          // Read task
-          const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-          
-          // Execute task (Physical Simulation)
-          await executeWithPhysicalSimulation(taskData);
-          
-          // Move to history
-          const historyPath = path.join(historyDir, file);
-          fs.renameSync(filePath, historyPath);
-          console.log(`Task ${file} completed and moved to history.`);
-        }
+        console.log(`\n📄 开始解析任务文件: ${file}`);
+        
+        // Read task
+        const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        
+        // Execute task (Physical Simulation)
+        await executeWithPhysicalSimulation(taskData);
+        
+        // Move to history
+        const historyPath = path.join(historyDir, file);
+        fs.renameSync(filePath, historyPath);
+        console.log(`✅ 任务文件 ${file} 已全部执行完毕，并归档到 history 目录。`);
+        console.log('👀 恢复监听新任务...\n');
+        lastHeartbeat = Date.now(); // 任务完成后重置心跳计时
       }
     } catch (err) {
-      console.error('Error in watcher:', err);
+      console.error('❌ 自动化引擎发生错误:', err);
     } finally {
       isRunning = false; // 执行完毕后释放锁
     }
