@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import os from 'os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const taskDir = path.join(__dirname, 'task');
@@ -53,6 +54,7 @@ async function executeWithPhysicalSimulation(tasks: any) {
     const nutjs = await import('@nut-tree-fork/nut-js');
     const { keyboard, Key, mouse, screen, clipboard } = nutjs;
     const open = (await import('open')).default;
+    const isMac = os.platform() === 'darwin';
 
     console.log('\n====================================================');
     console.log('准备开始【物理键鼠模拟】执行！');
@@ -70,34 +72,58 @@ async function executeWithPhysicalSimulation(tasks: any) {
       for (let i = 0; i < task.count; i++) {
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
         
-        // 2. 智能定位：通过地址栏注入 JS 代码来让输入框自动获取焦点
-        // 这完美解决了不同分辨率、不同语言、不同主题下的定位问题
-        console.log('正在智能定位输入框...');
-        await keyboard.pressKey(Key.LeftControl, Key.L); // Mac 用户如果是 Cmd+L，可在此修改为 Key.LeftSuper
-        await keyboard.releaseKey(Key.LeftControl, Key.L);
+        // 2. 智能定位：通过开发者工具(Console)注入 JS 代码
+        // 这完美避开了地址栏被中文输入法拦截，以及 Chrome 自动搜索的问题
+        console.log('正在智能定位输入框 (通过开发者工具)...');
+        
+        // 打开开发者工具 (Console)
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
+            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
+        }
+        await new Promise(r => setTimeout(r, 2000)); // 等待控制台打开
+
+        // 粘贴 JS 代码
+        const focusScript = `(() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })();`;
+        await clipboard.setContent(focusScript);
+        
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.V);
+            await keyboard.releaseKey(Key.LeftSuper, Key.V);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.V);
+            await keyboard.releaseKey(Key.LeftControl, Key.V);
+        }
         await new Promise(r => setTimeout(r, 500));
 
-        // 输入 javascript: 协议头 (必须手动输入，浏览器禁止直接粘贴协议头)
-        await keyboard.type('javascript:');
-        
-        // 注入寻找输入框并聚焦的代码 (兼容各种富文本框)
-        // 注意：必须以 javascript: 开头，并且不能有返回值，否则浏览器可能会跳转
-        const focusScript = `void((() => { const box = document.querySelector('rich-textarea, [contenteditable="true"], textarea'); if(box) { box.focus(); } })());`;
-        await clipboard.setContent(focusScript);
-        await keyboard.pressKey(Key.LeftControl, Key.V); // Mac 为 Cmd+V
-        await keyboard.releaseKey(Key.LeftControl, Key.V);
-        await new Promise(r => setTimeout(r, 500));
-        
-        // 执行注入的脚本，此时光标会自动跳到 Gemini 的输入框内
+        // 执行代码
         await keyboard.pressKey(Key.Enter);
         await keyboard.releaseKey(Key.Enter);
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 500));
+
+        // 关闭开发者工具
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+            await keyboard.releaseKey(Key.LeftSuper, Key.LeftAlt, Key.J);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
+            await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
+        }
+        await new Promise(r => setTimeout(r, 1000)); // 等待控制台关闭，焦点回到页面
 
         // 3. 复制提示词并粘贴 (支持中文)
         console.log('输入提示词...');
         await clipboard.setContent(task.prompt);
-        await keyboard.pressKey(Key.LeftControl, Key.V);
-        await keyboard.releaseKey(Key.LeftControl, Key.V);
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.V);
+            await keyboard.releaseKey(Key.LeftSuper, Key.V);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.V);
+            await keyboard.releaseKey(Key.LeftControl, Key.V);
+        }
         await new Promise(r => setTimeout(r, 1000));
 
         // 4. 发送 (回车)
@@ -109,11 +135,16 @@ async function executeWithPhysicalSimulation(tasks: any) {
         console.log('等待生图完成 (15秒)...');
         await new Promise(r => setTimeout(r, 15000));
         
-        // 如果还有下一次循环，刷新页面以重置状态 (Ctrl+R)
+        // 如果还有下一次循环，刷新页面以重置状态
         if (i < task.count - 1 || tasks.indexOf(task) < tasks.length - 1) {
             console.log('刷新页面准备下一次任务...');
-            await keyboard.pressKey(Key.LeftControl, Key.R);
-            await keyboard.releaseKey(Key.LeftControl, Key.R);
+            if (isMac) {
+                await keyboard.pressKey(Key.LeftSuper, Key.R);
+                await keyboard.releaseKey(Key.LeftSuper, Key.R);
+            } else {
+                await keyboard.pressKey(Key.LeftControl, Key.R);
+                await keyboard.releaseKey(Key.LeftControl, Key.R);
+            }
             await new Promise(r => setTimeout(r, 8000));
         }
       }
