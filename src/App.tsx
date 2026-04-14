@@ -47,27 +47,12 @@ export default function App() {
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/config').then(res => res.json()).then(data => setSystemConfig(data));
     fetch('/api/templates').then(res => res.json()).then(data => setTemplates(data));
   }, []);
-
-  const downloadImage = (url: string, filename: string) => {
-    fetch(url)
-      .then(response => response.blob())
-      .then(blob => {
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(url);
-      });
-  };
 
   const saveTemplates = async (newTemplates: Template[]) => {
     setTemplates(newTemplates);
@@ -108,7 +93,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (activeTab === 'records') fetchJobs();
     if (activeTab === 'gallery') fetchGallery();
   }, [activeTab]);
 
@@ -449,7 +433,7 @@ export default function App() {
                                 <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1"><ImageIcon size={14}/> 参考图片:</p>
                                 <div className="flex gap-2 flex-wrap">
                                   {t.images.map((img: string, i: number) => (
-                                    <img key={i} src={img} className="w-16 h-16 object-cover rounded-lg border border-gray-300 shadow-sm" />
+                                    <img key={i} src={img} onClick={() => setViewingImage(img)} className="w-16 h-16 object-cover rounded-lg border border-gray-300 shadow-sm cursor-pointer hover:opacity-80" />
                                   ))}
                                 </div>
                               </div>
@@ -472,12 +456,9 @@ export default function App() {
                                 <p className="text-xs font-bold text-green-600 mb-2 flex items-center gap-1"><Download size={14}/> 生成的图片 ({t.downloadedFiles.length}):</p>
                                 <div className="flex gap-2 flex-wrap">
                                   {t.downloadedFiles.map((img: string, i: number) => (
-                                  <div key={i} className="block w-20 h-20 rounded-lg border border-gray-300 overflow-hidden hover:border-blue-500 transition-colors shadow-sm relative group cursor-pointer" onClick={() => setPreviewImage(`/downloads/${img}`)}>
-                                    <img src={`/downloads/${img}`} className="w-full h-full object-cover" />
-                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                                      <Search className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                                    <div key={i} onClick={() => setViewingImage(`/downloads/${img}`)} className="block w-20 h-20 rounded-lg border border-gray-300 overflow-hidden hover:border-blue-500 transition-colors shadow-sm relative group cursor-pointer">
+                                      <img src={`/downloads/${img}`} className="w-full h-full object-cover" />
                                     </div>
-                                  </div>
                                   ))}
                                 </div>
                               </div>
@@ -511,12 +492,12 @@ export default function App() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
               {galleryImages.map(img => (
                 <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
-                  <div onClick={() => setPreviewImage(`/downloads/${img}`)} className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
+                  <a href={`/downloads/${img}`} target="_blank" rel="noreferrer" className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative">
                     <img src={`/downloads/${img}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                      <Search className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                      <ExternalLink className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                     </div>
-                  </div>
+                  </a>
                   <div className="mt-3 flex items-center justify-between px-1">
                     <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
                     <button
@@ -531,18 +512,6 @@ export default function App() {
               ))}
             </div>
           )}
-        </div>
-      )}
-
-      {previewImage && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setPreviewImage(null)}>
-          <div className="relative max-w-4xl max-h-[90vh] bg-white rounded-xl overflow-hidden shadow-2xl">
-            <img src={previewImage} className="max-w-full max-h-[80vh] object-contain" />
-            <div className="p-4 flex justify-center gap-4">
-              <button onClick={(e) => { e.stopPropagation(); downloadImage(previewImage, previewImage.split('/').pop() || 'image.png'); }} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">下载图片</button>
-              <button onClick={() => setPreviewImage(null)} className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg font-bold hover:bg-gray-300">关闭</button>
-            </div>
-          </div>
         </div>
       )}
 
@@ -636,6 +605,17 @@ export default function App() {
             <div className="flex gap-3">
               <button onClick={() => setShowConfigModal(false)} className="flex-1 py-3 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition">取消</button>
               <button onClick={saveConfig} className="flex-1 py-3 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition">保存设置</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {viewingImage && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]" onClick={() => setViewingImage(null)}>
+          <div className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-lg">
+            <img src={viewingImage} className="max-w-full max-h-[80vh] object-contain" />
+            <div className="flex justify-center gap-4 mt-4">
+              <a href={viewingImage} download className="bg-white text-gray-800 px-6 py-2 rounded-full font-bold hover:bg-gray-100">下载图片</a>
+              <button onClick={() => setViewingImage(null)} className="bg-gray-700 text-white px-6 py-2 rounded-full font-bold hover:bg-gray-600">关闭</button>
             </div>
           </div>
         </div>
