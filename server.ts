@@ -12,23 +12,45 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: "10mb" }));
+  app.use(express.json({ limit: "50mb" }));
 
   const taskDir = path.join(__dirname, "task");
   const historyDir = path.join(taskDir, "history");
   const downloadDir = path.join(__dirname, "download");
+  const uploadsDir = path.join(__dirname, "uploads");
   
   if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true });
   if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
   if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
   // Serve static files from the download directory
   app.use("/downloads", express.static(downloadDir));
+  app.use("/uploads", express.static(uploadsDir));
 
   // API route to save generation request
   app.post("/api/execute", (req, res) => {
     const { tasks } = req.body;
     
+    // Process base64 images and save them as files
+    tasks.forEach((task: any) => {
+      if (task.images && Array.isArray(task.images)) {
+        task.images = task.images.map((img: string) => {
+          if (img.startsWith('data:image')) {
+            const matches = img.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+            if (matches) {
+              const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+              const base64Data = matches[2];
+              const filename = `ref_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
+              fs.writeFileSync(path.join(uploadsDir, filename), base64Data, 'base64');
+              return `/uploads/${filename}`;
+            }
+          }
+          return img;
+        });
+      }
+    });
+
     // Save to JSON file with unique name
     const filename = `task_${Date.now()}.json`;
     const filePath = path.join(taskDir, filename);

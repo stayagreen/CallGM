@@ -119,10 +119,17 @@ export default function App() {
     setTasks(tasks.map(t => t.id === activeTaskId ? { ...t, ...updates } : t));
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []) as File[];
-    const newImages = files.map(f => URL.createObjectURL(f));
-    updateTask({ images: [...activeTask.images, ...newImages].slice(0, 10) });
+    const promises = files.map(f => {
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => resolve(ev.target?.result as string);
+        reader.readAsDataURL(f);
+      });
+    });
+    const base64Images = await Promise.all(promises);
+    updateTask({ images: [...activeTask.images, ...base64Images].slice(0, 10) });
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);

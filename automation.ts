@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
+import { execSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const taskDir = path.join(__dirname, 'task');
@@ -12,6 +13,23 @@ const downloadDir = path.join(__dirname, 'download');
 if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true });
 if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
 if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
+
+function copyImageToClipboard(imagePath: string, isMac: boolean) {
+    try {
+        const absPath = path.resolve(imagePath);
+        if (isMac) {
+            execSync(`osascript -e 'set the clipboard to (read (POSIX file "${absPath}") as TIFF picture)'`);
+        } else if (os.platform() === 'win32') {
+            execSync(`powershell -command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('${absPath}'))"`);
+        } else {
+            execSync(`xclip -selection clipboard -t image/png -i "${absPath}"`);
+        }
+        return true;
+    } catch (e) {
+        console.error('复制图片到剪贴板失败:', e);
+        return false;
+    }
+}
 
 let isRunning = false;
 let lastHeartbeat = Date.now();
@@ -231,8 +249,32 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
     for (const task of tasks) {
       if (!task.downloadedFiles) task.downloadedFiles = [];
       for (let i = 0; i < task.count; i++) {
+        jobProgress.set(filename, { completed: completedLoops + 0.1, total: totalLoops, status: 'running' });
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
         
+        // 1.5 粘贴参考图
+        if (task.images && task.images.length > 0) {
+            console.log(`准备粘贴 ${task.images.length} 张参考图...`);
+            for (const imgUrl of task.images) {
+                const localPath = path.join(__dirname, imgUrl);
+                if (fs.existsSync(localPath)) {
+                    const success = copyImageToClipboard(localPath, isMac);
+                    if (success) {
+                        if (isMac) {
+                            await keyboard.pressKey(Key.LeftSuper, Key.V);
+                            await keyboard.releaseKey(Key.LeftSuper, Key.V);
+                        } else {
+                            await keyboard.pressKey(Key.LeftControl, Key.V);
+                            await keyboard.releaseKey(Key.LeftControl, Key.V);
+                        }
+                        await new Promise(r => setTimeout(r, 2000)); // 等待图片上传解析
+                    }
+                }
+            }
+        }
+
+        jobProgress.set(filename, { completed: completedLoops + 0.2, total: totalLoops, status: 'running' });
+
         // 2. 复制提示词并粘贴 (支持中文)
         // (注: Gemini 网页加载或刷新后默认会自动聚焦输入框，因此直接粘贴即可)
         console.log('输入提示词...');
@@ -245,6 +287,8 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             await keyboard.releaseKey(Key.LeftControl, Key.V);
         }
         await new Promise(r => setTimeout(r, 1000));
+
+        jobProgress.set(filename, { completed: completedLoops + 0.3, total: totalLoops, status: 'running' });
 
         // 4. 发送 (回车)
         console.log('发送任务...');
@@ -396,8 +440,12 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                         lastDebugMsg = clipText;
                         
                         if (clipText.startsWith('GEMINI_FOUND')) {
+                            jobProgress.set(filename, { completed: completedLoops + 0.6, total: totalLoops, status: 'running' });
                             // Snapshot is now taken before script injection
+                        } else if (clipText.startsWith('GEMINI_TRIGGERING')) {
+                            jobProgress.set(filename, { completed: completedLoops + 0.8, total: totalLoops, status: 'running' });
                         } else if (clipText.startsWith('GEMINI_CLICKED')) {
+                            jobProgress.set(filename, { completed: completedLoops + 0.9, total: totalLoops, status: 'running' });
                             // 浏览器已经点击了下载按钮，Node.js 接管后续的监控工作
                             if (task.download) {
                                 const files = await waitForAndMoveDownloads(initialDownloadsSnapshot, systemDownloadsDir, downloadDir);
