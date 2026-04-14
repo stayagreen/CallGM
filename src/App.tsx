@@ -246,51 +246,51 @@ export default function App() {
       
       {activeTab === 'tasks' && (
         <>
-          <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
-        {tasks.map((t, index) => (
-          <div 
-            key={t.id} 
-            onClick={() => setActiveTaskId(t.id)}
-            className={`flex items-center gap-2 px-5 py-2 rounded-full font-medium transition cursor-pointer select-none ${activeTaskId === t.id ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'}`}
-          >
-            <span>任务 {index + 1}</span>
-            {tasks.length > 1 && (
-              <button 
-                onClick={(e) => removeTask(e, t.id)} 
-                className={`p-0.5 rounded-full transition ${activeTaskId === t.id ? 'hover:bg-blue-500 text-white' : 'hover:bg-gray-200 text-gray-500'}`}
-                title="关闭任务"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-        ))}
-        <div className="relative">
-          <button onClick={() => setShowAddTaskMenu(!showAddTaskMenu)} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition shadow-sm"><Plus /></button>
-          {showAddTaskMenu && (
-            <div className="absolute left-0 top-full mt-2 w-40 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden py-1">
-              <button 
-                onClick={() => {
-                  addTask();
-                  setShowAddTaskMenu(false);
-                }}
-                className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
-              >
-                <ImageIcon size={16} /> 生图任务
-              </button>
-              <button 
-                onClick={() => {
-                  alert('视频任务开发中...');
-                  setShowAddTaskMenu(false);
-                }}
-                className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
-              >
-                <PlayCircle size={16} /> 视频任务
-              </button>
+          <div className="flex items-center gap-2 mb-6">
+            <div className="flex gap-2 overflow-x-auto pb-2 flex-grow">
+              {tasks.map((t, index) => (
+                <div 
+                  key={t.id} 
+                  onClick={() => setActiveTaskId(t.id)}
+                  className={`flex items-center gap-2 px-5 py-2 rounded-full font-medium transition cursor-pointer select-none flex-shrink-0 ${activeTaskId === t.id ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'}`}
+                >
+                  <span>任务 {index + 1}</span>
+                  <button 
+                    onClick={(e) => removeTask(e, t.id)} 
+                    className={`p-0.5 rounded-full transition ${activeTaskId === t.id ? 'hover:bg-blue-500 text-white' : 'hover:bg-gray-200 text-gray-500'}`}
+                    title="关闭任务"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
             </div>
-          )}
-        </div>
-      </div>
+            <div className="relative flex-shrink-0 mb-2">
+              <button onClick={() => setShowAddTaskMenu(!showAddTaskMenu)} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition shadow-sm"><Plus /></button>
+              {showAddTaskMenu && (
+                <div className="absolute right-0 top-full mt-2 w-40 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden py-1">
+                  <button 
+                    onClick={() => {
+                      addTask();
+                      setShowAddTaskMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
+                  >
+                    <ImageIcon size={16} /> 生图任务
+                  </button>
+                  <button 
+                    onClick={() => {
+                      alert('视频任务开发中...');
+                      setShowAddTaskMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
+                  >
+                    <PlayCircle size={16} /> 视频任务
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
 
       {tasks.length === 0 ? (
         <div className="bg-white p-12 rounded-2xl shadow-sm border border-gray-100 text-center">
