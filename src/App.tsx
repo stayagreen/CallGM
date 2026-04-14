@@ -153,19 +153,24 @@ export default function App() {
     }
   };
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+  const handlePaste = async (e: React.ClipboardEvent<HTMLDivElement>) => {
     const items = e.clipboardData.items;
-    const newImages: string[] = [];
+    const promises: Promise<string>[] = [];
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.indexOf('image') !== -1) {
-        const blob = items[i].getAsFile();
-        if (blob) {
-          newImages.push(URL.createObjectURL(blob));
+        const file = items[i].getAsFile();
+        if (file) {
+          promises.push(new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (ev) => resolve(ev.target?.result as string);
+            reader.readAsDataURL(file);
+          }));
         }
       }
     }
-    if (newImages.length > 0) {
-      updateTask({ images: [...activeTask.images, ...newImages].slice(0, 10) });
+    if (promises.length > 0) {
+      const base64Images = await Promise.all(promises);
+      updateTask({ images: [...activeTask.images, ...base64Images].slice(0, 10) });
     }
   };
 

@@ -355,11 +355,30 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             }
             function updateStatus(text) {
                 hud.innerText = text;
+                
+                // 尝试 fetch (如果跨域可能会失败)
                 fetch('http://localhost:3000/api/debug', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text })
                 }).catch(e => {});
+
+                // 尝试剪贴板 (如果失去焦点可能会失败)
+                try {
+                    const ta = document.createElement('textarea');
+                    ta.value = text; 
+                    document.body.appendChild(ta);
+                    ta.select();
+                    const success = document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    
+                    if (!success) {
+                        hud.style.backgroundColor = 'rgba(255,0,0,0.9)';
+                        hud.innerText = "⚠️ 请点击一下当前页面！\\n(浏览器拦截了状态同步)\\n\\n" + text;
+                    } else {
+                        hud.style.backgroundColor = 'rgba(0,0,0,0.85)';
+                    }
+                } catch(e) {}
             }
             let attempts = 0;
             let imageFoundAttempts = 0;
@@ -452,9 +471,19 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             await new Promise(r => setTimeout(r, 1000));
             waitTime++;
             
+            // 尝试从剪贴板读取 (作为 fetch 失败的后备方案)
+            try {
+                const clipText = await clipboard.getContent();
+                if (clipText.startsWith('DEBUG:') || clipText.startsWith('GEMINI_')) {
+                    browserDebugState = clipText;
+                }
+            } catch (e) {}
+
             if (browserDebugState !== lastHandledState) {
                 const currentState = browserDebugState;
                 lastHandledState = currentState;
+                
+                console.log(`  👉 [浏览器内部视角] ${currentState.replace(/\\n/g, ' ')}`);
                 
                 if (currentState.startsWith('GEMINI_FOUND')) {
                     jobProgress.set(filename, { completed: completedLoops + 0.6, total: totalLoops, status: 'running' });
