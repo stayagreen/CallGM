@@ -158,15 +158,30 @@ async function startServer() {
 
   // API route for config
   const configPath = path.join(__dirname, 'config.json');
+  const defaultConfig = { 
+    systemDownloadsDir: path.join(os.homedir(), 'Downloads'),
+    pasteMin: 5,
+    pasteMax: 5,
+    clickMin: 8,
+    clickMax: 8,
+    downloadMin: 120,
+    downloadMax: 120,
+    taskMin: 5,
+    taskMax: 5,
+    downloadCheckDelay: 1,
+    downloadRetries: 3
+  };
+
   app.get('/api/config', (req, res) => {
     if (fs.existsSync(configPath)) {
       try {
-        res.json(JSON.parse(fs.readFileSync(configPath, 'utf-8')));
+        const savedConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        res.json({ ...defaultConfig, ...savedConfig });
       } catch (e) {
-        res.json({ systemDownloadsDir: path.join(os.homedir(), 'Downloads') });
+        res.json(defaultConfig);
       }
     } else {
-      res.json({ systemDownloadsDir: path.join(os.homedir(), 'Downloads') });
+      res.json(defaultConfig);
     }
   });
 

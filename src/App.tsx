@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2 } from 'lucide-react';
 
 interface Task {
   id: string;
@@ -43,7 +43,19 @@ export default function App() {
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery'>('tasks');
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const [systemConfig, setSystemConfig] = useState({ systemDownloadsDir: '', pasteMin: 5, pasteMax: 5, clickMin: 8, clickMax: 8, downloadMin: 120, downloadMax: 120, taskMin: 5, taskMax: 5 });
+  const [systemConfig, setSystemConfig] = useState({ 
+    systemDownloadsDir: '', 
+    pasteMin: 5, 
+    pasteMax: 5, 
+    clickMin: 8, 
+    clickMax: 8, 
+    downloadMin: 120, 
+    downloadMax: 120, 
+    taskMin: 5, 
+    taskMax: 5,
+    downloadCheckDelay: 1,
+    downloadRetries: 3
+  });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
@@ -632,6 +644,14 @@ export default function App() {
                     <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskMin || 5} onChange={(e) => setSystemConfig({...systemConfig, taskMin: parseInt(e.target.value)})} />
                     <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskMax || 5} onChange={(e) => setSystemConfig({...systemConfig, taskMax: parseInt(e.target.value)})} />
                   </div>
+                </div>
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">点击下载后等待(秒):</label>
+                  <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadCheckDelay || 1} onChange={(e) => setSystemConfig({...systemConfig, downloadCheckDelay: parseInt(e.target.value)})} />
+                </div>
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">图片下载重试次数:</label>
+                  <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadRetries || 3} onChange={(e) => setSystemConfig({...systemConfig, downloadRetries: parseInt(e.target.value)})} />
                 </div>
               </div>
             </div>

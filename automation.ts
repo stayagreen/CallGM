@@ -197,7 +197,19 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
 
   // 提前加载配置
   let systemDownloadsDir = path.join(os.homedir(), 'Downloads');
-  let config = { systemDownloadsDir: '', pasteMin: 5, pasteMax: 5, clickMin: 8, clickMax: 8, downloadMin: 120, downloadMax: 120, taskMin: 5, taskMax: 5 };
+  let config = { 
+    systemDownloadsDir: '', 
+    pasteMin: 5, 
+    pasteMax: 5, 
+    clickMin: 8, 
+    clickMax: 8, 
+    downloadMin: 120, 
+    downloadMax: 120, 
+    taskMin: 5, 
+    taskMax: 5,
+    downloadCheckDelay: 1,
+    downloadRetries: 3
+  };
   const configPath = path.join(__dirname, 'config.json');
   if (fs.existsSync(configPath)) {
       try {
@@ -410,7 +422,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                     if (${task.download}) {
                         setTimeout(() => {
                             updateStatus('GEMINI_TRIGGERING\\n⬇️ 正在触发下载...');
-                            setTimeout(() => {
+                            const tryDownload = (retryCount) => {
                                 const currentBtns = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id]')).filter(b => {
                                     const html = b.outerHTML.toLowerCase();
                                     const text = b.innerText.toLowerCase();
@@ -420,7 +432,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                                 
                                 const btnsToClick = currentBtns.length > 0 ? currentBtns : targetBtns;
                                 
-                                /* 延迟逐个点击，防止浏览器拦截批量下载 */
                                 btnsToClick.forEach((btn, index) => {
                                     setTimeout(() => {
                                         btn.click();
@@ -428,8 +439,23 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                                         btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
                                     }, index * 1500);
                                 });
-                                updateStatus('GEMINI_CLICKED\\n⏳ 已触发下载！Node.js 正在后台监控文件...');
-                            }, 500);
+
+                                setTimeout(() => {
+                                    const bodyText = document.body.innerText;
+                                    const success = bodyText.includes('Downloading full size') || bodyText.includes('正在下载完整尺寸的图片');
+                                    
+                                    if (success) {
+                                        updateStatus('GEMINI_CLICKED\\n⏳ 已成功触发下载！Node.js 正在后台监控文件...');
+                                    } else if (retryCount < ${config.downloadRetries}) {
+                                        const waitTime = ${config.clickMax} * (retryCount + 1);
+                                        updateStatus('GEMINI_RETRYING\\n⚠️ 未检测到下载提示，' + waitTime + '秒后进行第' + (retryCount + 1) + '次重试...');
+                                        setTimeout(() => tryDownload(retryCount + 1), waitTime * 1000);
+                                    } else {
+                                        updateStatus('GEMINI_CLICKED\\n⏳ 已达到最大重试次数，Node.js 正在后台监控文件...');
+                                    }
+                                }, ${config.downloadCheckDelay} * 1000);
+                            };
+                            tryDownload(0);
                         }, ${getRandomTime(config.clickMin, config.clickMax)});
                     } else {
                         setTimeout(() => {
