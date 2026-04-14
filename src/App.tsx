@@ -423,8 +423,20 @@ export default function App() {
                               </div>
                             )}
                             
+                            <button 
+                              onClick={() => {
+                                const newTask = { id: Date.now().toString(), prompt: t.prompt, images: t.images || [], count: 1, download: false };
+                                setTasks([...tasks, newTask]);
+                                setActiveTaskId(newTask.id);
+                                setActiveTab('tasks');
+                              }}
+                              className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition flex items-center gap-1"
+                            >
+                              <Plus size={14}/> 导入此任务
+                            </button>
+                            
                             {t.downloadedFiles && t.downloadedFiles.length > 0 && (
-                              <div>
+                              <div className="mt-4">
                                 <p className="text-xs font-bold text-green-600 mb-2 flex items-center gap-1"><Download size={14}/> 生成的图片 ({t.downloadedFiles.length}):</p>
                                 <div className="flex gap-2 flex-wrap">
                                   {t.downloadedFiles.map((img: string, i: number) => (

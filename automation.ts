@@ -432,9 +432,10 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                     }
                 } else if (images.length > 0) {
                     imageFoundAttempts++;
-                    if (imageFoundAttempts > 8) {
+                    // 只要有图片，就一直等，直到找到下载按钮，不轻易报错
+                    if (imageFoundAttempts > 30) {
                         clearInterval(checkInterval);
-                        updateStatus('GEMINI_NO_BTN\\n⚠️ 图片已生成，但未找到下载按钮');
+                        updateStatus('GEMINI_NO_BTN\\n⚠️ 图片已生成，但长时间未找到下载按钮');
                     }
                 }
             }, 2000);
@@ -453,12 +454,16 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             if (files && files.length > 0) {
                 task.downloadedFiles.push(...files);
                 console.log(`📦 成功移动 ${files.length} 个文件`);
+                task.status = 'completed';
             } else {
-                console.log(`⚠️ 130秒内未检测到新图片，可能生成失败。`);
+                console.log(`⚠️ 130秒内未检测到新图片，任务失败。`);
+                task.status = 'failed';
+                throw new Error('下载超时或未检测到图片');
             }
         } else {
             console.log('✅ 脚本已注入！(未开启下载，等待 45 秒后进入下一任务)');
             await new Promise(r => setTimeout(r, 45000));
+            task.status = 'completed';
         }
 
         console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
@@ -466,16 +471,24 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
         await new Promise(r => setTimeout(r, 2000));
 
-        // 如果还有下一次循环，刷新页面以重置状态
+        // 如果还有下一次循环，关闭当前标签页，重新打开新标签页
         if (i < task.count - 1 || tasks.indexOf(task) < tasks.length - 1) {
-            console.log('🔄 刷新页面准备下一次任务...');
+            console.log('🔄 关闭当前标签页，重新打开新标签页...');
             if (isMac) {
-                await keyboard.pressKey(Key.LeftSuper, Key.R);
-                await keyboard.releaseKey(Key.LeftSuper, Key.R);
+                await keyboard.pressKey(Key.LeftSuper, Key.W);
+                await keyboard.releaseKey(Key.LeftSuper, Key.W);
+                await new Promise(r => setTimeout(r, 1000));
+                await keyboard.pressKey(Key.LeftSuper, Key.T);
+                await keyboard.releaseKey(Key.LeftSuper, Key.T);
             } else {
-                await keyboard.pressKey(Key.LeftControl, Key.R);
-                await keyboard.releaseKey(Key.LeftControl, Key.R);
+                await keyboard.pressKey(Key.LeftControl, Key.W);
+                await keyboard.releaseKey(Key.LeftControl, Key.W);
+                await new Promise(r => setTimeout(r, 1000));
+                await keyboard.pressKey(Key.LeftControl, Key.T);
+                await keyboard.releaseKey(Key.LeftControl, Key.T);
             }
+            await new Promise(r => setTimeout(r, 2000));
+            await open('https://gemini.google.com/');
             await new Promise(r => setTimeout(r, 8000));
         }
       }
