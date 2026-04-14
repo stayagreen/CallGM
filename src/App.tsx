@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface Task {
   id: string;
@@ -34,6 +34,122 @@ interface HistoryItem {
   timestamp: number;
   tasks: Task[];
 }
+
+const JobItem = React.memo(({ 
+  job, 
+  isSelected, 
+  isExpanded, 
+  onToggleSelect, 
+  onToggleExpand, 
+  onViewImage, 
+  onImportTask 
+}: { 
+  job: Job, 
+  isSelected: boolean, 
+  isExpanded: boolean, 
+  onToggleSelect: (id: string, checked: boolean) => void, 
+  onToggleExpand: (id: string) => void, 
+  onViewImage: (url: string) => void, 
+  onImportTask: (task: Task) => void 
+}) => {
+  return (
+    <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex items-start gap-4">
+        <div className="pt-1">
+          <input 
+            type="checkbox" 
+            checked={isSelected} 
+            onChange={(e) => onToggleSelect(job.id, e.target.checked)} 
+            className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" 
+          />
+        </div>
+        
+        <div className="flex-grow">
+          <div 
+            className="cursor-pointer select-none"
+            onClick={() => onToggleExpand(job.id)}
+          >
+            <div className="flex justify-between items-center mb-3">
+              <div className="flex items-center gap-3">
+                <span className="font-bold text-gray-900 text-lg">{new Date(job.timestamp).toLocaleString()}</span>
+                <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
+                  job.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                  job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
+                  'bg-yellow-100 text-yellow-700'
+                }`}>
+                  {job.status === 'completed' && <CheckCircle2 size={14} />}
+                  {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
+                  {job.status === 'pending' && <Clock size={14} />}
+                  {job.status === 'completed' ? '已完成' : job.status === 'running' ? '执行中' : '排队中'}
+                </span>
+              </div>
+              <div className="text-sm text-gray-500 font-medium flex items-center gap-1">
+                {isExpanded ? <><ChevronUp size={16}/> 收起详情</> : <><ChevronDown size={16}/> 查看详情</>}
+              </div>
+            </div>
+            
+            {job.status === 'running' && (
+              <div className="w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden border border-gray-200">
+                <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
+                  <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                </div>
+              </div>
+            )}
+            
+            <div className="text-sm text-gray-600 flex items-center gap-4">
+              <span>包含 {job.tasks.length} 个任务项</span>
+              {job.status === 'running' && <span className="font-bold text-blue-600">总进度: {job.progress}%</span>}
+            </div>
+          </div>
+          
+          {isExpanded && (
+            <div className="mt-5 pt-5 border-t border-gray-100 space-y-4">
+              {job.tasks.map((t: any, idx: number) => (
+                <div key={idx} className="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                  <div className="flex justify-between items-start mb-3">
+                    <p className="text-sm font-bold text-gray-800 flex-grow">任务 {idx + 1}: <span className="font-normal text-gray-600">{t.prompt}</span></p>
+                    <span className="text-xs font-medium text-gray-500 bg-gray-200 px-2 py-1 rounded">循环 {t.count} 次</span>
+                  </div>
+                  
+                  {t.images && t.images.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1"><ImageIcon size={14}/> 参考图片:</p>
+                      <div className="flex gap-2 flex-wrap">
+                        {t.images.map((img: string, i: number) => (
+                          <img key={i} src={img} onClick={() => onViewImage(img)} className="w-16 h-16 object-cover rounded-lg border border-gray-300 shadow-sm cursor-pointer hover:opacity-80" />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <button 
+                    onClick={() => onImportTask(t)}
+                    className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition flex items-center gap-1"
+                  >
+                    <Plus size={14}/> 导入此任务
+                  </button>
+                  
+                  {t.downloadedFiles && t.downloadedFiles.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs font-bold text-green-600 mb-2 flex items-center gap-1"><Download size={14}/> 生成的图片 ({t.downloadedFiles.length}):</p>
+                      <div className="flex gap-2 flex-wrap">
+                        {t.downloadedFiles.map((img: string, i: number) => (
+                          <div key={i} onClick={() => onViewImage(`/downloads/${img}`)} className="block w-20 h-20 rounded-lg border border-gray-300 overflow-hidden hover:border-blue-500 transition-colors shadow-sm relative group cursor-pointer">
+                            <img src={`/downloads/${img}`} className="w-full h-full object-cover" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -120,10 +236,12 @@ export default function App() {
     let interval: any;
     if (activeTab === 'records') {
       fetchJobs();
-      interval = setInterval(fetchJobs, 2000);
+      // 优化：如果有正在运行或排队的任务，则保持 2s 轮询；否则降低频率到 5s
+      const hasActiveJobs = jobs.some(j => j.status === 'pending' || j.status === 'running');
+      interval = setInterval(fetchJobs, hasActiveJobs ? 2000 : 5000);
     }
     return () => clearInterval(interval);
-  }, [activeTab]);
+  }, [activeTab, jobs]); // 增加 jobs 依赖以根据任务状态调整频率
 
   const fetchGallery = async () => {
     try {
@@ -563,7 +681,7 @@ export default function App() {
                 <img src={img} className="h-20 w-20 object-cover rounded-lg border border-gray-200" />
                 <button 
                   onClick={() => updateTask({ images: activeTask.images.filter((_, index) => index !== i) })}
-                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition shadow-sm"
+                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 transition shadow-sm z-10"
                   title="删除图片"
                 >
                   <X size={12} />
@@ -652,117 +770,32 @@ export default function App() {
                 </div>
               ))}
               {jobs.map(job => (
-              <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
-                <div className="flex items-start gap-4">
-                  <div className="pt-1">
-                    <input 
-                      type="checkbox" 
-                      checked={selectedJobs.has(job.id)} 
-                      onChange={(e) => {
-                        const newSet = new Set(selectedJobs);
-                        if (e.target.checked) newSet.add(job.id);
-                        else newSet.delete(job.id);
-                        setSelectedJobs(newSet);
-                      }} 
-                      className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer" 
-                    />
-                  </div>
-                  
-                  <div className="flex-grow">
-                    <div 
-                      className="cursor-pointer select-none"
-                      onClick={() => {
-                        const newSet = new Set(expandedJobs);
-                        if (newSet.has(job.id)) newSet.delete(job.id);
-                        else newSet.add(job.id);
-                        setExpandedJobs(newSet);
-                      }}
-                    >
-                      <div className="flex justify-between items-center mb-3">
-                        <div className="flex items-center gap-3">
-                          <span className="font-bold text-gray-900 text-lg">{new Date(job.timestamp).toLocaleString()}</span>
-                          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
-                            job.status === 'completed' ? 'bg-green-100 text-green-700' : 
-                            job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
-                            'bg-yellow-100 text-yellow-700'
-                          }`}>
-                            {job.status === 'completed' && <CheckCircle2 size={14} />}
-                            {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
-                            {job.status === 'pending' && <Clock size={14} />}
-                            {job.status === 'completed' ? '已完成' : job.status === 'running' ? '执行中' : '排队中'}
-                          </span>
-                        </div>
-                        <div className="text-sm text-gray-500 font-medium">
-                          {expandedJobs.has(job.id) ? '收起详情' : '查看详情'}
-                        </div>
-                      </div>
-                      
-                      {job.status === 'running' && (
-                        <div className="w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden border border-gray-200">
-                          <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
-                            <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
-                          </div>
-                        </div>
-                      )}
-                      
-                      <div className="text-sm text-gray-600 flex items-center gap-4">
-                        <span>包含 {job.tasks.length} 个任务项</span>
-                        {job.status === 'running' && <span className="font-bold text-blue-600">总进度: {job.progress}%</span>}
-                      </div>
-                    </div>
-                    
-                    {expandedJobs.has(job.id) && (
-                      <div className="mt-5 pt-5 border-t border-gray-100 space-y-4">
-                        {job.tasks.map((t: any, idx: number) => (
-                          <div key={idx} className="bg-gray-50 p-4 rounded-xl border border-gray-200">
-                            <div className="flex justify-between items-start mb-3">
-                              <p className="text-sm font-bold text-gray-800 flex-grow">任务 {idx + 1}: <span className="font-normal text-gray-600">{t.prompt}</span></p>
-                              <span className="text-xs font-medium text-gray-500 bg-gray-200 px-2 py-1 rounded">循环 {t.count} 次</span>
-                            </div>
-                            
-                            {t.images && t.images.length > 0 && (
-                              <div className="mb-4">
-                                <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1"><ImageIcon size={14}/> 参考图片:</p>
-                                <div className="flex gap-2 flex-wrap">
-                                  {t.images.map((img: string, i: number) => (
-                                    <img key={i} src={img} onClick={() => setViewingImage(img)} className="w-16 h-16 object-cover rounded-lg border border-gray-300 shadow-sm cursor-pointer hover:opacity-80" />
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                            
-                            <button 
-                              onClick={() => {
-                                const newTask = { id: Date.now().toString(), prompt: t.prompt, images: t.images || [], count: 1, download: false };
-                                setTasks([...tasks, newTask]);
-                                setActiveTaskId(newTask.id);
-                                setActiveTab('tasks');
-                              }}
-                              className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition flex items-center gap-1"
-                            >
-                              <Plus size={14}/> 导入此任务
-                            </button>
-                            
-                            {t.downloadedFiles && t.downloadedFiles.length > 0 && (
-                              <div className="mt-4">
-                                <p className="text-xs font-bold text-green-600 mb-2 flex items-center gap-1"><Download size={14}/> 生成的图片 ({t.downloadedFiles.length}):</p>
-                                <div className="flex gap-2 flex-wrap">
-                                  {t.downloadedFiles.map((img: string, i: number) => (
-                                    <div key={i} onClick={() => setViewingImage(`/downloads/${img}`)} className="block w-20 h-20 rounded-lg border border-gray-300 overflow-hidden hover:border-blue-500 transition-colors shadow-sm relative group cursor-pointer">
-                                      <img src={`/downloads/${img}`} className="w-full h-full object-cover" />
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
+                <JobItem 
+                  key={job.id}
+                  job={job}
+                  isSelected={selectedJobs.has(job.id)}
+                  isExpanded={expandedJobs.has(job.id)}
+                  onToggleSelect={(id, checked) => {
+                    const newSet = new Set(selectedJobs);
+                    if (checked) newSet.add(id);
+                    else newSet.delete(id);
+                    setSelectedJobs(newSet);
+                  }}
+                  onToggleExpand={(id) => {
+                    const newSet = new Set(expandedJobs);
+                    if (newSet.has(id)) newSet.delete(id);
+                    else newSet.add(id);
+                    setExpandedJobs(newSet);
+                  }}
+                  onViewImage={setViewingImage}
+                  onImportTask={(t) => {
+                    const newTask = { id: Date.now().toString(), prompt: t.prompt, images: t.images || [], count: 1, download: false };
+                    setTasks([...tasks, newTask]);
+                    setActiveTaskId(newTask.id);
+                    setActiveTab('tasks');
+                  }}
+                />
+              ))}
             </>
           )}
         </div>
@@ -1043,12 +1076,29 @@ export default function App() {
         </div>
       )}
       {viewingImage && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]" onClick={() => setViewingImage(null)}>
-          <div className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-lg">
-            <img src={viewingImage} className="max-w-full max-h-[80vh] object-contain" />
-            <div className="flex justify-center gap-4 mt-4">
-              <a href={viewingImage} download className="bg-white text-gray-800 px-6 py-2 rounded-full font-bold hover:bg-gray-100">下载图片</a>
-              <button onClick={() => setViewingImage(null)} className="bg-gray-700 text-white px-6 py-2 rounded-full font-bold hover:bg-gray-600">关闭</button>
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[999]" onClick={() => setViewingImage(null)}>
+          <div className="relative max-w-4xl w-full max-h-[90vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+            <div className="relative w-full flex justify-center">
+              <img src={viewingImage} className="max-w-full max-h-[75vh] object-contain rounded-lg shadow-2xl" />
+              <button 
+                onClick={() => setViewingImage(null)}
+                className="absolute -top-4 -right-4 w-10 h-10 bg-white text-gray-900 rounded-full flex items-center justify-center shadow-xl hover:bg-gray-100 transition-colors z-[1001]"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="mt-6 flex flex-col items-center gap-4 w-full">
+              <div className="flex justify-center gap-4 w-full">
+                <a href={viewingImage} download className="flex-1 max-w-[160px] bg-white text-gray-900 px-6 py-3 rounded-full font-bold hover:bg-gray-100 transition shadow-lg text-center">下载图片</a>
+                <button onClick={() => setViewingImage(null)} className="flex-1 max-w-[160px] bg-gray-800 text-white px-6 py-3 rounded-full font-bold hover:bg-gray-700 transition shadow-lg">关闭预览</button>
+              </div>
+              
+              {isMobile && (
+                <p className="text-white/60 text-xs bg-white/10 px-4 py-2 rounded-full backdrop-blur-sm">
+                  提示：iOS 用户请长按图片选择「保存到相册」
+                </p>
+              )}
             </div>
           </div>
         </div>
