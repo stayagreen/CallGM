@@ -98,13 +98,12 @@ export function handleBrowserDebug(msg: string) {
     console.log(`  👉 [浏览器内部视角] ${msg.replace(/\\n/g, ' ')}`);
 }
 
-async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string): Promise<string[]> {
-    console.log(`\n⏳ 开始监控系统下载目录: ${systemDownloadsDir}`);
+async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string, maxWaitSeconds: number = 130): Promise<string[]> {
+    console.log(`\n⏳ 开始死守系统下载目录，等待图片出现: ${systemDownloadsDir}`);
     let attempts = 0;
-    const maxAttempts = 60; // 最多等 60 秒
     const movedFiles: string[] = [];
 
-    while (attempts < maxAttempts) {
+    while (attempts < maxWaitSeconds) {
         await new Promise(r => setTimeout(r, 1000));
         attempts++;
 
@@ -122,6 +121,14 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
             for (const file of currentFiles) {
                 if (file === '.DS_Store' || file === 'desktop.ini' || file.startsWith('.')) continue;
                 
+                // 【核心修复】只监控图片文件！彻底忽略 txt、html 等任何非图片文件，防止被干扰
+                if (!file.match(/\.(jpg|jpeg|png|webp|gif)$/i)) {
+                    if (file.endsWith('.crdownload') || file.endsWith('.part') || file.endsWith('.tmp')) {
+                        isDownloading = true;
+                    }
+                    continue;
+                }
+                
                 const filePath = path.join(systemDownloadsDir, file);
                 try {
                     const stat = fs.statSync(filePath);
@@ -132,22 +139,17 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
                         newestTime = fileTime;
                         newestFile = file;
                     }
-                    
-                    if (file.endsWith('.crdownload') || file.endsWith('.part') || file.endsWith('.tmp')) {
-                        isDownloading = true;
-                    }
                 } catch (e) {}
             }
 
             if (isDownloading) {
-                if (attempts % 5 === 0) console.log(`   ...文件正在下载中，请稍候... (已等待 ${attempts} 秒)`);
+                if (attempts % 5 === 0) console.log(`   ...图片正在下载中，请稍候... (已等待 ${attempts} 秒)`);
                 continue;
             }
 
-            // 如果最新文件是在点击下载按钮之后（或者点击前 5 秒内，考虑到系统时间误差）创建/修改的
-            // 扩大时间窗口，允许点击前 10 秒内创建的文件
+            // 扩大时间窗口，允许注入脚本前 10 秒内创建的文件
             if (newestFile && newestTime > clickTime - 10000) {
-                console.log(`✅ [DEBUG] 成功监测到新下载的文件: ${newestFile}`);
+                console.log(`✅ [DEBUG] 成功监测到新下载的图片文件: ${newestFile}`);
                 console.log(`   详细信息: 创建时间: ${new Date(newestTime).toLocaleTimeString()}, 点击时间: ${new Date(clickTime).toLocaleTimeString()}`);
                 
                 // 额外等待 5 秒，确保浏览器彻底释放文件占用锁
@@ -354,21 +356,8 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             function updateStatus(text) {
                 hud.innerText = text;
                 hud.style.backgroundColor = 'rgba(0,0,0,0.85)';
-                
-                /* 使用下载空文件发送状态，完美绕过跨域和焦点限制 */
-                if (text.startsWith('GEMINI_')) {
-                    try {
-                        const blob = new Blob([text], { type: 'text/plain' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'GEMINI_STATUS_' + Date.now() + '.txt';
-                        document.body.appendChild(a);
-                        a.click();
-                        document.body.removeChild(a);
-                        URL.revokeObjectURL(url);
-                    } catch(e) {}
-                }
+                // 彻底移除所有通信代码 (Fetch/Clipboard/Blob下载)
+                // 仅保留视觉 UI 提示，Node.js 端将直接通过监控文件系统来判断进度
             }
             let attempts = 0;
             let imageFoundAttempts = 0;
@@ -425,12 +414,15 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                                 
                                 const btnsToClick = currentBtns.length > 0 ? currentBtns : targetBtns;
                                 
-                                btnsToClick.forEach(btn => {
-                                    btn.click();
-                                    btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-                                    btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                                // 延迟逐个点击，防止浏览器拦截批量下载
+                                btnsToClick.forEach((btn, index) => {
+                                    setTimeout(() => {
+                                        btn.click();
+                                        btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                                        btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                                    }, index * 1500);
                                 });
-                                updateStatus('GEMINI_CLICKED\\n⏳ 已点击下载，等待系统保存文件...');
+                                updateStatus('GEMINI_CLICKED\\n⏳ 已触发下载！Node.js 正在后台监控文件...');
                             }, 500);
                         }, 5000);
                     } else {
@@ -452,74 +444,27 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         const pollScript = rawPollScript.replace(/\n/g, ' ').replace(/\s{2,}/g, ' ');
         await injectJsViaAddressBar(pollScript);
 
-        // 轮询状态，等待网页发回的完成信号
-        let isDone = false;
-        let waitTime = 0;
-        let lastHandledState = '';
-        
-        while (!isDone && waitTime < 130) {
-            await new Promise(r => setTimeout(r, 1000));
-            waitTime++;
-            
-            // 扫描系统下载目录，寻找状态文件 (方案一：通过下载文件通信)
-            try {
-                if (fs.existsSync(systemDownloadsDir)) {
-                    const files = fs.readdirSync(systemDownloadsDir);
-                    const statusFiles = files.filter(f => f.startsWith('GEMINI_STATUS_') && f.endsWith('.txt'));
-                    
-                    if (statusFiles.length > 0) {
-                        statusFiles.sort(); // 按时间排序
-                        for (const file of statusFiles) {
-                            const filePath = path.join(systemDownloadsDir, file);
-                            try {
-                                const content = fs.readFileSync(filePath, 'utf-8');
-                                browserDebugState = content;
-                                fs.unlinkSync(filePath); // 读取后立即删除
-                            } catch(e) {}
-                        }
-                    }
-                }
-            } catch (e) {}
-
-            // 直接使用 browserDebugState (由文件通信更新)
-            if (browserDebugState !== lastHandledState) {
-                const currentState = browserDebugState;
-                lastHandledState = currentState;
-                
-                console.log(`  👉 [浏览器内部视角] ${currentState.replace(/\\n/g, ' ')}`);
-                
-                if (currentState.startsWith('GEMINI_FOUND')) {
-                    jobProgress.set(filename, { completed: completedLoops + 0.6, total: totalLoops, status: 'running' });
-                } else if (currentState.startsWith('GEMINI_TRIGGERING')) {
-                    jobProgress.set(filename, { completed: completedLoops + 0.8, total: totalLoops, status: 'running' });
-                } else if (currentState.startsWith('GEMINI_CLICKED')) {
-                    jobProgress.set(filename, { completed: completedLoops + 0.9, total: totalLoops, status: 'running' });
-                    
-                    // 浏览器已经点击了下载按钮，Node.js 接管后续的监控工作
-                    // 必须等待文件成功移动后，才能执行下一个任务
-                    if (task.download) {
-                        const clickTime = Date.now();
-                        const files = await waitForAndMoveDownloads(clickTime, systemDownloadsDir, downloadDir);
-                        if (files && files.length > 0) {
-                            task.downloadedFiles.push(...files);
-                            console.log(`📦 成功移动 ${files.length} 个文件`);
-                        }
-                    }
-                    
-                    console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
-                    isDone = true;
-                    completedLoops++;
-                    jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
-                    await new Promise(r => setTimeout(r, 2000)); // 额外缓冲时间
-                } else if (currentState.startsWith('GEMINI_DONE') || currentState.startsWith('GEMINI_NO_BTN') || currentState.startsWith('GEMINI_TIMEOUT')) {
-                    console.log('✅ 当前任务执行完毕！准备进入下一个任务。');
-                    isDone = true;
-                    completedLoops++;
-                    jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
-                    await new Promise(r => setTimeout(r, 2000));
-                }
+        // 彻底抛弃状态轮询，直接进入文件监控模式 (Zero-IPC 架构)
+        if (task.download) {
+            console.log('✅ 脚本已注入！Node.js 开始死守下载目录，等待图片出现...');
+            const injectTime = Date.now();
+            // 给足 130 秒等待图片生成和下载
+            const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, downloadDir, 130);
+            if (files && files.length > 0) {
+                task.downloadedFiles.push(...files);
+                console.log(`📦 成功移动 ${files.length} 个文件`);
+            } else {
+                console.log(`⚠️ 130秒内未检测到新图片，可能生成失败。`);
             }
+        } else {
+            console.log('✅ 脚本已注入！(未开启下载，等待 45 秒后进入下一任务)');
+            await new Promise(r => setTimeout(r, 45000));
         }
+
+        console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
+        completedLoops++;
+        jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+        await new Promise(r => setTimeout(r, 2000));
 
         // 如果还有下一次循环，刷新页面以重置状态
         if (i < task.count - 1 || tasks.indexOf(task) < tasks.length - 1) {
