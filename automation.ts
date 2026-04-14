@@ -84,7 +84,7 @@ async function executeWithPhysicalSimulation(tasks: any) {
             await keyboard.pressKey(Key.LeftControl, Key.LeftShift, Key.J);
             await keyboard.releaseKey(Key.LeftControl, Key.LeftShift, Key.J);
         }
-        await new Promise(r => setTimeout(r, 2000)); // 等待控制台打开
+        await new Promise(r => setTimeout(r, 3000)); // 等待控制台打开 (增加到3秒，防止电脑卡顿)
 
         // 粘贴代码
         await clipboard.setContent(script);
@@ -161,13 +161,28 @@ async function executeWithPhysicalSimulation(tasks: any) {
         await clipboard.setContent('WAITING_FOR_GEMINI');
         
         const pollScript = `void((() => {
-            function copyToClip(text) {
-                const ta = document.createElement('textarea');
-                ta.value = text;
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
+            // 1. 创建悬浮窗 (HUD) 显示在页面顶部，用于终极视觉调试
+            let hud = document.getElementById('callgm-hud');
+            if (!hud) {
+                hud = document.createElement('div');
+                hud.id = 'callgm-hud';
+                hud.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#00ff00;padding:20px;z-index:9999999;font-size:18px;border-radius:10px;pointer-events:none;font-family:monospace;white-space:pre-wrap;text-align:center;box-shadow:0 4px 6px rgba(0,0,0,0.3);border:2px solid #00ff00;';
+                document.body.appendChild(hud);
+            }
+
+            function updateStatus(text, copyToClipboard = false) {
+                hud.innerText = text;
+                if (copyToClipboard) {
+                    try {
+                        const ta = document.createElement('textarea');
+                        // 只复制第一行作为状态码给 Node.js
+                        ta.value = text.split('\\n')[0]; 
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                    } catch(e) {}
+                }
             }
 
             let attempts = 0;
@@ -177,7 +192,7 @@ async function executeWithPhysicalSimulation(tasks: any) {
                 attempts++;
                 if (attempts > 60) { // 最多等待 120 秒
                     clearInterval(checkInterval);
-                    copyToClip('GEMINI_TIMEOUT');
+                    updateStatus('GEMINI_TIMEOUT\\n❌ 等待超时 (120秒)', true);
                     return;
                 }
 
@@ -200,13 +215,13 @@ async function executeWithPhysicalSimulation(tasks: any) {
                            html.includes('download');
                 });
 
-                // 实时汇报状态给 Node.js (通过剪贴板)
-                const debugInfo = \`DEBUG: 第\${attempts}次扫描 | 找到图片:\${images.length}张 | 找到所有按钮:\${allBtns.length}个 | 匹配到下载按钮:\${targetBtns.length}个\`;
-                console.log(debugInfo); // 同时也打印在浏览器的 F12 控制台里
-                copyToClip(debugInfo);
+                // 实时更新 HUD 和剪贴板
+                const debugInfo = \`DEBUG: 第\${attempts}次扫描\\n找到图片: \${images.length} 张\\n找到所有按钮: \${allBtns.length} 个\\n匹配到下载按钮: \${targetBtns.length} 个\`;
+                updateStatus(debugInfo, true);
                 
                 if (targetBtns.length > 0 && images.length > 0) {
                     clearInterval(checkInterval);
+                    updateStatus('GEMINI_DONE\\n✅ 找到按钮，准备下载...', true);
                     
                     if (${task.download}) {
                         // 模拟悬浮，强制渲染隐藏按钮
@@ -225,18 +240,14 @@ async function executeWithPhysicalSimulation(tasks: any) {
                                 btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
                                 btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
                             });
-                            // 延迟通知，确保点击生效
-                            setTimeout(() => copyToClip('GEMINI_DONE'), 1500);
                         }, 500);
-                    } else {
-                        setTimeout(() => copyToClip('GEMINI_DONE'), 500);
                     }
                 } else if (images.length > 0) {
                     // 图片生成了，但是没找到下载按钮！
                     imageFoundAttempts++;
                     if (imageFoundAttempts > 8) { // 宽限 16 秒寻找按钮
                         clearInterval(checkInterval);
-                        copyToClip('GEMINI_NO_BTN');
+                        updateStatus('GEMINI_NO_BTN\\n⚠️ 图片已生成，但未找到下载按钮', true);
                     }
                 }
             }, 2000);
