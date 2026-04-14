@@ -264,10 +264,16 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         if (task.images && task.images.length > 0) {
             console.log(`准备粘贴 ${task.images.length} 张参考图...`);
             for (const imgUrl of task.images) {
-                const localPath = path.join(__dirname, imgUrl);
+                // 修复路径拼接问题：如果 imgUrl 以 / 开头，path.join 可能会将其视为绝对路径（在某些系统上）
+                const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
+                const localPath = path.join(__dirname, relativeUrl);
+                
+                console.log(`正在查找参考图文件: ${localPath}`);
                 if (fs.existsSync(localPath)) {
+                    console.log(`文件存在，正在复制到剪贴板...`);
                     const success = copyImageToClipboard(localPath, isMac);
                     if (success) {
+                        console.log(`复制成功，执行粘贴操作...`);
                         if (isMac) {
                             await keyboard.pressKey(Key.LeftSuper, Key.V);
                             await keyboard.releaseKey(Key.LeftSuper, Key.V);
@@ -275,8 +281,13 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                             await keyboard.pressKey(Key.LeftControl, Key.V);
                             await keyboard.releaseKey(Key.LeftControl, Key.V);
                         }
-                        await new Promise(r => setTimeout(r, 2000)); // 等待图片上传解析
+                        console.log(`粘贴完成，等待 5 秒让浏览器上传解析图片...`);
+                        await new Promise(r => setTimeout(r, 5000)); // 等待 5 秒让图片上传解析
+                    } else {
+                        console.log(`❌ 复制图片到剪贴板失败`);
                     }
+                } else {
+                    console.log(`❌ 找不到参考图文件: ${localPath}`);
                 }
             }
         }
