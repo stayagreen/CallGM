@@ -248,23 +248,28 @@ async function executeWithPhysicalSimulation(tasks: any) {
         let waitTime = 0;
         while (!isDone && waitTime < 130) {
             await new Promise(r => setTimeout(r, 1000));
-            const clipText = await clipboard.getContent();
-            if (clipText === 'GEMINI_DONE') {
-                console.log('检测到图片已生成！' + (task.download ? '已触发自动下载。' : '未开启自动下载，跳过。'));
-                isDone = true;
-            } else if (clipText === 'GEMINI_NO_BTN') {
-                console.log('⚠️ 图片已生成，但未能找到“下载”按钮！可能是 Gemini 界面更新了。');
-                isDone = true;
-            } else if (clipText === 'GEMINI_TIMEOUT') {
-                console.log('等待超时 (120秒)，未检测到图片。');
-                isDone = true;
+            try {
+                const clipText = await clipboard.getContent();
+                if (clipText === 'GEMINI_DONE') {
+                    console.log('✅ 检测到图片已生成！' + (task.download ? '已触发自动下载。' : '未开启自动下载，跳过。'));
+                    isDone = true;
+                } else if (clipText === 'GEMINI_NO_BTN') {
+                    console.log('⚠️ 图片已生成，但未能找到“下载”按钮！可能是 Gemini 界面更新了。');
+                    isDone = true;
+                } else if (clipText === 'GEMINI_TIMEOUT') {
+                    console.log('❌ 等待超时 (120秒)，未检测到图片。');
+                    isDone = true;
+                }
+            } catch (clipErr) {
+                // 忽略剪贴板读取偶尔失败的情况 (例如被系统或其他程序短暂占用)
+                // 只要不崩溃，下一次循环继续读即可
             }
             waitTime++;
         }
 
         // 如果还有下一次循环，刷新页面以重置状态
         if (i < task.count - 1 || tasks.indexOf(task) < tasks.length - 1) {
-            console.log('刷新页面准备下一次任务...');
+            console.log('🔄 刷新页面准备下一次任务...');
             if (isMac) {
                 await keyboard.pressKey(Key.LeftSuper, Key.R);
                 await keyboard.releaseKey(Key.LeftSuper, Key.R);
@@ -277,11 +282,13 @@ async function executeWithPhysicalSimulation(tasks: any) {
       }
     }
     
-    console.log('\n所有任务物理模拟执行完毕！');
-  } catch (error) {
-    console.log('未检测到 @nut-tree-fork/nut-js 或 open。这在云端环境中是正常的。');
-    console.log('请在本地运行: npm install @nut-tree-fork/nut-js open');
-    console.log('模拟执行 2 秒...');
-    await new Promise(r => setTimeout(r, 2000));
+    console.log('\n🎉 所有任务物理模拟执行完毕！');
+  } catch (error: any) {
+    console.error('\n❌ 自动化执行过程中发生严重错误:');
+    console.error(error.message || error);
+    if (error.stack) {
+        console.error('详细堆栈:', error.stack);
+    }
+    console.log('\n(提示: 如果上方报错提示找不到模块，请在本地运行 npm install @nut-tree-fork/nut-js open)');
   }
 }
