@@ -73,7 +73,7 @@ export default function VideoEditor({
   const [crop, setCrop] = useState<Crop>();
   const [isSmudging, setIsSmudging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [brushSize, setBrushSize] = useState(40);
+  const [brushSize, setBrushSize] = useState(30);
   const [undoHistory, setUndoHistory] = useState<ImageData[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastPos = useRef<{x: number, y: number} | null>(null);
@@ -344,6 +344,7 @@ export default function VideoEditor({
       let boundary = [];
 
       for (let i = 0; i < width * height; i++) {
+        // Mask Threshold: 50
         if (maskPixels[i * 4 + 3] > 50) {
           hole[i] = 1;
           holeCount++;
@@ -376,7 +377,7 @@ export default function VideoEditor({
 
       // Iterative Diffusion Loop
       let iterations = 0;
-      const maxIterations = 350; // Increased for deeper fill
+      const maxIterations = 200; // User requested 200
       
       while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
         const nextBoundary = new Set<number>();
@@ -384,21 +385,20 @@ export default function VideoEditor({
 
         for (const p of boundary) {
           let r = 0, g = 0, b = 0, count = 0;
-          // Sample a slightly larger neighborhood for better color borrowing
-          for (let dy = -2; dy <= 2; dy++) {
-            for (let dx = -2; dx <= 2; dx++) {
+          // 8-neighbor sampling (3x3 window)
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
               const nx = p.x + dx;
               const ny = p.y + dy;
               if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                 const nidx = ny * width + nx;
                 if (hole[nidx] === 0) {
                   const off = nidx * 4;
-                  // Weight closer pixels more
-                  const weight = 1 / (Math.sqrt(dx*dx + dy*dy) || 1);
-                  r += pixels[off] * weight;
-                  g += pixels[off+1] * weight;
-                  b += pixels[off+2] * weight;
-                  count += weight;
+                  r += pixels[off];
+                  g += pixels[off+1];
+                  b += pixels[off+2];
+                  count++;
                 }
               }
             }
@@ -451,7 +451,7 @@ export default function VideoEditor({
       blurCanvas.height = height;
       const blurCtx = blurCanvas.getContext('2d');
       if (blurCtx) {
-        blurCtx.filter = 'blur(2px)'; // Slightly more blur for smoother results
+        blurCtx.filter = 'blur(2px)'; // User requested 2px blur
         blurCtx.drawImage(canvas, 0, 0);
         const blurredData = blurCtx.getImageData(0, 0, width, height);
         
@@ -459,7 +459,6 @@ export default function VideoEditor({
           const alpha = maskPixels[i + 3];
           if (alpha > 0) {
             const blend = alpha / 255;
-            // Stronger blend for more obvious effect
             pixels[i] = pixels[i] * (1 - blend * 0.5) + blurredData.data[i] * (blend * 0.5);
             pixels[i+1] = pixels[i+1] * (1 - blend * 0.5) + blurredData.data[i+1] * (blend * 0.5);
             pixels[i+2] = pixels[i+2] * (1 - blend * 0.5) + blurredData.data[i+2] * (blend * 0.5);
@@ -865,7 +864,7 @@ export default function VideoEditor({
                     <span className="text-[10px] sm:text-sm text-gray-500 font-medium">画笔:</span>
                     <input 
                       type="range" 
-                      min="10" max="100" 
+                      min="5" max="100" 
                       value={brushSize} 
                       onChange={(e) => setBrushSize(parseInt(e.target.value))}
                       className="w-20 sm:w-32 accent-blue-600 h-1.5 sm:h-2"
