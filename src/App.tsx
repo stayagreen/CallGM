@@ -4,7 +4,8 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film } from 'lucide-react';
+import VideoEditor, { VideoTask } from './VideoEditor';
 
 interface Task {
   id: string;
@@ -157,7 +158,7 @@ export default function App() {
   const [showAddTaskMenu, setShowAddTaskMenu] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery'>('tasks');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery' | 'video_records' | 'video_gallery'>('tasks');
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [systemConfig, setSystemConfig] = useState({ 
     systemDownloadsDir: '', 
@@ -170,13 +171,18 @@ export default function App() {
     taskMin: 5, 
     taskMax: 5,
     downloadCheckDelay: 1,
-    downloadRetries: 3
+    downloadRetries: 3,
+    videoConcurrency: 3
   });
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [videoJobs, setVideoJobs] = useState<Job[]>([]);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [galleryImages, setGalleryImages] = useState<string[]>([]);
+  const [videoGallery, setVideoGallery] = useState<string[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [viewingVideo, setViewingVideo] = useState<string | null>(null);
+  const [showVideoEditor, setShowVideoEditor] = useState(false);
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
@@ -232,16 +238,29 @@ export default function App() {
     }
   };
 
+  const fetchVideoJobs = async () => {
+    try {
+      const res = await fetch('/api/video/jobs');
+      const data = await res.json();
+      setVideoJobs(data);
+    } catch (error) {
+      console.error('Failed to fetch video jobs:', error);
+    }
+  };
+
   useEffect(() => {
     let interval: any;
     if (activeTab === 'records') {
       fetchJobs();
-      // 优化：如果有正在运行或排队的任务，则保持 2s 轮询；否则降低频率到 5s
       const hasActiveJobs = jobs.some(j => j.status === 'pending' || j.status === 'running');
       interval = setInterval(fetchJobs, hasActiveJobs ? 2000 : 5000);
+    } else if (activeTab === 'video_records') {
+      fetchVideoJobs();
+      const hasActiveJobs = videoJobs.some(j => j.status === 'pending' || j.status === 'running');
+      interval = setInterval(fetchVideoJobs, hasActiveJobs ? 2000 : 5000);
     }
     return () => clearInterval(interval);
-  }, [activeTab, jobs]); // 增加 jobs 依赖以根据任务状态调整频率
+  }, [activeTab, jobs, videoJobs]);
 
   const fetchGallery = async () => {
     try {
@@ -253,8 +272,19 @@ export default function App() {
     }
   };
 
+  const fetchVideoGallery = async () => {
+    try {
+      const res = await fetch('/api/videos');
+      const data = await res.json();
+      setVideoGallery(data);
+    } catch (error) {
+      console.error('Failed to fetch video gallery:', error);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'gallery') fetchGallery();
+    if (activeTab === 'video_gallery') fetchVideoGallery();
   }, [activeTab]);
 
   const deleteSelectedJobs = async () => {
@@ -501,19 +531,31 @@ export default function App() {
             onClick={() => setActiveTab('tasks')} 
             className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'tasks' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
           >
-            创建任务
+            生图任务
           </button>
           <button 
             onClick={() => setActiveTab('records')} 
             className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
           >
-            任务记录
+            生图记录
           </button>
           <button 
             onClick={() => setActiveTab('gallery')} 
             className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
           >
             本地图库
+          </button>
+          <button 
+            onClick={() => setActiveTab('video_records')} 
+            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'video_records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+          >
+            视频记录
+          </button>
+          <button 
+            onClick={() => setActiveTab('video_gallery')} 
+            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'video_gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+          >
+            本地视频库
           </button>
         </div>
         <button 
@@ -562,7 +604,7 @@ export default function App() {
                   </button>
                   <button 
                     onClick={() => {
-                      alert('视频任务开发中...');
+                      setShowVideoEditor(true);
                       setShowAddTaskMenu(false);
                     }}
                     className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
@@ -921,6 +963,129 @@ export default function App() {
         </div>
       )}
 
+      {activeTab === 'video_records' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Film className="text-blue-600"/> 视频渲染记录</h2>
+            <div className="flex gap-3">
+              <button onClick={fetchVideoJobs} className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm">刷新记录</button>
+            </div>
+          </div>
+          
+          {videoJobs.length === 0 ? (
+            <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
+              <History className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+              <p className="text-lg font-medium text-gray-600">暂无视频渲染记录</p>
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {videoJobs.map(job => (
+                <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                  <div className="flex justify-between items-center mb-3">
+                    <div className="flex items-center gap-3">
+                      <span className="font-bold text-gray-900 text-lg">{new Date(job.timestamp).toLocaleString()}</span>
+                      <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
+                        job.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                        job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
+                        job.status === 'error' ? 'bg-red-100 text-red-700' :
+                        'bg-yellow-100 text-yellow-700'
+                      }`}>
+                        {job.status === 'completed' && <CheckCircle2 size={14} />}
+                        {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
+                        {job.status === 'pending' && <Clock size={14} />}
+                        {job.status === 'error' && <X size={14} />}
+                        {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '排队中'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {job.status === 'running' && (
+                    <div className="w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden border border-gray-200">
+                      <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
+                        <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                      </div>
+                    </div>
+                  )}
+
+                  {job.status === 'error' && (
+                    <div className="text-red-500 text-sm mb-3 bg-red-50 p-3 rounded-lg">
+                      错误信息: {job.error}
+                    </div>
+                  )}
+                  
+                  <div className="text-sm text-gray-600">
+                    包含 {job.data.storyboards?.length || 0} 个分镜
+                  </div>
+
+                  {job.status === 'completed' && job.data.outputVideo && (
+                    <div className="mt-4 flex gap-3">
+                      <button 
+                        onClick={() => setViewingVideo(`/downloads/videos/${job.data.outputVideo}`)}
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg font-medium hover:bg-blue-100 transition"
+                      >
+                        <PlayCircle size={16}/> 预览视频
+                      </button>
+                      <a 
+                        href={`/downloads/videos/${job.data.outputVideo}`} 
+                        download
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg font-medium hover:bg-gray-100 transition border border-gray-200"
+                      >
+                        <Download size={16}/> 下载视频
+                      </a>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'video_gallery' && (
+        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Film className="text-blue-600"/> 本地视频库</h2>
+            <div className="flex gap-2">
+              <button onClick={fetchVideoGallery} className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm">刷新视频库</button>
+            </div>
+          </div>
+          
+          {videoGallery.length === 0 ? (
+            <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
+              <Film className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+              <p className="text-lg font-medium text-gray-600">暂无视频</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {videoGallery.map(vid => (
+                <div key={vid} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
+                  <div onClick={() => setViewingVideo(`/downloads/videos/${vid}`)} className="block aspect-video overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
+                    <img src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} alt={vid} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                    <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                      <PlayCircle className="w-12 h-12 text-white opacity-80 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between px-1">
+                    <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid}</span>
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm('确定要删除这个视频吗？')) return;
+                        await fetch(`/api/videos/${vid}`, { method: 'DELETE' });
+                        fetchVideoGallery();
+                      }}
+                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                      title="彻底删除源文件"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {showTemplateModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
@@ -1014,6 +1179,10 @@ export default function App() {
                   <label className="block mb-1 font-semibold text-gray-700">图片下载重试次数:</label>
                   <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadRetries || 3} onChange={(e) => setSystemConfig({...systemConfig, downloadRetries: parseInt(e.target.value)})} />
                 </div>
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">视频渲染并发数:</label>
+                  <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.videoConcurrency || 3} onChange={(e) => setSystemConfig({...systemConfig, videoConcurrency: parseInt(e.target.value)})} />
+                </div>
               </div>
             </div>
             <div className="flex gap-3">
@@ -1100,6 +1269,54 @@ export default function App() {
                 </p>
               )}
             </div>
+          </div>
+        </div>
+      )}
+      
+      {viewingVideo && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[999]" onClick={() => setViewingVideo(null)}>
+          <div className="relative max-w-4xl w-full max-h-[90vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+            <div className="relative w-full flex justify-center">
+              <video src={viewingVideo} controls autoPlay className="max-w-full max-h-[75vh] object-contain rounded-lg shadow-2xl" />
+              <button 
+                onClick={() => setViewingVideo(null)}
+                className="absolute -top-4 -right-4 w-10 h-10 bg-white text-gray-900 rounded-full flex items-center justify-center shadow-xl hover:bg-gray-100 transition-colors z-[1001]"
+              >
+                <X size={24} />
+              </button>
+            </div>
+            
+            <div className="mt-6 flex flex-col items-center gap-4 w-full">
+              <div className="flex justify-center gap-4 w-full">
+                <a href={viewingVideo} download className="flex-1 max-w-[160px] bg-white text-gray-900 px-6 py-3 rounded-full font-bold hover:bg-gray-100 transition shadow-lg text-center">下载视频</a>
+                <button onClick={() => setViewingVideo(null)} className="flex-1 max-w-[160px] bg-gray-800 text-white px-6 py-3 rounded-full font-bold hover:bg-gray-700 transition shadow-lg">关闭预览</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVideoEditor && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
+          <div className="w-full max-w-7xl h-full max-h-[90vh]">
+            <VideoEditor 
+              onClose={() => setShowVideoEditor(false)}
+              galleryImages={galleryImages}
+              onSubmit={async (task) => {
+                try {
+                  await fetch('/api/video/execute', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(task)
+                  });
+                  setShowVideoEditor(false);
+                  setActiveTab('video_records');
+                  fetchVideoJobs();
+                } catch (e) {
+                  alert('提交视频任务失败');
+                }
+              }}
+            />
           </div>
         </div>
       )}

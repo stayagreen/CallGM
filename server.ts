@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import os from "os";
 import sharp from "sharp";
 import { startAutomationWatcher, jobProgress, handleBrowserDebug } from "./automation.js";
+import { startVideoAutomationWatcher, videoJobProgress } from "./video_automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,23 +24,108 @@ async function startServer() {
   const thumbDownloadsDir = path.join(thumbnailsDir, "downloads");
   const thumbUploadsDir = path.join(thumbnailsDir, "uploads");
   
-  if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true });
-  if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
-  if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
-  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-  if (!fs.existsSync(thumbnailsDir)) fs.mkdirSync(thumbnailsDir, { recursive: true });
-  if (!fs.existsSync(thumbDownloadsDir)) fs.mkdirSync(thumbDownloadsDir, { recursive: true });
-  if (!fs.existsSync(thumbUploadsDir)) fs.mkdirSync(thumbUploadsDir, { recursive: true });
+  // Video directories
+  const videoTaskDir = path.join(__dirname, "task_video");
+  const videoHistoryDir = path.join(videoTaskDir, "history");
+  const videoDownloadDir = path.join(__dirname, "download", "videos");
+  const videoThumbDir = path.join(__dirname, "thumbnails", "videos");
+  const bgmDir = path.join(__dirname, "bgm");
+  
+  const dirs = [taskDir, historyDir, downloadDir, uploadsDir, thumbnailsDir, thumbDownloadsDir, thumbUploadsDir, videoTaskDir, videoHistoryDir, videoDownloadDir, videoThumbDir, bgmDir];
+  dirs.forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); });
 
-  // Serve static files from the download directory
+  // Serve static files
   app.use("/downloads", express.static(downloadDir));
   app.use("/uploads", express.static(uploadsDir));
+  app.use("/bgm", express.static(bgmDir));
+
+  // BGM List API
+  app.get("/api/bgm", (req, res) => {
+    try {
+      const files = fs.readdirSync(bgmDir).filter(f => f.endsWith('.mp3') || f.endsWith('.wav'));
+      res.json(files);
+    } catch (e) {
+      res.json([]);
+    }
+  });
+
+  // Video Task Execution API
+  app.post("/api/video/execute", (req, res) => {
+    const taskData = req.body;
+    
+    // Process base64 images
+    if (taskData.storyboards) {
+      taskData.storyboards.forEach((sb: any) => {
+        if (sb.image && sb.image.startsWith('data:image')) {
+          const matches = sb.image.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+          if (matches) {
+            const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+            const base64Data = matches[2];
+            const filename = `ref_vid_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
+            fs.writeFileSync(path.join(uploadsDir, filename), base64Data, 'base64');
+            sb.image = `/uploads/${filename}`;
+          }
+        }
+      });
+    }
+
+    const filename = `task_video_${Date.now()}.json`;
+    fs.writeFileSync(path.join(videoTaskDir, filename), JSON.stringify(taskData, null, 2));
+    res.json({ status: "ok", message: "Video task queued", filename });
+  });
+
+  // Video Jobs API
+  app.get("/api/video/jobs", (req, res) => {
+    const jobs: any[] = [];
+    
+    if (fs.existsSync(videoHistoryDir)) {
+      const files = fs.readdirSync(videoHistoryDir).filter(f => f.endsWith('.json'));
+      for (const file of files) {
+        try {
+          const stat = fs.statSync(path.join(videoHistoryDir, file));
+          const data = JSON.parse(fs.readFileSync(path.join(videoHistoryDir, file), 'utf-8'));
+          jobs.push({ id: file, timestamp: stat.mtimeMs, data, status: 'completed', progress: 100 });
+        } catch (e) {}
+      }
+    }
+
+    if (fs.existsSync(videoTaskDir)) {
+      const files = fs.readdirSync(videoTaskDir).filter(f => f.endsWith('.json') && fs.statSync(path.join(videoTaskDir, f)).isFile());
+      for (const file of files) {
+        try {
+          const stat = fs.statSync(path.join(videoTaskDir, file));
+          const data = JSON.parse(fs.readFileSync(path.join(videoTaskDir, file), 'utf-8'));
+          const progressInfo = videoJobProgress.get(file);
+          jobs.push({
+            id: file,
+            timestamp: stat.mtimeMs,
+            data,
+            status: progressInfo ? progressInfo.status : 'pending',
+            progress: progressInfo ? progressInfo.progress : 0,
+            error: progressInfo?.error
+          });
+        } catch (e) {}
+      }
+    }
+
+    jobs.sort((a, b) => b.timestamp - a.timestamp);
+    res.json(jobs);
+  });
 
   // Thumbnail generation endpoint
   app.get("/api/thumbnails/:type/:filename", async (req, res) => {
     const { type, filename } = req.params;
-    if (type !== 'downloads' && type !== 'uploads') {
+    if (type !== 'downloads' && type !== 'uploads' && type !== 'videos') {
       return res.status(400).send('Invalid type');
+    }
+
+    if (type === 'videos') {
+      const thumbPath = path.join(videoThumbDir, filename);
+      if (fs.existsSync(thumbPath)) {
+        return res.sendFile(thumbPath);
+      } else {
+        return res.status(404).send('Thumbnail not found');
+      }
     }
 
     const sourceDir = type === 'downloads' ? downloadDir : uploadsDir;
@@ -246,6 +332,37 @@ async function startServer() {
     }
   });
 
+  // Get all downloaded videos
+  app.get('/api/videos', (req, res) => {
+    if (!fs.existsSync(videoDownloadDir)) return res.json([]);
+    try {
+      const files = fs.readdirSync(videoDownloadDir).filter(f => f.match(/\.(mp4|webm|mov)$/i));
+      files.sort((a, b) => {
+        return fs.statSync(path.join(videoDownloadDir, b)).mtimeMs - fs.statSync(path.join(videoDownloadDir, a)).mtimeMs;
+      });
+      res.json(files);
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to read videos' });
+    }
+  });
+
+  // Delete a downloaded video
+  app.delete('/api/videos/:filename', (req, res) => {
+    const filePath = path.join(videoDownloadDir, req.params.filename);
+    const thumbPath = path.join(videoThumbDir, req.params.filename.replace(/\.[^/.]+$/, ".jpg"));
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+        if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
+        res.json({ success: true });
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to delete video' });
+      }
+    } else {
+      res.status(404).json({ error: 'Video not found' });
+    }
+  });
+
   // Delete a downloaded image
   app.delete('/api/images/:filename', (req, res) => {
     const filePath = path.join(downloadDir, req.params.filename);
@@ -314,6 +431,16 @@ async function startServer() {
 
   // Start the automation watcher
   startAutomationWatcher();
+  
+  // Start the video automation watcher
+  startVideoAutomationWatcher(() => {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      return config.videoConcurrency || 3;
+    } catch (e) {
+      return 3;
+    }
+  });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
