@@ -155,10 +155,13 @@ const JobItem = React.memo(({
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string>('');
+  const [videoTasks, setVideoTasks] = useState<VideoTask[]>([]);
+  const [activeVideoTaskId, setActiveVideoTaskId] = useState<string>('');
   const [showAddTaskMenu, setShowAddTaskMenu] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tasks' | 'records' | 'gallery' | 'video_records' | 'video_gallery'>('tasks');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery'>('tasks');
+  const [showNavDropdown, setShowNavDropdown] = useState<'tasks' | 'records' | 'gallery' | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [systemConfig, setSystemConfig] = useState({ 
     systemDownloadsDir: '', 
@@ -182,7 +185,6 @@ export default function App() {
   const [videoGallery, setVideoGallery] = useState<string[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
-  const [showVideoEditor, setShowVideoEditor] = useState(false);
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
@@ -525,38 +527,85 @@ export default function App() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto bg-gray-50 min-h-screen">
-      <div className="flex justify-between items-end border-b border-gray-200 mb-6">
-        <div className="flex gap-2 overflow-x-auto no-scrollbar w-full pr-4">
-          <button 
-            onClick={() => setActiveTab('tasks')} 
-            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'tasks' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
-          >
-            生图任务
-          </button>
-          <button 
-            onClick={() => setActiveTab('records')} 
-            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
-          >
-            生图记录
-          </button>
-          <button 
-            onClick={() => setActiveTab('gallery')} 
-            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
-          >
-            本地图库
-          </button>
-          <button 
-            onClick={() => setActiveTab('video_records')} 
-            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'video_records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
-          >
-            视频记录
-          </button>
-          <button 
-            onClick={() => setActiveTab('video_gallery')} 
-            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'video_gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
-          >
-            本地视频库
-          </button>
+      <div className="flex justify-between items-end border-b border-gray-200 mb-6 relative">
+        <div className="flex gap-6 w-full">
+          {/* Tasks Dropdown */}
+          <div className="relative">
+            <button 
+              onClick={() => setShowNavDropdown(showNavDropdown === 'tasks' ? null : 'tasks')} 
+              className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['tasks', 'video_tasks'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+            >
+              任务 <ChevronDown size={16}/>
+            </button>
+            {showNavDropdown === 'tasks' && (
+              <div className="absolute top-full left-0 mt-1 w-32 bg-white border border-gray-100 shadow-lg rounded-xl overflow-hidden z-50">
+                <button 
+                  onClick={() => { setActiveTab('tasks'); setShowNavDropdown(null); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'tasks' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
+                >
+                  生图任务
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('video_tasks'); setShowNavDropdown(null); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'video_tasks' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
+                >
+                  视频任务
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Records Dropdown */}
+          <div className="relative">
+            <button 
+              onClick={() => setShowNavDropdown(showNavDropdown === 'records' ? null : 'records')} 
+              className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['records', 'video_records'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+            >
+              任务记录 <ChevronDown size={16}/>
+            </button>
+            {showNavDropdown === 'records' && (
+              <div className="absolute top-full left-0 mt-1 w-32 bg-white border border-gray-100 shadow-lg rounded-xl overflow-hidden z-50">
+                <button 
+                  onClick={() => { setActiveTab('records'); setShowNavDropdown(null); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'records' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
+                >
+                  生图记录
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('video_records'); setShowNavDropdown(null); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'video_records' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
+                >
+                  视频记录
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Gallery Dropdown */}
+          <div className="relative">
+            <button 
+              onClick={() => setShowNavDropdown(showNavDropdown === 'gallery' ? null : 'gallery')} 
+              className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['gallery', 'video_gallery'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+            >
+              素材库 <ChevronDown size={16}/>
+            </button>
+            {showNavDropdown === 'gallery' && (
+              <div className="absolute top-full left-0 mt-1 w-32 bg-white border border-gray-100 shadow-lg rounded-xl overflow-hidden z-50">
+                <button 
+                  onClick={() => { setActiveTab('gallery'); setShowNavDropdown(null); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'gallery' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
+                >
+                  本地图库
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('video_gallery'); setShowNavDropdown(null); }}
+                  className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'video_gallery' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
+                >
+                  本地视频库
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         <button 
           onClick={() => setShowConfigModal(true)} 
@@ -604,7 +653,18 @@ export default function App() {
                   </button>
                   <button 
                     onClick={() => {
-                      setShowVideoEditor(true);
+                      setActiveTab('video_tasks');
+                      if (videoTasks.length === 0) {
+                        const newTask: VideoTask = {
+                          id: Date.now().toString(),
+                          storyboards: [],
+                          introAnimation: 'none',
+                          outroAnimation: 'none',
+                          bgm: ''
+                        };
+                        setVideoTasks([newTask]);
+                        setActiveVideoTaskId(newTask.id);
+                      }
                       setShowAddTaskMenu(false);
                     }}
                     className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
@@ -748,6 +808,136 @@ export default function App() {
       </div>
       )}
       </>
+      )}
+
+      {activeTab === 'video_tasks' && (
+        <>
+          <div className="flex items-center gap-2 mb-6">
+            <div className="flex gap-2 overflow-x-auto pb-2 flex-grow">
+              {videoTasks.map((t, index) => (
+                <div 
+                  key={t.id} 
+                  onClick={() => setActiveVideoTaskId(t.id)}
+                  className={`flex items-center gap-2 px-5 py-2 rounded-full font-medium transition cursor-pointer select-none flex-shrink-0 ${activeVideoTaskId === t.id ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'}`}
+                >
+                  <span>视频任务 {index + 1}</span>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const newTasks = videoTasks.filter(task => task.id !== t.id);
+                      setVideoTasks(newTasks);
+                      if (activeVideoTaskId === t.id) {
+                        setActiveVideoTaskId(newTasks.length > 0 ? newTasks[0].id : '');
+                      }
+                    }} 
+                    className={`p-0.5 rounded-full transition ${activeVideoTaskId === t.id ? 'hover:bg-blue-500 text-white' : 'hover:bg-gray-200 text-gray-500'}`}
+                    title="关闭任务"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button 
+              onClick={() => {
+                const newTask: VideoTask = {
+                  id: Date.now().toString(),
+                  storyboards: [],
+                  introAnimation: 'none',
+                  outroAnimation: 'none',
+                  bgm: ''
+                };
+                setVideoTasks([...videoTasks, newTask]);
+                setActiveVideoTaskId(newTask.id);
+              }}
+              className="flex items-center gap-1 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-full font-medium hover:bg-gray-50 hover:text-blue-600 transition shadow-sm flex-shrink-0"
+            >
+              <Plus size={16}/> 新建视频任务
+            </button>
+          </div>
+
+          {videoTasks.length === 0 ? (
+            <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-gray-200">
+              <Film className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+              <h3 className="text-xl font-bold text-gray-700 mb-2">暂无视频任务</h3>
+              <p className="text-gray-500 mb-6">点击上方按钮创建一个新的视频生成任务</p>
+              <button 
+                onClick={() => {
+                  const newTask: VideoTask = {
+                    id: Date.now().toString(),
+                    storyboards: [],
+                    introAnimation: 'none',
+                    outroAnimation: 'none',
+                    bgm: ''
+                  };
+                  setVideoTasks([newTask]);
+                  setActiveVideoTaskId(newTask.id);
+                }}
+                className="inline-flex items-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-md hover:shadow-lg"
+              >
+                <Plus size={20}/> 创建第一个视频任务
+              </button>
+            </div>
+          ) : (
+            <>
+              {videoTasks.map(t => (
+                <div key={t.id} className={activeVideoTaskId === t.id ? 'block' : 'hidden'}>
+                  <VideoEditor 
+                    task={t}
+                    onChange={(updatedTask) => {
+                      setVideoTasks(prev => prev.map(pt => pt.id === updatedTask.id ? updatedTask : pt));
+                    }}
+                    galleryImages={galleryImages}
+                  />
+                </div>
+              ))}
+              
+              <div className="mt-6 flex justify-end">
+                <button 
+                  onClick={async () => {
+                    const validTasks = videoTasks.filter(t => t.storyboards.length > 0);
+                    if (validTasks.length === 0) {
+                      alert('没有可提交的有效视频任务（需至少包含一个分镜）');
+                      return;
+                    }
+                    
+                    for (const task of validTasks) {
+                      try {
+                        // Optimistic UI
+                        const tempJob = {
+                          id: task.id,
+                          timestamp: Date.now(),
+                          status: 'pending',
+                          progress: 0,
+                          data: task
+                        };
+                        setVideoJobs(prev => [tempJob, ...prev]);
+                        
+                        await fetch('/api/video/execute', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify(task)
+                        });
+                      } catch (e) {
+                        alert('提交视频任务失败');
+                        setVideoJobs(prev => prev.filter(j => j.id !== task.id));
+                      }
+                    }
+                    
+                    setVideoTasks([]);
+                    setActiveVideoTaskId('');
+                    setActiveTab('video_records');
+                    fetchVideoJobs();
+                  }}
+                  disabled={!videoTasks.some(t => t.storyboards.length > 0)}
+                  className="flex items-center gap-2 bg-blue-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed text-lg"
+                >
+                  <PlayCircle size={24}/> 提交所有视频任务 ({videoTasks.filter(t => t.storyboards.length > 0).length})
+                </button>
+              </div>
+            </>
+          )}
+        </>
       )}
 
       {activeTab === 'records' && (
@@ -1292,42 +1482,6 @@ export default function App() {
                 <button onClick={() => setViewingVideo(null)} className="flex-1 max-w-[160px] bg-gray-800 text-white px-6 py-3 rounded-full font-bold hover:bg-gray-700 transition shadow-lg">关闭预览</button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {showVideoEditor && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
-          <div className="w-full max-w-7xl h-full max-h-[90vh]">
-            <VideoEditor 
-              onClose={() => setShowVideoEditor(false)}
-              galleryImages={galleryImages}
-              onSubmit={async (task) => {
-                // Optimistic UI
-                const tempJob = {
-                  id: task.id,
-                  timestamp: Date.now(),
-                  status: 'pending',
-                  progress: 0,
-                  task: task
-                };
-                setVideoJobs(prev => [tempJob, ...prev]);
-                setShowVideoEditor(false);
-                setActiveTab('video_records');
-                
-                try {
-                  await fetch('/api/video/execute', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(task)
-                  });
-                  fetchVideoJobs();
-                } catch (e) {
-                  alert('提交视频任务失败');
-                  setVideoJobs(prev => prev.filter(j => j.id !== task.id));
-                }
-              }}
-            />
           </div>
         </div>
       )}

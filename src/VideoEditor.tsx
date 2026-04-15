@@ -50,22 +50,14 @@ const TEXT_EFFECTS = [
 ];
 
 export default function VideoEditor({ 
-  onClose, 
-  onSubmit, 
+  task,
+  onChange,
   galleryImages 
 }: { 
-  onClose: () => void, 
-  onSubmit: (task: VideoTask) => void,
+  task: VideoTask,
+  onChange: (task: VideoTask) => void,
   galleryImages: string[]
 }) {
-  const [task, setTask] = useState<VideoTask>({
-    id: Date.now().toString(),
-    storyboards: [],
-    introAnimation: 'none',
-    outroAnimation: 'none',
-    bgm: ''
-  });
-
   const [bgmList, setBgmList] = useState<string[]>([]);
   const [playingBgm, setPlayingBgm] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -97,13 +89,13 @@ export default function VideoEditor({
     fetch('/api/bgm').then(res => res.json()).then(data => setBgmList(data));
   }, []);
 
-  const updateTask = (updates: Partial<VideoTask>) => setTask({ ...task, ...updates });
+  const updateTask = (updates: Partial<VideoTask>) => onChange({ ...task, ...updates });
 
   const updateStoryboard = (id: string, updates: Partial<Storyboard>) => {
-    setTask(prev => ({
-      ...prev,
-      storyboards: prev.storyboards.map(sb => sb.id === id ? { ...sb, ...updates } : sb)
-    }));
+    onChange({
+      ...task,
+      storyboards: task.storyboards.map(sb => sb.id === id ? { ...sb, ...updates } : sb)
+    });
   };
 
   const addEmptyStoryboard = () => {
@@ -338,12 +330,7 @@ export default function VideoEditor({
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full max-h-[85vh]">
-      <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-        <h2 className="text-xl font-bold flex items-center gap-2"><Film className="text-blue-600"/> 视频生成任务</h2>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
-      </div>
-
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full">
       <div className="flex-grow overflow-y-auto p-6 space-y-8">
         {/* Global Settings */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -541,6 +528,7 @@ export default function VideoEditor({
                                     updateTask({
                                       storyboards: task.storyboards.map(s => ({
                                         ...s,
+                                        text: sb.text,
                                         textColor: sb.textColor,
                                         textSize: sb.textSize,
                                         textEffect: sb.textEffect
@@ -685,10 +673,16 @@ export default function VideoEditor({
               <button onClick={() => setShowGallery(false)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
             </div>
             <div className="flex-grow overflow-y-auto mb-6 pr-2">
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                {galleryImages.map(img => (
-                  <div 
-                    key={img} 
+              {galleryImages.length === 0 ? (
+                <div className="text-center py-12 text-gray-500">
+                  <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>图库中暂无图片</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                  {galleryImages.map(img => (
+                    <div 
+                      key={img} 
                     onClick={() => {
                       if (galleryMode === '4grid') {
                         // Process 4-grid from gallery image
@@ -733,6 +727,7 @@ export default function VideoEditor({
                   </div>
                 ))}
               </div>
+              )}
             </div>
           </div>
         </div>
