@@ -582,8 +582,9 @@ export default function VideoEditor({
                             <>
                               <img src={sb.image} className="w-full h-full object-contain" />
                               <div className="absolute inset-0 bg-black/30 sm:bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                                <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm"><Scissors size={20}/></button>
-                                <label className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer shadow-sm">
+                                <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" title="编辑图片"><Scissors size={20}/></button>
+                                <a href={sb.image} download={`storyboard_${index + 1}.jpg`} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" title="下载原图"><Download size={20}/></a>
+                                <label className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer shadow-sm" title="更换图片">
                                   <Upload size={20}/>
                                   <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, sb.id)} />
                                 </label>
@@ -724,25 +725,27 @@ export default function VideoEditor({
             </div>
             <div className="flex-grow overflow-hidden p-2 sm:p-6 bg-gray-100 flex items-center justify-center relative touch-none">
               {isSmudging ? (
-                <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center">
-                  <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none" />
-                  <canvas 
-                    ref={canvasRef}
-                    onMouseDown={startDrawing}
-                    onMouseMove={draw}
-                    onMouseUp={stopDrawing}
-                    onMouseLeave={stopDrawing}
-                    onTouchStart={startDrawing}
-                    onTouchMove={draw}
-                    onTouchEnd={stopDrawing}
-                    className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
-                  />
-                  {isProcessing && (
-                    <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
-                      <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-                      <p className="text-blue-800 font-bold">后台智能处理中...</p>
-                    </div>
-                  )}
+                <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+                  <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center">
+                    <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none" />
+                    <canvas 
+                      ref={canvasRef}
+                      onMouseDown={startDrawing}
+                      onMouseMove={draw}
+                      onMouseUp={stopDrawing}
+                      onMouseLeave={stopDrawing}
+                      onTouchStart={startDrawing}
+                      onTouchMove={draw}
+                      onTouchEnd={stopDrawing}
+                      className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
+                    />
+                    {isProcessing && (
+                      <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
+                        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <p className="text-blue-800 font-bold">后台智能处理中...</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div className="max-w-full max-h-full flex items-center justify-center overflow-hidden">

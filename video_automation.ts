@@ -46,10 +46,17 @@ export function startVideoAutomationWatcher(getConcurrency: () => number) {
                 processVideoTask(filePath, file).catch(err => {
                     console.error(`❌ 视频任务 ${file} 失败:`, err);
                     videoJobProgress.set(file, { progress: 0, status: 'error', error: err.message });
-                    // Rename file to prevent infinite loop
+                    // Move to history even on error to keep record
                     try {
-                        fs.renameSync(filePath, filePath + '.error');
-                    } catch (e) {}
+                        const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+                        taskData.status = 'error';
+                        taskData.error = err.message;
+                        fs.writeFileSync(path.join(videoHistoryDir, file), JSON.stringify(taskData, null, 2));
+                        fs.unlinkSync(filePath);
+                    } catch (e) {
+                        console.error('Failed to move error task to history', e);
+                        try { fs.renameSync(filePath, filePath + '.error'); } catch (e2) {}
+                    }
                 }).finally(() => {
                     activeVideoJobs--;
                 });
@@ -161,21 +168,24 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
 
         // Base scaling to target resolution
         // Use yuv444p for intermediate processing to avoid zoompan bugs with rgba/yuv420p
-        let scaleFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv444p`;
+        // IMPORTANT: Ensure target dimensions are even numbers
+        const w = Math.floor(targetWidth / 2) * 2;
+        const h = Math.floor(targetHeight / 2) * 2;
+        let scaleFilter = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,format=yuv444p`;
 
         // Animations
         let panZoom = '';
         switch (sb.animation) {
-            case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
-            case 'pan_lr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
-            case 'pan_rl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
-            case 'pan_tb': panZoom = `zoompan=z=1.2:x='iw*0.1':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
-            case 'pan_bt': panZoom = `zoompan=z=1.2:x='iw*0.1':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
-            case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
-            case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
-            case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
-            case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
-            default: panZoom = `zoompan=z=1:d=${frames}:s=${targetWidth}x${targetHeight}:fps=30`; break;
+            case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_lr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_rl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_tb': panZoom = `zoompan=z=1.2:x='iw*0.1':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_bt': panZoom = `zoompan=z=1.2:x='iw*0.1':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            default: panZoom = `zoompan=z=1:d=${frames}:s=${w}x${h}:fps=30`; break;
         }
 
         filterComplex = `[0:v]${scaleFilter},${panZoom}[v1]`;

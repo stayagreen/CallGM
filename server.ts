@@ -84,7 +84,14 @@ async function startServer() {
         try {
           const stat = fs.statSync(path.join(videoHistoryDir, file));
           const data = JSON.parse(fs.readFileSync(path.join(videoHistoryDir, file), 'utf-8'));
-          jobs.push({ id: file, timestamp: stat.mtimeMs, data, status: 'completed', progress: 100 });
+          jobs.push({ 
+            id: file, 
+            timestamp: stat.mtimeMs, 
+            data, 
+            status: data.status || 'completed', 
+            progress: data.status === 'error' ? 0 : 100,
+            error: data.error
+          });
         } catch (e) {}
       }
     }

@@ -885,34 +885,27 @@ export default function App() {
                     setActiveVideoTaskId('');
                     setActiveTab('video_records');
 
-                    // Process submissions in background
-                    for (const task of currentTasks) {
+                    // Process submissions in background with immediate job list update
+                    Promise.all(currentTasks.map(async (task) => {
                       try {
-                        fetch('/api/video/execute', {
+                        const res = await fetch('/api/video/execute', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify(task)
-                        }).then(async () => {
-                          // Wait and refresh until it appears in the list
-                          for (let i = 0; i < 10; i++) {
-                            await new Promise(r => setTimeout(r, 1000));
-                            const res = await fetch('/api/video/jobs');
-                            const data = await res.json();
-                            if (data.some((j: any) => j.id === task.id)) {
-                              setVideoJobs(data);
-                              break;
-                            }
-                          }
-                          // Always remove from submitting list after trying
-                          setSubmittingVideoJobs(prev => prev.filter(j => j.id !== task.id));
-                        }).catch(e => {
-                          console.error('Background submission failed', e);
-                          setSubmittingVideoJobs(prev => prev.filter(j => j.id !== task.id));
                         });
+                        const data = await res.json();
+                        return { taskId: task.id, success: true };
                       } catch (e) {
-                        console.error('Failed to queue video task', e);
+                        console.error('Submission failed', e);
+                        return { taskId: task.id, success: false };
                       }
-                    }
+                    })).then(async () => {
+                      // Refresh job list immediately after all requests sent
+                      const res = await fetch('/api/video/jobs');
+                      const data = await res.json();
+                      setVideoJobs(data);
+                      setSubmittingVideoJobs([]); // Clear all optimistic jobs
+                    });
                   }}
                   disabled={!videoTasks.some(t => t.storyboards.length > 0)}
                   className="flex items-center gap-2 bg-blue-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed text-lg"
