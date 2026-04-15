@@ -160,8 +160,8 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
         const frames = Math.round(duration * fps);
 
         // Base scaling to target resolution
-        // Use scale and pad to ensure exact dimensions and even numbers
-        let scaleFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=rgba`;
+        // Use yuv444p for intermediate processing to avoid zoompan bugs with rgba/yuv420p
+        let scaleFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv444p`;
 
         // Animations
         let panZoom = '';
@@ -184,14 +184,18 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
         if (sb.text) {
             const fontSize = sb.textSize || 40; 
             const color = sb.textColor || 'white';
-            // More thorough escaping for drawtext
-            const text = sb.text.replace(/\\/g, "\\\\\\\\").replace(/'/g, "'\\\\\\''").replace(/:/g, "\\\\:").replace(/%/g, "\\\\%");
+            // Robust escaping for drawtext: escape backslashes, then colons, then single quotes
+            const escapedText = sb.text
+                .replace(/\\/g, "\\\\")
+                .replace(/:/g, "\\:")
+                .replace(/'/g, "\\'")
+                .replace(/%/g, "\\%");
             
             let textAlpha = '1';
             if (sb.textEffect === 'fade') textAlpha = `if(lt(t,1),t,1)`;
             else if (sb.textEffect === 'typewriter') textAlpha = `if(lt(t,1),t,1)`; 
 
-            filterComplex += `;[v1]drawtext=text='${text}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}',format=yuv420p[v2]`;
+            filterComplex += `;[v1]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}',format=yuv420p[v2]`;
         } else {
             filterComplex += `;[v1]format=yuv420p[v2]`;
         }
@@ -235,7 +239,7 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
         if (!hasTransitions) {
             clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS[v${i}];`; });
             clipPaths.forEach((_, i) => { filterComplex += `[v${i}]`; });
-            filterComplex += `concat=n=${clipPaths.length}:v=1:a=0[outv]`;
+            filterComplex += `concat=n=${clipPaths.length}:v=1:a=0,format=yuv420p[outv]`;
             
             let totalDuration = storyboards.reduce((acc, sb) => acc + (sb.duration || 3), 0);
 
@@ -271,10 +275,11 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
                 offset += (storyboards[i].duration || 3) - duration;
             }
             
-            // Remove trailing semicolon
-            filterComplex = filterComplex.slice(0, -1);
+            // Ensure final output has consistent pixel format
+            const finalStream = currentStream;
+            filterComplex += `${finalStream}format=yuv420p[finalv]`;
             
-            inputs.complexFilter(filterComplex, [currentStream.replace('[', '').replace(']', '')])
+            inputs.complexFilter(filterComplex, ['finalv'])
                 .outputOptions([
                     '-c:v libx264', 
                     '-profile:v main', 
@@ -347,7 +352,7 @@ function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string
             ]);
         }
 
-        cmd.complexFilter(filterComplex)
+        cmd.complexFilter(filterComplex, 'v')
             .save(outputPath)
             .on('progress', (p) => onProgress(p.percent || 0))
             .on('end', () => resolve())

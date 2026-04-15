@@ -581,9 +581,9 @@ export default function VideoEditor({
                           {sb.image ? (
                             <>
                               <img src={sb.image} className="w-full h-full object-contain" />
-                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                                <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition"><Scissors size={20}/></button>
-                                <label className="p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer">
+                              <div className="absolute inset-0 bg-black/30 sm:bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm"><Scissors size={20}/></button>
+                                <label className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer shadow-sm">
                                   <Upload size={20}/>
                                   <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, sb.id)} />
                                 </label>
@@ -722,9 +722,9 @@ export default function VideoEditor({
                 <button onClick={() => setEditingImage(null)} className="p-2 text-gray-400 hover:text-gray-600"><X size={20}/></button>
               </div>
             </div>
-            <div className="flex-grow overflow-auto p-6 bg-gray-100 flex items-center justify-center relative touch-none">
+            <div className="flex-grow overflow-hidden p-2 sm:p-6 bg-gray-100 flex items-center justify-center relative touch-none">
               {isSmudging ? (
-                <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden">
+                <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center">
                   <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none" />
                   <canvas 
                     ref={canvasRef}
@@ -745,9 +745,11 @@ export default function VideoEditor({
                   )}
                 </div>
               ) : (
-                <ReactCrop crop={crop} onChange={c => setCrop(c)}>
-                  <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg" />
-                </ReactCrop>
+                <div className="max-w-full max-h-full flex items-center justify-center overflow-hidden">
+                  <ReactCrop crop={crop} onChange={c => setCrop(c)}>
+                    <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg" />
+                  </ReactCrop>
+                </div>
               )}
             </div>
             <div className="p-4 border-t border-gray-100 flex justify-between items-center bg-white flex-wrap gap-4">

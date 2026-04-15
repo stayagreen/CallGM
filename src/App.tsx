@@ -894,16 +894,17 @@ export default function App() {
                           body: JSON.stringify(task)
                         }).then(async () => {
                           // Wait and refresh until it appears in the list
-                          for (let i = 0; i < 5; i++) {
+                          for (let i = 0; i < 10; i++) {
                             await new Promise(r => setTimeout(r, 1000));
                             const res = await fetch('/api/video/jobs');
                             const data = await res.json();
                             if (data.some((j: any) => j.id === task.id)) {
                               setVideoJobs(data);
-                              setSubmittingVideoJobs(prev => prev.filter(j => j.id !== task.id));
                               break;
                             }
                           }
+                          // Always remove from submitting list after trying
+                          setSubmittingVideoJobs(prev => prev.filter(j => j.id !== task.id));
                         }).catch(e => {
                           console.error('Background submission failed', e);
                           setSubmittingVideoJobs(prev => prev.filter(j => j.id !== task.id));
