@@ -167,36 +167,17 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
         const frames = Math.round(duration * fps);
 
         // Base scaling to target resolution
-        // Use yuv444p for intermediate processing to avoid zoompan bugs with rgba/yuv420p
-        // IMPORTANT: Ensure target dimensions are even numbers
         const w = Math.floor(targetWidth / 2) * 2;
         const h = Math.floor(targetHeight / 2) * 2;
-        // Use setsar=1 and scale to target size first
-        let scaleFilter = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv444p`;
-
-        // Animations
-        let panZoom = '';
-        // Note: zoompan is very sensitive. We use trunc() to ensure integer coordinates and clamp values.
-        switch (sb.animation) {
-            case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_lr': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(ih*0.1)':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_rl': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(ih*0.1)':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_tb': panZoom = `zoompan=z=1.2:x='trunc(iw*0.1)':y='trunc(min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_bt': panZoom = `zoompan=z=1.2:x='trunc(iw*0.1)':y='trunc(min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-            default: panZoom = `zoompan=z=1:d=${frames}:s=${w}x${h}:fps=30`; break;
-        }
-
-        filterComplex = `[0:v]${scaleFilter},${panZoom},scale=${w}:${h}[v1]`;
+        
+        // Simpler approach: scale and pad, then apply text. 
+        // Avoiding zoompan which is the most common cause of "Invalid argument" in complex filters.
+        let filterChain = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
 
         // Text Overlay
         if (sb.text) {
             const fontSize = sb.textSize || 40; 
             const color = sb.textColor || 'white';
-            // Robust escaping for drawtext: escape backslashes, then colons, then single quotes
             const escapedText = sb.text
                 .replace(/\\/g, "\\\\\\\\")
                 .replace(/:/g, "\\\\:")
@@ -205,16 +186,15 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
             
             let textAlpha = '1';
             if (sb.textEffect === 'fade') textAlpha = `if(lt(t,1),t,1)`;
-            else if (sb.textEffect === 'typewriter') textAlpha = `if(lt(t,1),t,1)`; 
-
-            filterComplex += `;[v1]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}',format=yuv420p[v2]`;
-        } else {
-            filterComplex += `;[v1]format=yuv420p[v2]`;
+            
+            filterChain += `,drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}'`;
         }
+
+        filterChain += `,format=yuv420p`;
 
         ffmpeg(imgPath)
             .loop(duration)
-            .complexFilter(filterComplex, ['v2'])
+            .videoFilters(filterChain)
             .outputOptions([
                 '-c:v libx264',
                 '-profile:v main',
