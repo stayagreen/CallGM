@@ -331,80 +331,136 @@ export default function VideoEditor({
       if (!maskCtx) return;
       const maskData = maskCtx.getImageData(0, 0, canvas.width, canvas.height);
       
-      // 3. Intelligent Fill Simulation (Patch-based Texture Synthesis)
+      // 3. Optimized Iterative Boundary Diffusion Algorithm
       const originalData = context.getImageData(0, 0, canvas.width, canvas.height);
       const width = canvas.width;
       const height = canvas.height;
+      const pixels = originalData.data;
+      const maskPixels = maskData.data;
       
-      // We'll sample from 8 directions to get a better texture synthesis
-      const offset = Math.max(10, Math.round(brushSize / 1.5));
-      const neighbors = [
-        { dx: -offset, dy: 0 }, { dx: offset, dy: 0 },
-        { dx: 0, dy: -offset }, { dx: 0, dy: offset },
-        { dx: -offset, dy: -offset }, { dx: offset, dy: offset },
-        { dx: -offset, dy: offset }, { dx: offset, dy: -offset }
-      ];
+      // Create a hole map
+      const hole = new Uint8Array(width * height);
+      let holeCount = 0;
+      let boundary = [];
 
-      for (let i = 0; i < maskData.data.length; i += 4) {
-        const alpha = maskData.data[i + 3];
-        if (alpha > 0) {
-          const x = (i / 4) % width;
-          const y = Math.floor((i / 4) / width);
-          const blend = alpha / 255;
+      for (let i = 0; i < width * height; i++) {
+        if (maskPixels[i * 4 + 3] > 50) {
+          hole[i] = 1;
+          holeCount++;
+        }
+      }
 
+      // Initial boundary finding
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = y * width + x;
+          if (hole[idx] === 1) {
+            let isBoundary = false;
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                  if (hole[ny * width + nx] === 0) {
+                    isBoundary = true;
+                    break;
+                  }
+                }
+              }
+              if (isBoundary) break;
+            }
+            if (isBoundary) boundary.push({x, y, idx});
+          }
+        }
+      }
+
+      // Iterative Diffusion Loop
+      let iterations = 0;
+      const maxIterations = 250;
+      
+      while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
+        const nextBoundary = new Set<number>();
+        const filledThisIteration = [];
+
+        for (const p of boundary) {
           let r = 0, g = 0, b = 0, count = 0;
-          
-          // Sample surrounding pixels to "fill" the hole
-          for (const n of neighbors) {
-            const nx = Math.round(x + n.dx);
-            const ny = Math.round(y + n.dy);
-            
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-              const ni = (ny * width + nx) * 4;
-              // Only sample from non-masked areas if possible for better "content-aware" feel
-              // But for simplicity in this client-side version, we sample all neighbors
-              r += originalData.data[ni];
-              g += originalData.data[ni+1];
-              b += originalData.data[ni+2];
-              count++;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = p.x + dx;
+              const ny = p.y + dy;
+              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                const nidx = ny * width + nx;
+                if (hole[nidx] === 0) {
+                  const off = nidx * 4;
+                  r += pixels[off];
+                  g += pixels[off+1];
+                  b += pixels[off+2];
+                  count++;
+                }
+              }
             }
           }
 
           if (count > 0) {
-            const targetR = r / count;
-            const targetG = g / count;
-            const targetB = b / count;
-
-            // Apply the synthesized pixel with the mask's alpha for soft edges
-            originalData.data[i] = originalData.data[i] * (1 - blend) + targetR * blend;
-            originalData.data[i+1] = originalData.data[i+1] * (1 - blend) + targetG * blend;
-            originalData.data[i+2] = originalData.data[i+2] * (1 - blend) + targetB * blend;
+            const off = p.idx * 4;
+            pixels[off] = r / count;
+            pixels[off+1] = g / count;
+            pixels[off+2] = b / count;
+            filledThisIteration.push(p.idx);
           }
         }
+
+        // Update hole map and find next boundary
+        for (const idx of filledThisIteration) {
+          hole[idx] = 0;
+          holeCount--;
+          
+          // Check neighbors of filled pixel to see if they are now boundary
+          const x = idx % width;
+          const y = Math.floor(idx / width);
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = x + dx;
+              const ny = y + dy;
+              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                const nidx = ny * width + nx;
+                if (hole[nidx] === 1) {
+                  nextBoundary.add(nidx);
+                }
+              }
+            }
+          }
+        }
+
+        boundary = Array.from(nextBoundary).map(idx => ({
+          x: idx % width,
+          y: Math.floor(idx / width),
+          idx
+        }));
+        
+        iterations++;
       }
       
-      // 4. Final Blur Pass on the filled area to smooth out seams
+      // 4. Post-processing: Smooth and Composite
       context.putImageData(originalData, 0, 0);
       
-      // Create a temporary canvas for the blurred result
-      const finalBlurCanvas = document.createElement('canvas');
-      finalBlurCanvas.width = canvas.width;
-      finalBlurCanvas.height = canvas.height;
-      const finalBlurCtx = finalBlurCanvas.getContext('2d');
-      if (finalBlurCtx) {
-        finalBlurCtx.filter = 'blur(2px)';
-        finalBlurCtx.drawImage(canvas, 0, 0);
-        const blurData = finalBlurCtx.getImageData(0, 0, width, height);
+      const blurCanvas = document.createElement('canvas');
+      blurCanvas.width = width;
+      blurCanvas.height = height;
+      const blurCtx = blurCanvas.getContext('2d');
+      if (blurCtx) {
+        blurCtx.filter = 'blur(1.5px)'; // Subtle blur for natural blending
+        blurCtx.drawImage(canvas, 0, 0);
+        const blurredData = blurCtx.getImageData(0, 0, width, height);
         
-        // Use the mask to only apply the blur to the edited area
-        for (let i = 0; i < maskData.data.length; i += 4) {
-          const alpha = maskData.data[i + 3];
+        for (let i = 0; i < maskPixels.length; i += 4) {
+          const alpha = maskPixels[i + 3];
           if (alpha > 0) {
-            // We already have the patch-synthesized data in originalData
-            // Just applying a tiny bit more smoothing using the blurred data
-            originalData.data[i] = originalData.data[i] * 0.7 + blurData.data[i] * 0.3;
-            originalData.data[i+1] = originalData.data[i+1] * 0.7 + blurData.data[i+1] * 0.3;
-            originalData.data[i+2] = originalData.data[i+2] * 0.7 + blurData.data[i+2] * 0.3;
+            const blend = alpha / 255;
+            // Stronger blend at the center of the smudge, softer at edges
+            pixels[i] = pixels[i] * (1 - blend * 0.3) + blurredData.data[i] * (blend * 0.3);
+            pixels[i+1] = pixels[i+1] * (1 - blend * 0.3) + blurredData.data[i+1] * (blend * 0.3);
+            pixels[i+2] = pixels[i+2] * (1 - blend * 0.3) + blurredData.data[i+2] * (blend * 0.3);
           }
         }
         context.putImageData(originalData, 0, 0);
@@ -768,8 +824,8 @@ export default function VideoEditor({
             </div>
             <div className="flex-grow min-h-0 overflow-hidden bg-gray-100 flex items-center justify-center relative touch-none">
               {isSmudging ? (
-                <div className="w-full h-full flex items-center justify-center p-4 sm:p-12">
-                  <div className="relative max-w-[90%] max-h-[90%] shadow-lg rounded-lg overflow-hidden flex items-center justify-center bg-white">
+                <div className="w-full h-full flex items-center justify-center p-6 sm:p-16">
+                  <div className="relative max-w-[85%] max-h-[85%] shadow-lg rounded-lg overflow-hidden flex items-center justify-center bg-white">
                     <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none" />
                     <canvas 
                       ref={canvasRef}
@@ -791,8 +847,8 @@ export default function VideoEditor({
                   </div>
                 </div>
               ) : (
-                <div className="w-full h-full flex items-center justify-center p-4 sm:p-12">
-                  <div className="max-w-[90%] max-h-[90%] flex items-center justify-center overflow-hidden">
+                <div className="w-full h-full flex items-center justify-center p-6 sm:p-16">
+                  <div className="max-w-[85%] max-h-[85%] flex items-center justify-center overflow-hidden">
                     <ReactCrop crop={crop} onChange={c => setCrop(c)}>
                       <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg" />
                     </ReactCrop>
