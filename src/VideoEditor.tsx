@@ -72,10 +72,10 @@ export default function VideoEditor({
   // Image Editor State
   const [crop, setCrop] = useState<Crop>();
   const [isSmudging, setIsSmudging] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [brushSize, setBrushSize] = useState(40);
   const [undoHistory, setUndoHistory] = useState<ImageData[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const blurredCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastPos = useRef<{x: number, y: number} | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -214,20 +214,10 @@ export default function VideoEditor({
         img.onload = () => {
           canvas.width = img.width;
           canvas.height = img.height;
-          context.drawImage(img, 0, 0);
+          context.lineCap = 'round';
+          context.lineJoin = 'round';
           setCtx(context);
           setUndoHistory([]); // Reset history on load
-
-          // Create blurred version for smudging
-          const bCanvas = document.createElement('canvas');
-          bCanvas.width = img.width;
-          bCanvas.height = img.height;
-          const bCtx = bCanvas.getContext('2d');
-          if (bCtx) {
-            bCtx.filter = 'blur(20px)';
-            bCtx.drawImage(img, 0, 0);
-            blurredCanvasRef.current = bCanvas;
-          }
         };
         img.src = editingImage.image;
       }
@@ -236,7 +226,7 @@ export default function VideoEditor({
 
   // Image Editor Logic
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isSmudging || !ctx || !canvasRef.current || !blurredCanvasRef.current) return;
+    if (!isSmudging || !ctx || !canvasRef.current) return;
     setIsDrawing(true);
 
     // Save current state for undo
@@ -254,17 +244,13 @@ export default function VideoEditor({
 
     lastPos.current = { x, y };
 
-    const pattern = ctx.createPattern(blurredCanvasRef.current, 'no-repeat');
-    if (pattern) {
-      ctx.strokeStyle = pattern;
-      ctx.lineWidth = brushSize;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-    }
+    ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+    ctx.lineWidth = brushSize;
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     if (!isDrawing || !isSmudging || !ctx || !canvasRef.current || !lastPos.current) return;
+    
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
@@ -295,11 +281,66 @@ export default function VideoEditor({
     setUndoHistory(prev => prev.slice(0, -1));
   };
 
-  const saveEditedImage = () => {
-    if (isSmudging && canvasRef.current && editingImage) {
-      const dataUrl = canvasRef.current.toDataURL('image/jpeg', 0.9);
+  const clearMask = () => {
+    if (!ctx || !canvasRef.current) return;
+    const currentState = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
+    setUndoHistory(prev => [...prev, currentState]);
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+  };
+
+  const saveEditedImage = async () => {
+    if (isSmudging && canvasRef.current && editingImage && imageRef.current) {
+      setIsProcessing(true);
+      
+      // Simulate backend processing delay for UX
+      await new Promise(resolve => setTimeout(resolve, 800));
+
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (!context) return;
+
+      canvas.width = imageRef.current.naturalWidth;
+      canvas.height = imageRef.current.naturalHeight;
+
+      // 1. Draw original image
+      context.drawImage(imageRef.current, 0, 0);
+
+      // 2. Create blurred version
+      const blurCanvas = document.createElement('canvas');
+      blurCanvas.width = canvas.width;
+      blurCanvas.height = canvas.height;
+      const blurCtx = blurCanvas.getContext('2d');
+      if (blurCtx) {
+        blurCtx.filter = 'blur(20px)';
+        blurCtx.drawImage(imageRef.current, 0, 0);
+      }
+
+      // 3. Get mask data
+      const maskCtx = canvasRef.current.getContext('2d');
+      const maskData = maskCtx?.getImageData(0, 0, canvas.width, canvas.height);
+      
+      // 4. Composite
+      if (maskData && blurCtx) {
+        const originalData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const blurredData = blurCtx.getImageData(0, 0, canvas.width, canvas.height);
+        
+        for (let i = 0; i < maskData.data.length; i += 4) {
+          const alpha = maskData.data[i + 3]; // Alpha channel of mask
+          if (alpha > 0) {
+            // Blend based on mask alpha
+            const blend = alpha / 255;
+            originalData.data[i] = originalData.data[i] * (1 - blend) + blurredData.data[i] * blend;
+            originalData.data[i+1] = originalData.data[i+1] * (1 - blend) + blurredData.data[i+1] * blend;
+            originalData.data[i+2] = originalData.data[i+2] * (1 - blend) + blurredData.data[i+2] * blend;
+          }
+        }
+        context.putImageData(originalData, 0, 0);
+      }
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
       updateStoryboard(editingImage.id, { image: dataUrl });
       setEditingImage(null);
+      setIsProcessing(false);
     } else if (!isSmudging && crop && editingImage && imageRef.current) {
       const canvas = document.createElement('canvas');
       const scaleX = imageRef.current.naturalWidth / imageRef.current.width;
@@ -424,7 +465,7 @@ export default function VideoEditor({
             ) : (
               <>
                 {/* Active Storyboard Card */}
-                <div className="relative w-full max-w-md mx-auto bg-white border border-gray-200 rounded-2xl shadow-sm flex flex-col">
+                <div className="relative w-full max-w-[280px] sm:max-w-md mx-auto bg-white border border-gray-200 rounded-2xl shadow-sm flex flex-col">
                   {/* Navigation Arrows */}
                   {task.storyboards.length > 1 && (
                     <>
@@ -614,28 +655,37 @@ export default function VideoEditor({
                 <button onClick={() => setEditingImage(null)} className="p-2 text-gray-400 hover:text-gray-600"><X size={20}/></button>
               </div>
             </div>
-            <div className="flex-grow overflow-auto p-6 bg-gray-100 flex items-center justify-center relative">
+            <div className="flex-grow overflow-auto p-6 bg-gray-100 flex items-center justify-center relative touch-none">
               {isSmudging ? (
-                <canvas 
-                  ref={canvasRef}
-                  onMouseDown={startDrawing}
-                  onMouseMove={draw}
-                  onMouseUp={stopDrawing}
-                  onMouseLeave={stopDrawing}
-                  onTouchStart={startDrawing}
-                  onTouchMove={draw}
-                  onTouchEnd={stopDrawing}
-                  className="max-w-full max-h-full object-contain cursor-crosshair shadow-lg"
-                />
+                <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden">
+                  <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none" />
+                  <canvas 
+                    ref={canvasRef}
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onMouseLeave={stopDrawing}
+                    onTouchStart={startDrawing}
+                    onTouchMove={draw}
+                    onTouchEnd={stopDrawing}
+                    className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
+                  />
+                  {isProcessing && (
+                    <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
+                      <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+                      <p className="text-blue-800 font-bold">后台智能处理中...</p>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <ReactCrop crop={crop} onChange={c => setCrop(c)}>
                   <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg" />
                 </ReactCrop>
               )}
             </div>
-            <div className="p-4 border-t border-gray-100 flex justify-between items-center bg-white">
+            <div className="p-4 border-t border-gray-100 flex justify-between items-center bg-white flex-wrap gap-4">
               {isSmudging ? (
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 flex-wrap">
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-600">画笔大小:</span>
                     <input 
@@ -643,21 +693,29 @@ export default function VideoEditor({
                       min="10" max="100" 
                       value={brushSize} 
                       onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                      className="w-32"
+                      className="w-24 sm:w-32 accent-blue-600"
                     />
                   </div>
                   <button 
                     onClick={handleUndo} 
                     disabled={undoHistory.length === 0}
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition"
                   >
                     撤销
+                  </button>
+                  <button 
+                    onClick={clearMask}
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
+                  >
+                    清空选区
                   </button>
                 </div>
               ) : <div></div>}
               <div className="flex gap-3">
-                <button onClick={() => setEditingImage(null)} className="px-6 py-2.5 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200">取消</button>
-                <button onClick={saveEditedImage} className="px-6 py-2.5 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700">确认应用</button>
+                <button onClick={() => setEditingImage(null)} className="px-6 py-2.5 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition">取消</button>
+                <button onClick={saveEditedImage} disabled={isProcessing} className="px-6 py-2.5 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition shadow-md disabled:opacity-50">
+                  {isSmudging ? '确认去除水印' : '确认应用'}
+                </button>
               </div>
             </div>
           </div>
