@@ -1303,17 +1303,28 @@ export default function App() {
               onClose={() => setShowVideoEditor(false)}
               galleryImages={galleryImages}
               onSubmit={async (task) => {
+                // Optimistic UI
+                const tempJob = {
+                  id: task.id,
+                  timestamp: Date.now(),
+                  status: 'pending',
+                  progress: 0,
+                  task: task
+                };
+                setVideoJobs(prev => [tempJob, ...prev]);
+                setShowVideoEditor(false);
+                setActiveTab('video_records');
+                
                 try {
                   await fetch('/api/video/execute', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(task)
                   });
-                  setShowVideoEditor(false);
-                  setActiveTab('video_records');
                   fetchVideoJobs();
                 } catch (e) {
                   alert('提交视频任务失败');
+                  setVideoJobs(prev => prev.filter(j => j.id !== task.id));
                 }
               }}
             />

@@ -72,12 +72,16 @@ export default function VideoEditor({
 
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
+  const [galleryMode, setGalleryMode] = useState<'normal' | '4grid'>('normal');
   const [activeStoryboardId, setActiveStoryboardId] = useState<string | null>(null);
+  const [activeStoryboardIndex, setActiveStoryboardIndex] = useState(0);
   const [editingImage, setEditingImage] = useState<{ id: string, image: string } | null>(null);
 
   // Image Editor State
   const [crop, setCrop] = useState<Crop>();
   const [isSmudging, setIsSmudging] = useState(false);
+  const [brushSize, setBrushSize] = useState(40);
+  const [undoHistory, setUndoHistory] = useState<ImageData[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const blurredCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastPos = useRef<{x: number, y: number} | null>(null);
@@ -220,6 +224,7 @@ export default function VideoEditor({
           canvas.height = img.height;
           context.drawImage(img, 0, 0);
           setCtx(context);
+          setUndoHistory([]); // Reset history on load
 
           // Create blurred version for smudging
           const bCanvas = document.createElement('canvas');
@@ -241,6 +246,11 @@ export default function VideoEditor({
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     if (!isSmudging || !ctx || !canvasRef.current || !blurredCanvasRef.current) return;
     setIsDrawing(true);
+
+    // Save current state for undo
+    const currentState = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
+    setUndoHistory(prev => [...prev, currentState]);
+
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
@@ -255,7 +265,7 @@ export default function VideoEditor({
     const pattern = ctx.createPattern(blurredCanvasRef.current, 'no-repeat');
     if (pattern) {
       ctx.strokeStyle = pattern;
-      ctx.lineWidth = 40; // Thicker brush for smudging
+      ctx.lineWidth = brushSize;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
     }
@@ -284,6 +294,13 @@ export default function VideoEditor({
     if (!isDrawing) return;
     setIsDrawing(false);
     lastPos.current = null;
+  };
+
+  const handleUndo = () => {
+    if (undoHistory.length === 0 || !ctx || !canvasRef.current) return;
+    const previousState = undoHistory[undoHistory.length - 1];
+    ctx.putImageData(previousState, 0, 0);
+    setUndoHistory(prev => prev.slice(0, -1));
   };
 
   const saveEditedImage = () => {
@@ -392,111 +409,195 @@ export default function VideoEditor({
                   <button onClick={addEmptyStoryboard} className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium border-b border-gray-50">
                     <ImageIcon size={16}/> 添加空分镜
                   </button>
-                  <label className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium cursor-pointer">
+                  <label className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium cursor-pointer border-b border-gray-50">
                     <Grid size={16}/> 导入并4宫格分割
                     <input type="file" accept="image/*" multiple className="hidden" onChange={handle4GridSplit} />
                   </label>
+                  <button 
+                    onClick={() => {
+                      setGalleryMode('4grid');
+                      setShowGallery(true);
+                      setShowAddMenu(false);
+                    }} 
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium"
+                  >
+                    <ImageIcon size={16}/> 从图库选择4宫格
+                  </button>
                 </div>
               )}
             </div>
           </div>
 
-          <div className="flex overflow-x-auto pb-6 gap-4 snap-x">
+          <div className="flex flex-col gap-4">
             {task.storyboards.length === 0 ? (
               <div className="w-full py-12 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400">
                 <Film size={48} className="mb-4 opacity-50"/>
                 <p>暂无分镜，请点击右上角添加</p>
               </div>
             ) : (
-              task.storyboards.map((sb, index) => (
-                <div key={sb.id} className="w-[85vw] sm:w-[320px] bg-white border border-gray-200 rounded-2xl shadow-sm flex-shrink-0 snap-center overflow-hidden flex flex-col">
-                  <div className="p-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
-                    <span className="font-bold text-gray-700">分镜 {index + 1}</span>
-                    <div className="flex gap-1">
-                      <button disabled={index === 0} onClick={() => moveStoryboard(index, -1)} className="p-1.5 text-gray-400 hover:text-blue-600 disabled:opacity-30"><ArrowLeft size={16}/></button>
-                      <button disabled={index === task.storyboards.length - 1} onClick={() => moveStoryboard(index, 1)} className="p-1.5 text-gray-400 hover:text-blue-600 disabled:opacity-30"><ArrowRight size={16}/></button>
-                      <button onClick={() => updateTask({ storyboards: task.storyboards.filter(s => s.id !== sb.id) })} className="p-1.5 text-gray-400 hover:text-red-600 ml-2"><Trash2 size={16}/></button>
-                    </div>
-                  </div>
-                  
-                  <div className="relative aspect-video bg-gray-100 flex items-center justify-center group">
-                    {sb.image ? (
+              <>
+                {/* Active Storyboard Card */}
+                <div className="relative w-full max-w-md mx-auto bg-white border border-gray-200 rounded-2xl shadow-sm flex flex-col">
+                  {/* Navigation Arrows */}
+                  {task.storyboards.length > 1 && (
+                    <>
+                      <button 
+                        onClick={() => setActiveStoryboardIndex(prev => Math.max(0, prev - 1))}
+                        disabled={activeStoryboardIndex === 0}
+                        className="absolute left-0 top-1/2 -translate-y-1/2 -translate-x-1/2 z-10 p-2 bg-white rounded-full shadow-md border border-gray-100 text-gray-600 hover:text-blue-600 disabled:opacity-0 transition-all"
+                      >
+                        <ArrowLeft size={20}/>
+                      </button>
+                      <button 
+                        onClick={() => setActiveStoryboardIndex(prev => Math.min(task.storyboards.length - 1, prev + 1))}
+                        disabled={activeStoryboardIndex === task.storyboards.length - 1}
+                        className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10 p-2 bg-white rounded-full shadow-md border border-gray-100 text-gray-600 hover:text-blue-600 disabled:opacity-0 transition-all"
+                      >
+                        <ArrowRight size={20}/>
+                      </button>
+                    </>
+                  )}
+
+                  {(() => {
+                    const index = activeStoryboardIndex;
+                    const sb = task.storyboards[index];
+                    if (!sb) return null;
+                    return (
                       <>
-                        <img src={sb.image} className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                          <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition"><Scissors size={20}/></button>
-                          <label className="p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer">
-                            <Upload size={20}/>
-                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, sb.id)} />
-                          </label>
-                        </div>
-                        {sb.text && (
-                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-4 text-center">
-                            <span style={{ fontSize: `${sb.textSize/2}px`, color: sb.textColor, textShadow: '0 2px 4px rgba(0,0,0,0.8)' }} className="font-bold">
-                              {sb.text}
-                            </span>
+                        <div className="p-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center rounded-t-2xl">
+                          <span className="font-bold text-gray-700">分镜 {index + 1} / {task.storyboards.length}</span>
+                          <div className="flex gap-1">
+                            <button disabled={index === 0} onClick={() => { moveStoryboard(index, -1); setActiveStoryboardIndex(index - 1); }} className="p-1.5 text-gray-400 hover:text-blue-600 disabled:opacity-30"><ArrowLeft size={16}/></button>
+                            <button disabled={index === task.storyboards.length - 1} onClick={() => { moveStoryboard(index, 1); setActiveStoryboardIndex(index + 1); }} className="p-1.5 text-gray-400 hover:text-blue-600 disabled:opacity-30"><ArrowRight size={16}/></button>
+                            <button onClick={() => {
+                              updateTask({ storyboards: task.storyboards.filter(s => s.id !== sb.id) });
+                              setActiveStoryboardIndex(Math.max(0, index - 1));
+                            }} className="p-1.5 text-gray-400 hover:text-red-600 ml-2"><Trash2 size={16}/></button>
                           </div>
-                        )}
+                        </div>
+                        
+                        <div className="relative aspect-video bg-gray-100 flex items-center justify-center group">
+                          {sb.image ? (
+                            <>
+                              <img src={sb.image} className="w-full h-full object-cover" />
+                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition"><Scissors size={20}/></button>
+                                <label className="p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer">
+                                  <Upload size={20}/>
+                                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, sb.id)} />
+                                </label>
+                              </div>
+                              {sb.text && (
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-4 text-center">
+                                  <span style={{ fontSize: `${sb.textSize/2}px`, color: sb.textColor, textShadow: '0 2px 4px rgba(0,0,0,0.8)' }} className="font-bold">
+                                    {sb.text}
+                                  </span>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="text-center">
+                              <label className="cursor-pointer inline-flex flex-col items-center text-gray-400 hover:text-blue-600 transition">
+                                <Upload size={32} className="mb-2"/>
+                                <span className="text-sm font-medium">上传图片</span>
+                                <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, sb.id)} />
+                              </label>
+                              <div className="mt-4 flex gap-2 justify-center">
+                                <button onClick={() => { setActiveStoryboardId(sb.id); setShowGallery(true); }} className="text-xs bg-white border border-gray-200 px-3 py-1.5 rounded-lg shadow-sm hover:bg-gray-50">从图库选择</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="p-4 space-y-4 flex-grow bg-white rounded-b-2xl">
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="text-xs font-bold text-gray-500">运镜动画</label>
+                              <button onClick={() => applyToAll('animation', sb.animation)} className="text-[10px] text-blue-600 hover:underline">应用到全部</button>
+                            </div>
+                            <select className="w-full text-sm p-2 rounded border border-gray-200" value={sb.animation} onChange={e => updateStoryboard(sb.id, { animation: e.target.value })}>
+                              {ANIMATIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+                            </select>
+                          </div>
+
+                          {index < task.storyboards.length - 1 && (
+                            <div>
+                              <div className="flex justify-between items-center mb-1">
+                                <label className="text-xs font-bold text-gray-500">下一镜转场</label>
+                                <button onClick={() => applyToAll('transition', sb.transition)} className="text-[10px] text-blue-600 hover:underline">应用到全部</button>
+                              </div>
+                              <select className="w-full text-sm p-2 rounded border border-gray-200" value={sb.transition} onChange={e => updateStoryboard(sb.id, { transition: e.target.value })}>
+                                {TRANSITIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                              </select>
+                            </div>
+                          )}
+
+                          <div className="pt-2 border-t border-gray-100">
+                            <div className="flex justify-between items-center mb-2">
+                              <label className="text-xs font-bold text-gray-500 flex items-center gap-1"><Type size={12}/> 添加文字</label>
+                              {sb.text && (
+                                <button 
+                                  onClick={() => {
+                                    updateTask({
+                                      storyboards: task.storyboards.map(s => ({
+                                        ...s,
+                                        textColor: sb.textColor,
+                                        textSize: sb.textSize,
+                                        textEffect: sb.textEffect
+                                      }))
+                                    });
+                                  }} 
+                                  className="text-[10px] text-blue-600 hover:underline"
+                                >
+                                  应用样式到全部
+                                </button>
+                              )}
+                            </div>
+                            <input 
+                              type="text" 
+                              placeholder="输入分镜文字..." 
+                              className="w-full text-sm p-2 rounded border border-gray-200 mb-2"
+                              value={sb.text}
+                              onChange={e => updateStoryboard(sb.id, { text: e.target.value })}
+                            />
+                            {sb.text && (
+                              <div className="grid grid-cols-2 gap-2">
+                                <input type="color" value={sb.textColor} onChange={e => updateStoryboard(sb.id, { textColor: e.target.value })} className="w-full h-8 rounded cursor-pointer" />
+                                <input type="number" value={sb.textSize} onChange={e => updateStoryboard(sb.id, { textSize: parseInt(e.target.value) })} className="w-full text-sm p-1.5 rounded border border-gray-200" placeholder="大小" />
+                                <select className="col-span-2 text-sm p-2 rounded border border-gray-200" value={sb.textEffect} onChange={e => updateStoryboard(sb.id, { textEffect: e.target.value })}>
+                                  {TEXT_EFFECTS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       </>
-                    ) : (
-                      <div className="text-center">
-                        <label className="cursor-pointer inline-flex flex-col items-center text-gray-400 hover:text-blue-600 transition">
-                          <Upload size={32} className="mb-2"/>
-                          <span className="text-sm font-medium">上传图片</span>
-                          <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, sb.id)} />
-                        </label>
-                        <div className="mt-4 flex gap-2 justify-center">
-                          <button onClick={() => { setActiveStoryboardId(sb.id); setShowGallery(true); }} className="text-xs bg-white border border-gray-200 px-3 py-1.5 rounded-lg shadow-sm hover:bg-gray-50">从图库选择</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                    );
+                  })()}
+                </div>
 
-                  <div className="p-4 space-y-4 flex-grow bg-white">
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="text-xs font-bold text-gray-500">运镜动画</label>
-                        <button onClick={() => applyToAll('animation', sb.animation)} className="text-[10px] text-blue-600 hover:underline">应用到全部</button>
-                      </div>
-                      <select className="w-full text-sm p-2 rounded border border-gray-200" value={sb.animation} onChange={e => updateStoryboard(sb.id, { animation: e.target.value })}>
-                        {ANIMATIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
-                      </select>
-                    </div>
-
-                    {index < task.storyboards.length - 1 && (
-                      <div>
-                        <div className="flex justify-between items-center mb-1">
-                          <label className="text-xs font-bold text-gray-500">下一镜转场</label>
-                          <button onClick={() => applyToAll('transition', sb.transition)} className="text-[10px] text-blue-600 hover:underline">应用到全部</button>
-                        </div>
-                        <select className="w-full text-sm p-2 rounded border border-gray-200" value={sb.transition} onChange={e => updateStoryboard(sb.id, { transition: e.target.value })}>
-                          {TRANSITIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                        </select>
-                      </div>
-                    )}
-
-                    <div className="pt-2 border-t border-gray-100">
-                      <label className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1"><Type size={12}/> 添加文字</label>
-                      <input 
-                        type="text" 
-                        placeholder="输入分镜文字..." 
-                        className="w-full text-sm p-2 rounded border border-gray-200 mb-2"
-                        value={sb.text}
-                        onChange={e => updateStoryboard(sb.id, { text: e.target.value })}
-                      />
-                      {sb.text && (
-                        <div className="grid grid-cols-2 gap-2">
-                          <input type="color" value={sb.textColor} onChange={e => updateStoryboard(sb.id, { textColor: e.target.value })} className="w-full h-8 rounded cursor-pointer" />
-                          <input type="number" value={sb.textSize} onChange={e => updateStoryboard(sb.id, { textSize: parseInt(e.target.value) })} className="w-full text-sm p-1.5 rounded border border-gray-200" placeholder="大小" />
-                          <select className="col-span-2 text-sm p-2 rounded border border-gray-200" value={sb.textEffect} onChange={e => updateStoryboard(sb.id, { textEffect: e.target.value })}>
-                            {TEXT_EFFECTS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                          </select>
+                {/* Thumbnails Strip */}
+                <div className="flex gap-2 overflow-x-auto no-scrollbar py-2 px-4 max-w-full justify-start sm:justify-center">
+                  {task.storyboards.map((sb, idx) => (
+                    <div 
+                      key={sb.id}
+                      onClick={() => setActiveStoryboardIndex(idx)}
+                      className={`relative w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${activeStoryboardIndex === idx ? 'border-blue-600 shadow-md scale-105' : 'border-transparent opacity-60 hover:opacity-100'}`}
+                    >
+                      {sb.image ? (
+                        <img src={sb.image} className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full bg-gray-100 flex items-center justify-center text-gray-400">
+                          <ImageIcon size={20}/>
                         </div>
                       )}
+                      <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[10px] text-center py-0.5">
+                        {idx + 1}
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-              ))
+              </>
             )}
           </div>
         </div>
@@ -544,9 +645,32 @@ export default function VideoEditor({
                 </ReactCrop>
               )}
             </div>
-            <div className="p-4 border-t border-gray-100 flex justify-end gap-3 bg-white">
-              <button onClick={() => setEditingImage(null)} className="px-6 py-2.5 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200">取消</button>
-              <button onClick={saveEditedImage} className="px-6 py-2.5 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700">保存修改</button>
+            <div className="p-4 border-t border-gray-100 flex justify-between items-center bg-white">
+              {isSmudging ? (
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">画笔大小:</span>
+                    <input 
+                      type="range" 
+                      min="10" max="100" 
+                      value={brushSize} 
+                      onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                      className="w-32"
+                    />
+                  </div>
+                  <button 
+                    onClick={handleUndo} 
+                    disabled={undoHistory.length === 0}
+                    className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    撤销
+                  </button>
+                </div>
+              ) : <div></div>}
+              <div className="flex gap-3">
+                <button onClick={() => setEditingImage(null)} className="px-6 py-2.5 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200">取消</button>
+                <button onClick={saveEditedImage} className="px-6 py-2.5 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700">确认应用</button>
+              </div>
             </div>
           </div>
         </div>
@@ -557,7 +681,7 @@ export default function VideoEditor({
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
           <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">从本地图库选择</h2>
+              <h2 className="text-xl font-bold">从本地图库选择 {galleryMode === '4grid' ? '(4宫格)' : ''}</h2>
               <button onClick={() => setShowGallery(false)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
             </div>
             <div className="flex-grow overflow-y-auto mb-6 pr-2">
@@ -566,7 +690,39 @@ export default function VideoEditor({
                   <div 
                     key={img} 
                     onClick={() => {
-                      if (activeStoryboardId) {
+                      if (galleryMode === '4grid') {
+                        // Process 4-grid from gallery image
+                        const imgUrl = `/downloads/${img}`;
+                        const image = new Image();
+                        image.onload = () => {
+                          const canvas = document.createElement('canvas');
+                          const context = canvas.getContext('2d');
+                          if (!context) return;
+                          
+                          const w = image.width / 2;
+                          const h = image.height / 2;
+                          canvas.width = w;
+                          canvas.height = h;
+
+                          const quadrants = [
+                            { x: 0, y: 0 },
+                            { x: w, y: 0 },
+                            { x: 0, y: h },
+                            { x: w, y: h }
+                          ];
+
+                          const newImages = quadrants.map((q) => {
+                            context.clearRect(0, 0, w, h);
+                            context.drawImage(image, q.x, q.y, w, h, 0, 0, w, h);
+                            return canvas.toDataURL('image/jpeg', 0.9);
+                          });
+                          
+                          setSplitImages(newImages);
+                          setSelectedSplitIndices([]);
+                          setShowGallery(false);
+                        };
+                        image.src = imgUrl;
+                      } else if (activeStoryboardId) {
                         updateStoryboard(activeStoryboardId, { image: `/downloads/${img}` });
                         setShowGallery(false);
                       }
