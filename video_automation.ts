@@ -157,10 +157,11 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
         let filterComplex = '';
         const duration = sb.duration || 3;
         const fps = 30;
-        const frames = duration * fps;
+        const frames = Math.round(duration * fps);
 
         // Base scaling to target resolution
-        let scaleFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2`;
+        // Use scale and pad to ensure exact dimensions and even numbers
+        let scaleFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=rgba`;
 
         // Animations
         let panZoom = '';
@@ -181,16 +182,14 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
 
         // Text Overlay
         if (sb.text) {
-            const fontSize = sb.textSize || 40; // Scale up for 1080p
+            const fontSize = sb.textSize || 40; 
             const color = sb.textColor || 'white';
-            const text = sb.text.replace(/'/g, "\\'").replace(/:/g, "\\:");
+            // More thorough escaping for drawtext
+            const text = sb.text.replace(/\\/g, "\\\\\\\\").replace(/'/g, "'\\\\\\''").replace(/:/g, "\\\\:").replace(/%/g, "\\\\%");
             
             let textAlpha = '1';
             if (sb.textEffect === 'fade') textAlpha = `if(lt(t,1),t,1)`;
-            else if (sb.textEffect === 'typewriter') {
-                // Approximate typewriter by clipping or just fade for simplicity in ffmpeg
-                textAlpha = `if(lt(t,1),t,1)`; 
-            }
+            else if (sb.textEffect === 'typewriter') textAlpha = `if(lt(t,1),t,1)`; 
 
             filterComplex += `;[v1]drawtext=text='${text}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}',format=yuv420p[v2]`;
         } else {
