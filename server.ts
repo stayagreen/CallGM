@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import os from "os";
+import sharp from "sharp";
 import { startAutomationWatcher, jobProgress, handleBrowserDebug } from "./automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -18,15 +19,55 @@ async function startServer() {
   const historyDir = path.join(taskDir, "history");
   const downloadDir = path.join(__dirname, "download");
   const uploadsDir = path.join(__dirname, "uploads");
+  const thumbnailsDir = path.join(__dirname, "thumbnails");
+  const thumbDownloadsDir = path.join(thumbnailsDir, "downloads");
+  const thumbUploadsDir = path.join(thumbnailsDir, "uploads");
   
   if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true });
   if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
   if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
   if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+  if (!fs.existsSync(thumbnailsDir)) fs.mkdirSync(thumbnailsDir, { recursive: true });
+  if (!fs.existsSync(thumbDownloadsDir)) fs.mkdirSync(thumbDownloadsDir, { recursive: true });
+  if (!fs.existsSync(thumbUploadsDir)) fs.mkdirSync(thumbUploadsDir, { recursive: true });
 
   // Serve static files from the download directory
   app.use("/downloads", express.static(downloadDir));
   app.use("/uploads", express.static(uploadsDir));
+
+  // Thumbnail generation endpoint
+  app.get("/api/thumbnails/:type/:filename", async (req, res) => {
+    const { type, filename } = req.params;
+    if (type !== 'downloads' && type !== 'uploads') {
+      return res.status(400).send('Invalid type');
+    }
+
+    const sourceDir = type === 'downloads' ? downloadDir : uploadsDir;
+    const thumbDir = type === 'downloads' ? thumbDownloadsDir : thumbUploadsDir;
+
+    const sourcePath = path.join(sourceDir, filename);
+    const thumbPath = path.join(thumbDir, filename);
+
+    if (!fs.existsSync(sourcePath)) {
+      return res.status(404).send('Image not found');
+    }
+
+    if (fs.existsSync(thumbPath)) {
+      return res.sendFile(thumbPath);
+    }
+
+    try {
+      await sharp(sourcePath)
+        .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 80 })
+        .toFile(thumbPath);
+      res.sendFile(thumbPath);
+    } catch (error) {
+      console.error('Thumbnail generation failed:', error);
+      // Fallback to original if sharp fails
+      res.sendFile(sourcePath);
+    }
+  });
 
   // API route to save generation request
   app.post("/api/execute", (req, res) => {

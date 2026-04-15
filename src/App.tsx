@@ -116,7 +116,7 @@ const JobItem = React.memo(({
                       <p className="text-xs font-bold text-gray-500 mb-2 flex items-center gap-1"><ImageIcon size={14}/> 参考图片:</p>
                       <div className="flex gap-2 flex-wrap">
                         {t.images.map((img: string, i: number) => (
-                          <img key={i} src={img} onClick={() => onViewImage(img)} className="w-16 h-16 object-cover rounded-lg border border-gray-300 shadow-sm cursor-pointer hover:opacity-80" />
+                          <img key={i} src={img.startsWith('/uploads/') ? img.replace('/uploads/', '/api/thumbnails/uploads/') : img} onClick={() => onViewImage(img)} className="w-16 h-16 object-cover rounded-lg border border-gray-300 shadow-sm cursor-pointer hover:opacity-80" loading="lazy" />
                         ))}
                       </div>
                     </div>
@@ -135,7 +135,7 @@ const JobItem = React.memo(({
                       <div className="flex gap-2 flex-wrap">
                         {t.downloadedFiles.map((img: string, i: number) => (
                           <div key={i} onClick={() => onViewImage(`/downloads/${img}`)} className="block w-20 h-20 rounded-lg border border-gray-300 overflow-hidden hover:border-blue-500 transition-colors shadow-sm relative group cursor-pointer">
-                            <img src={`/downloads/${img}`} className="w-full h-full object-cover" />
+                            <img src={`/api/thumbnails/downloads/${img}`} className="w-full h-full object-cover" loading="lazy" />
                           </div>
                         ))}
                       </div>
@@ -898,7 +898,7 @@ export default function App() {
               {galleryImages.map(img => (
                 <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
                   <div onClick={() => setViewingImage(`/downloads/${img}`)} className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
-                    <img src={`/downloads/${img}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                    <img src={`/api/thumbnails/downloads/${img}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
                       <ImageIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                     </div>
@@ -1050,7 +1050,7 @@ export default function App() {
                       }}
                       className={`relative aspect-square rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${selectedGalleryImages.has(img) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300'}`}
                     >
-                      <img src={`/downloads/${img}`} className="w-full h-full object-cover" />
+                      <img src={`/api/thumbnails/downloads/${img}`} className="w-full h-full object-cover" loading="lazy" />
                       {selectedGalleryImages.has(img) && (
                         <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
                           <CheckCircle2 className="text-white drop-shadow-md" size={32} />
