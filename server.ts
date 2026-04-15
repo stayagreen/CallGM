@@ -363,6 +363,26 @@ async function startServer() {
     }
   });
 
+  // Delete a video job record
+  app.delete('/api/video/jobs/:id', (req, res) => {
+    const id = req.params.id;
+    const historyPath = path.join(videoHistoryDir, id);
+    const pendingPath = path.join(videoTaskDir, id);
+    
+    try {
+      if (fs.existsSync(historyPath)) {
+        fs.unlinkSync(historyPath);
+        return res.json({ success: true });
+      } else if (fs.existsSync(pendingPath)) {
+        fs.unlinkSync(pendingPath);
+        return res.json({ success: true });
+      }
+      res.status(404).json({ error: 'Job not found' });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to delete job' });
+    }
+  });
+
   // Delete a downloaded image
   app.delete('/api/images/:filename', (req, res) => {
     const filePath = path.join(downloadDir, req.params.filename);

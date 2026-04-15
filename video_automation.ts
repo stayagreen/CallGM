@@ -202,11 +202,12 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
             .complexFilter(filterComplex, ['v2'])
             .outputOptions([
                 '-c:v libx264',
-                '-profile:v high',
-                '-level 4.0',
+                '-profile:v main',
+                '-level 3.1',
                 '-t ' + duration,
                 '-pix_fmt yuv420p',
-                '-r 30'
+                '-r 30',
+                '-movflags +faststart'
             ])
             .save(outputPath)
             .on('end', () => resolve())
@@ -233,7 +234,8 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
         let hasTransitions = storyboards.some(sb => sb.transition === 'fade');
         
         if (!hasTransitions) {
-            clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]`; });
+            clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS[v${i}];`; });
+            clipPaths.forEach((_, i) => { filterComplex += `[v${i}]`; });
             filterComplex += `concat=n=${clipPaths.length}:v=1:a=0[outv]`;
             
             let totalDuration = storyboards.reduce((acc, sb) => acc + (sb.duration || 3), 0);
@@ -241,9 +243,10 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
             inputs.complexFilter(filterComplex, ['outv'])
                 .outputOptions([
                     '-c:v libx264', 
-                    '-profile:v high', 
-                    '-level 4.0', 
-                    '-pix_fmt yuv420p'
+                    '-profile:v main', 
+                    '-level 3.1', 
+                    '-pix_fmt yuv420p',
+                    '-movflags +faststart'
                 ])
                 .save(outputPath)
                 .on('progress', (p) => onProgress(p.percent || 0))
@@ -251,14 +254,16 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
                 .on('error', reject);
         } else {
             // Xfade logic
-            let currentStream = '[0:v]';
+            clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS[v${i}];`; });
+            
+            let currentStream = '[v0]';
             let offset = storyboards[0].duration || 3;
             
             for (let i = 1; i < clipPaths.length; i++) {
                 const transition = storyboards[i-1].transition === 'fade' ? 'fade' : 'dissolve'; // dissolve is a safer fallback
                 const duration = storyboards[i-1].transition === 'fade' ? 1 : 0.1;
-                const nextStream = `[${i}:v]`;
-                const outStream = `[v${i}]`;
+                const nextStream = `[v${i}]`;
+                const outStream = `[xf${i}]`;
                 
                 // Ensure offset is valid
                 const safeOffset = Math.max(0.1, offset - duration);
@@ -273,9 +278,10 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
             inputs.complexFilter(filterComplex, [currentStream.replace('[', '').replace(']', '')])
                 .outputOptions([
                     '-c:v libx264', 
-                    '-profile:v high', 
-                    '-level 4.0', 
-                    '-pix_fmt yuv420p'
+                    '-profile:v main', 
+                    '-level 3.1', 
+                    '-pix_fmt yuv420p',
+                    '-movflags +faststart'
                 ])
                 .save(outputPath)
                 .on('progress', (p) => onProgress(p.percent || 0))
@@ -313,8 +319,8 @@ function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string
                     '-map [v]',
                     '-map 1:a',
                     '-c:v libx264',
-                    '-profile:v high',
-                    '-level 4.0',
+                    '-profile:v main',
+                    '-level 3.1',
                     '-pix_fmt yuv420p',
                     '-c:a aac',
                     '-b:a 192k',
@@ -325,8 +331,8 @@ function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string
                 cmd.outputOptions([
                     '-map [v]', 
                     '-c:v libx264',
-                    '-profile:v high',
-                    '-level 4.0',
+                    '-profile:v main',
+                    '-level 3.1',
                     '-pix_fmt yuv420p',
                     '-movflags +faststart'
                 ]);
@@ -335,8 +341,8 @@ function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string
             cmd.outputOptions([
                 '-map [v]', 
                 '-c:v libx264',
-                '-profile:v high',
-                '-level 4.0',
+                '-profile:v main',
+                '-level 3.1',
                 '-pix_fmt yuv420p',
                 '-movflags +faststart'
             ]);

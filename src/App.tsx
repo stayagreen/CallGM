@@ -285,7 +285,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (activeTab === 'gallery') fetchGallery();
+    if (activeTab === 'gallery' || activeTab === 'video_tasks') fetchGallery();
     if (activeTab === 'video_gallery') fetchVideoGallery();
   }, [activeTab]);
 
@@ -639,40 +639,7 @@ export default function App() {
               ))}
             </div>
             <div className="relative flex-shrink-0 mb-2">
-              <button onClick={() => setShowAddTaskMenu(!showAddTaskMenu)} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition shadow-sm"><Plus /></button>
-              {showAddTaskMenu && (
-                <div className="absolute right-0 top-full mt-2 w-40 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden py-1">
-                  <button 
-                    onClick={() => {
-                      addTask();
-                      setShowAddTaskMenu(false);
-                    }}
-                    className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
-                  >
-                    <ImageIcon size={16} /> 生图任务
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setActiveTab('video_tasks');
-                      if (videoTasks.length === 0) {
-                        const newTask: VideoTask = {
-                          id: Date.now().toString(),
-                          storyboards: [],
-                          introAnimation: 'none',
-                          outroAnimation: 'none',
-                          bgm: ''
-                        };
-                        setVideoTasks([newTask]);
-                        setActiveVideoTaskId(newTask.id);
-                      }
-                      setShowAddTaskMenu(false);
-                    }}
-                    className="w-full text-left px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-2"
-                  >
-                    <PlayCircle size={16} /> 视频任务
-                  </button>
-                </div>
-              )}
+              <button onClick={addTask} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition shadow-sm" title="新建生图任务"><Plus /></button>
             </div>
           </div>
 
@@ -850,9 +817,10 @@ export default function App() {
                 setVideoTasks([...videoTasks, newTask]);
                 setActiveVideoTaskId(newTask.id);
               }}
-              className="flex items-center gap-1 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-full font-medium hover:bg-gray-50 hover:text-blue-600 transition shadow-sm flex-shrink-0"
+              className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition shadow-sm flex-shrink-0"
+              title="新建视频任务"
             >
-              <Plus size={16}/> 新建视频任务
+              <Plus size={24}/>
             </button>
           </div>
 
@@ -901,9 +869,15 @@ export default function App() {
                       return;
                     }
                     
-                    for (const task of validTasks) {
+                    // Optimistic UI: Immediately clear tasks and switch tab
+                    const currentTasks = [...validTasks];
+                    setVideoTasks([]);
+                    setActiveVideoTaskId('');
+                    setActiveTab('video_records');
+
+                    // Process submissions in background
+                    for (const task of currentTasks) {
                       try {
-                        // Optimistic UI
                         const tempJob = {
                           id: task.id,
                           timestamp: Date.now(),
@@ -913,21 +887,20 @@ export default function App() {
                         };
                         setVideoJobs(prev => [tempJob, ...prev]);
                         
-                        await fetch('/api/video/execute', {
+                        fetch('/api/video/execute', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify(task)
+                        }).catch(e => {
+                          console.error('Background submission failed', e);
                         });
                       } catch (e) {
-                        alert('提交视频任务失败');
-                        setVideoJobs(prev => prev.filter(j => j.id !== task.id));
+                        console.error('Failed to queue video task', e);
                       }
                     }
                     
-                    setVideoTasks([]);
-                    setActiveVideoTaskId('');
-                    setActiveTab('video_records');
-                    fetchVideoJobs();
+                    // Refresh jobs after a short delay to see the new pending tasks
+                    setTimeout(fetchVideoJobs, 500);
                   }}
                   disabled={!videoTasks.some(t => t.storyboards.length > 0)}
                   className="flex items-center gap-2 bg-blue-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed text-lg"
@@ -1187,6 +1160,22 @@ export default function App() {
                         {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '排队中'}
                       </span>
                     </div>
+                    <button 
+                      onClick={async () => {
+                        if (confirm('确定要删除这条视频渲染记录吗？')) {
+                          try {
+                            const res = await fetch(`/api/video/jobs/${job.id}`, { method: 'DELETE' });
+                            if (res.ok) fetchVideoJobs();
+                          } catch (e) {
+                            console.error('Failed to delete video job', e);
+                          }
+                        }
+                      }}
+                      className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
+                      title="删除记录"
+                    >
+                      <Trash2 size={18} />
+                    </button>
                   </div>
                   
                   {job.status === 'running' && (

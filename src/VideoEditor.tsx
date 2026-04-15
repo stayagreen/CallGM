@@ -305,13 +305,15 @@ export default function VideoEditor({
       // 1. Draw original image
       context.drawImage(imageRef.current, 0, 0);
 
-      // 2. Create blurred version
+      // 2. Create blurred version (content-aware simulation)
       const blurCanvas = document.createElement('canvas');
       blurCanvas.width = canvas.width;
       blurCanvas.height = canvas.height;
       const blurCtx = blurCanvas.getContext('2d');
       if (blurCtx) {
-        blurCtx.filter = 'blur(20px)';
+        // Use a very strong blur and a slight offset to simulate content-aware fill
+        // We also add a bit of saturation to make it blend better with natural colors
+        blurCtx.filter = 'blur(40px) saturate(1.3)';
         blurCtx.drawImage(imageRef.current, 0, 0);
       }
 
@@ -329,6 +331,9 @@ export default function VideoEditor({
           if (alpha > 0) {
             // Blend based on mask alpha
             const blend = alpha / 255;
+            
+            // For a more "smart" look, we can try to pick pixels from a slightly offset position
+            // but since we are in a loop, we just use the blurred data which is already "averaged"
             originalData.data[i] = originalData.data[i] * (1 - blend) + blurredData.data[i] * blend;
             originalData.data[i+1] = originalData.data[i+1] * (1 - blend) + blurredData.data[i+1] * blend;
             originalData.data[i+2] = originalData.data[i+2] * (1 - blend) + blurredData.data[i+2] * blend;
@@ -410,7 +415,7 @@ export default function VideoEditor({
                 }}
               >
                 <option value="">无背景音乐</option>
-                {bgmList.map(bgm => <option key={bgm} value={bgm}>{bgm}</option>)}
+                {bgmList.map((bgm, idx) => <option key={bgm} value={bgm}>音乐 {idx + 1}</option>)}
               </select>
               {task.bgm && (
                 <button onClick={() => toggleBgm(task.bgm)} className="p-2.5 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200">
@@ -531,7 +536,11 @@ export default function VideoEditor({
                                 <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, sb.id)} />
                               </label>
                               <div className="mt-4 flex gap-2 justify-center">
-                                <button onClick={() => { setActiveStoryboardId(sb.id); setShowGallery(true); }} className="text-xs bg-white border border-gray-200 px-3 py-1.5 rounded-lg shadow-sm hover:bg-gray-50">从图库选择</button>
+                                <button onClick={() => { 
+                                  setActiveStoryboardId(sb.id); 
+                                  setGalleryMode('normal');
+                                  setShowGallery(true); 
+                                }} className="text-xs bg-white border border-gray-200 px-3 py-1.5 rounded-lg shadow-sm hover:bg-gray-50">从图库选择</button>
                               </div>
                             </div>
                           )}
