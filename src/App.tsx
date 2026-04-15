@@ -526,45 +526,45 @@ export default function App() {
   return (
     <div className="p-6 max-w-4xl mx-auto bg-gray-50 min-h-screen">
       <div className="flex justify-between items-end border-b border-gray-200 mb-6">
-        <div className="flex gap-4">
+        <div className="flex gap-2 overflow-x-auto no-scrollbar w-full pr-4">
           <button 
             onClick={() => setActiveTab('tasks')} 
-            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'tasks' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'tasks' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
           >
             生图任务
           </button>
           <button 
             onClick={() => setActiveTab('records')} 
-            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
           >
             生图记录
           </button>
           <button 
             onClick={() => setActiveTab('gallery')} 
-            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
           >
             本地图库
           </button>
           <button 
             onClick={() => setActiveTab('video_records')} 
-            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'video_records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'video_records' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
           >
             视频记录
           </button>
           <button 
             onClick={() => setActiveTab('video_gallery')} 
-            className={`pb-3 px-2 font-medium transition-colors ${activeTab === 'video_gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+            className={`pb-3 px-2 font-medium transition-colors whitespace-nowrap flex-shrink-0 ${activeTab === 'video_gallery' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
           >
             本地视频库
           </button>
         </div>
         <button 
           onClick={() => setShowConfigModal(true)} 
-          className="mb-2 p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-2" 
+          className="mb-2 p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-2 flex-shrink-0" 
           title="系统设置"
         >
           <Settings size={18} />
-          <span className="text-sm font-medium">系统设置</span>
+          <span className="text-sm font-medium hidden sm:inline">系统设置</span>
         </button>
       </div>
       

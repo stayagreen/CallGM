@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import sharp from 'sharp';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
@@ -63,12 +64,45 @@ async function processVideoTask(filePath: string, filename: string) {
     const outputPath = path.join(videoDownloadDir, outputFilename);
     const thumbPath = path.join(videoThumbDir, outputFilename.replace('.mp4', '.jpg'));
 
+    // Determine target resolution based on first image (1080p default)
+    let targetWidth = 1920;
+    let targetHeight = 1080;
+
+    if (storyboards.length > 0) {
+        let firstImgPath = storyboards[0].image;
+        try {
+            let metadata;
+            if (firstImgPath.startsWith('data:image')) {
+                const base64Data = firstImgPath.replace(/^data:image\/\w+;base64,/, "");
+                const buffer = Buffer.from(base64Data, 'base64');
+                metadata = await sharp(buffer).metadata();
+            } else {
+                if (firstImgPath.startsWith('/uploads/')) firstImgPath = path.join(__dirname, 'uploads', firstImgPath.replace('/uploads/', ''));
+                else if (firstImgPath.startsWith('/downloads/')) firstImgPath = path.join(__dirname, 'download', firstImgPath.replace('/downloads/', ''));
+                metadata = await sharp(firstImgPath).metadata();
+            }
+            
+            if (metadata.width && metadata.height) {
+                const aspect = metadata.width / metadata.height;
+                if (metadata.width >= metadata.height) {
+                    targetHeight = 1080;
+                    targetWidth = Math.round((1080 * aspect) / 2) * 2; // Ensure even number
+                } else {
+                    targetWidth = 1080;
+                    targetHeight = Math.round((1080 / aspect) / 2) * 2; // Ensure even number
+                }
+            }
+        } catch (e) {
+            console.error('Failed to get image metadata for resolution', e);
+        }
+    }
+
     // 1. Generate individual clips
     const clipPaths: string[] = [];
     for (let i = 0; i < storyboards.length; i++) {
         const sb = storyboards[i];
         const clipPath = path.join(videoTaskDir, `temp_${filename}_clip_${i}.mp4`);
-        await generateClip(sb, clipPath);
+        await generateClip(sb, clipPath, targetWidth, targetHeight);
         clipPaths.push(clipPath);
         videoJobProgress.set(filename, { progress: Math.floor((i / storyboards.length) * 40), status: 'running' });
     }
@@ -100,7 +134,7 @@ async function processVideoTask(filePath: string, filename: string) {
     console.log(`✅ 视频渲染完成: ${outputFilename}`);
 }
 
-function generateClip(sb: any, outputPath: string): Promise<void> {
+function generateClip(sb: any, outputPath: string, targetWidth: number, targetHeight: number): Promise<void> {
     return new Promise((resolve, reject) => {
         // Resolve image path
         let imgPath = sb.image;
@@ -118,22 +152,22 @@ function generateClip(sb: any, outputPath: string): Promise<void> {
         const fps = 30;
         const frames = duration * fps;
 
-        // Base scaling to 1080p (1920x1080)
-        let scaleFilter = `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2`;
+        // Base scaling to target resolution
+        let scaleFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2`;
 
         // Animations
         let panZoom = '';
         switch (sb.animation) {
-            case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1920x1080`; break;
-            case 'pan_lr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=1920x1080`; break;
-            case 'pan_rl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=1920x1080`; break;
-            case 'pan_tb': panZoom = `zoompan=z=1.2:x='iw*0.1':y='(on/${frames})*(ih*0.2)':d=${frames}:s=1920x1080`; break;
-            case 'pan_bt': panZoom = `zoompan=z=1.2:x='iw*0.1':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=1920x1080`; break;
-            case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=1920x1080`; break;
-            case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=1920x1080`; break;
-            case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=1920x1080`; break;
-            case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=1920x1080`; break;
-            default: panZoom = `zoompan=z=1:d=${frames}:s=1920x1080`; break;
+            case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${targetWidth}x${targetHeight}`; break;
+            case 'pan_lr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=${targetWidth}x${targetHeight}`; break;
+            case 'pan_rl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=${targetWidth}x${targetHeight}`; break;
+            case 'pan_tb': panZoom = `zoompan=z=1.2:x='iw*0.1':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}`; break;
+            case 'pan_bt': panZoom = `zoompan=z=1.2:x='iw*0.1':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}`; break;
+            case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}`; break;
+            case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}`; break;
+            case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}`; break;
+            case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${targetWidth}x${targetHeight}`; break;
+            default: panZoom = `zoompan=z=1:d=${frames}:s=${targetWidth}x${targetHeight}`; break;
         }
 
         filterComplex = `[0:v]${scaleFilter},${panZoom}[v1]`;
@@ -161,6 +195,8 @@ function generateClip(sb: any, outputPath: string): Promise<void> {
             .complexFilter(filterComplex, ['v2'])
             .outputOptions([
                 '-c:v libx264',
+                '-profile:v high',
+                '-level 4.0',
                 '-t ' + duration,
                 '-pix_fmt yuv420p',
                 '-r 30'
@@ -194,7 +230,12 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
             filterComplex += `concat=n=${clipPaths.length}:v=1:a=0[outv]`;
             
             inputs.complexFilter(filterComplex, ['outv'])
-                .outputOptions(['-c:v libx264', '-pix_fmt yuv420p'])
+                .outputOptions([
+                    '-c:v libx264', 
+                    '-profile:v high', 
+                    '-level 4.0', 
+                    '-pix_fmt yuv420p'
+                ])
                 .save(outputPath)
                 .on('progress', (p) => onProgress(p.percent || 0))
                 .on('end', () => resolve())
@@ -219,7 +260,12 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
             filterComplex = filterComplex.slice(0, -1);
             
             inputs.complexFilter(filterComplex, [currentStream.replace('[', '').replace(']', '')])
-                .outputOptions(['-c:v libx264', '-pix_fmt yuv420p'])
+                .outputOptions([
+                    '-c:v libx264', 
+                    '-profile:v high', 
+                    '-level 4.0', 
+                    '-pix_fmt yuv420p'
+                ])
                 .save(outputPath)
                 .on('progress', (p) => onProgress(p.percent || 0))
                 .on('end', () => resolve())
@@ -248,14 +294,33 @@ function addBgmAndFinalize(videoPath: string, bgm: string, intro: string, outro:
                     '-map [v]',
                     '-map 1:a',
                     '-c:v libx264',
+                    '-profile:v high',
+                    '-level 4.0',
+                    '-pix_fmt yuv420p',
                     '-c:a aac',
+                    '-b:a 192k',
+                    '-movflags +faststart',
                     '-shortest'
                 ]);
             } else {
-                cmd.outputOptions(['-map [v]', '-c:v libx264']);
+                cmd.outputOptions([
+                    '-map [v]', 
+                    '-c:v libx264',
+                    '-profile:v high',
+                    '-level 4.0',
+                    '-pix_fmt yuv420p',
+                    '-movflags +faststart'
+                ]);
             }
         } else {
-            cmd.outputOptions(['-map [v]', '-c:v libx264']);
+            cmd.outputOptions([
+                '-map [v]', 
+                '-c:v libx264',
+                '-profile:v high',
+                '-level 4.0',
+                '-pix_fmt yuv420p',
+                '-movflags +faststart'
+            ]);
         }
 
         cmd.complexFilter(filterComplex)

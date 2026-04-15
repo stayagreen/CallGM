@@ -79,6 +79,8 @@ export default function VideoEditor({
   const [crop, setCrop] = useState<Crop>();
   const [isSmudging, setIsSmudging] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const blurredCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastPos = useRef<{x: number, y: number} | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [ctx, setCtx] = useState<CanvasRenderingContext2D | null>(null);
@@ -218,6 +220,17 @@ export default function VideoEditor({
           canvas.height = img.height;
           context.drawImage(img, 0, 0);
           setCtx(context);
+
+          // Create blurred version for smudging
+          const bCanvas = document.createElement('canvas');
+          bCanvas.width = img.width;
+          bCanvas.height = img.height;
+          const bCtx = bCanvas.getContext('2d');
+          if (bCtx) {
+            bCtx.filter = 'blur(20px)';
+            bCtx.drawImage(img, 0, 0);
+            blurredCanvasRef.current = bCanvas;
+          }
         };
         img.src = editingImage.image;
       }
@@ -226,7 +239,7 @@ export default function VideoEditor({
 
   // Image Editor Logic
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isSmudging || !ctx || !canvasRef.current) return;
+    if (!isSmudging || !ctx || !canvasRef.current || !blurredCanvasRef.current) return;
     setIsDrawing(true);
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
@@ -237,19 +250,19 @@ export default function VideoEditor({
     const x = (clientX - rect.left) * scaleX;
     const y = (clientY - rect.top) * scaleY;
 
-    // Get color at starting point
-    const pixel = ctx.getImageData(x, y, 1, 1).data;
-    ctx.strokeStyle = `rgba(${pixel[0]}, ${pixel[1]}, ${pixel[2]}, ${pixel[3] / 255})`;
-    ctx.lineWidth = 30; // Thicker brush for smudging
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    lastPos.current = { x, y };
 
-    ctx.beginPath();
-    ctx.moveTo(x, y);
+    const pattern = ctx.createPattern(blurredCanvasRef.current, 'no-repeat');
+    if (pattern) {
+      ctx.strokeStyle = pattern;
+      ctx.lineWidth = 40; // Thicker brush for smudging
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    }
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !isSmudging || !ctx || !canvasRef.current) return;
+    if (!isDrawing || !isSmudging || !ctx || !canvasRef.current || !lastPos.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
@@ -259,16 +272,18 @@ export default function VideoEditor({
     const x = (clientX - rect.left) * scaleX;
     const y = (clientY - rect.top) * scaleY;
 
+    ctx.beginPath();
+    ctx.moveTo(lastPos.current.x, lastPos.current.y);
     ctx.lineTo(x, y);
     ctx.stroke();
+
+    lastPos.current = { x, y };
   };
 
   const stopDrawing = () => {
     if (!isDrawing) return;
     setIsDrawing(false);
-    // Simple smudge: just blur the drawn area or fill with average color.
-    // For simplicity in this demo, we just leave the stroke as a "mask" or apply a basic filter.
-    // A real inpainting would require complex canvas pixel manipulation.
+    lastPos.current = null;
   };
 
   const saveEditedImage = () => {
@@ -394,7 +409,7 @@ export default function VideoEditor({
               </div>
             ) : (
               task.storyboards.map((sb, index) => (
-                <div key={sb.id} className="min-w-[320px] max-w-[320px] bg-white border border-gray-200 rounded-2xl shadow-sm flex-shrink-0 snap-center overflow-hidden flex flex-col">
+                <div key={sb.id} className="w-[85vw] sm:w-[320px] bg-white border border-gray-200 rounded-2xl shadow-sm flex-shrink-0 snap-center overflow-hidden flex flex-col">
                   <div className="p-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center">
                     <span className="font-bold text-gray-700">分镜 {index + 1}</span>
                     <div className="flex gap-1">
