@@ -170,43 +170,54 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
         const w = Math.floor(targetWidth / 2) * 2;
         const h = Math.floor(targetHeight / 2) * 2;
         
-        // Simpler approach: scale and pad, then apply text. 
-        // Avoiding zoompan which is the most common cause of "Invalid argument" in complex filters.
-        let filterChain = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+        // Use a single linear filter chain to avoid complex filter label issues
+        // We use videoFilters() which maps to -vf, the most stable way for single input
+        let filters = [];
+        
+        // 1. Scale and Pad
+        filters.push(`scale=${w}:${h}:force_original_aspect_ratio=decrease`);
+        filters.push(`pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2`);
+        filters.push(`setsar=1`);
 
-        // Text Overlay
+        // 2. Text Overlay (if any)
         if (sb.text) {
             const fontSize = sb.textSize || 40; 
             const color = sb.textColor || 'white';
+            // Simple escaping for -vf drawtext
             const escapedText = sb.text
-                .replace(/\\/g, "\\\\\\\\")
-                .replace(/:/g, "\\\\:")
-                .replace(/'/g, "\\\\'")
-                .replace(/%/g, "\\\\%");
+                .replace(/\\/g, "\\\\")
+                .replace(/:/g, "\\:")
+                .replace(/'/g, "'\\\\\\''") // Special escaping for single quotes in -vf
+                .replace(/%/g, "\\%");
             
             let textAlpha = '1';
             if (sb.textEffect === 'fade') textAlpha = `if(lt(t,1),t,1)`;
             
-            filterChain += `,drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}'`;
+            filters.push(`drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}'`);
         }
 
-        filterChain += `,format=yuv420p`;
+        // 3. Final Format
+        filters.push(`format=yuv420p`);
 
         ffmpeg(imgPath)
             .loop(duration)
-            .videoFilters(filterChain)
+            .videoFilters(filters)
             .outputOptions([
                 '-c:v libx264',
-                '-profile:v main',
-                '-level 3.1',
+                '-preset medium',
+                '-crf 23',
                 '-t ' + duration,
-                '-pix_fmt yuv420p',
                 '-r 30',
+                '-pix_fmt yuv420p',
                 '-movflags +faststart'
             ])
             .save(outputPath)
+            .on('start', (cmd) => console.log(`[FFmpeg] Executing: ${cmd}`))
             .on('end', () => resolve())
-            .on('error', (err) => reject(err));
+            .on('error', (err) => {
+                console.error(`[FFmpeg] Error generating clip: ${err.message}`);
+                reject(err);
+            });
     });
 }
 

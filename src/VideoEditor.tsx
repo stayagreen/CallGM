@@ -376,7 +376,7 @@ export default function VideoEditor({
 
       // Iterative Diffusion Loop
       let iterations = 0;
-      const maxIterations = 250;
+      const maxIterations = 350; // Increased for deeper fill
       
       while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
         const nextBoundary = new Set<number>();
@@ -384,18 +384,21 @@ export default function VideoEditor({
 
         for (const p of boundary) {
           let r = 0, g = 0, b = 0, count = 0;
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
+          // Sample a slightly larger neighborhood for better color borrowing
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
               const nx = p.x + dx;
               const ny = p.y + dy;
               if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                 const nidx = ny * width + nx;
                 if (hole[nidx] === 0) {
                   const off = nidx * 4;
-                  r += pixels[off];
-                  g += pixels[off+1];
-                  b += pixels[off+2];
-                  count++;
+                  // Weight closer pixels more
+                  const weight = 1 / (Math.sqrt(dx*dx + dy*dy) || 1);
+                  r += pixels[off] * weight;
+                  g += pixels[off+1] * weight;
+                  b += pixels[off+2] * weight;
+                  count += weight;
                 }
               }
             }
@@ -415,7 +418,6 @@ export default function VideoEditor({
           hole[idx] = 0;
           holeCount--;
           
-          // Check neighbors of filled pixel to see if they are now boundary
           const x = idx % width;
           const y = Math.floor(idx / width);
           for (let dy = -1; dy <= 1; dy++) {
@@ -449,7 +451,7 @@ export default function VideoEditor({
       blurCanvas.height = height;
       const blurCtx = blurCanvas.getContext('2d');
       if (blurCtx) {
-        blurCtx.filter = 'blur(1.5px)'; // Subtle blur for natural blending
+        blurCtx.filter = 'blur(2px)'; // Slightly more blur for smoother results
         blurCtx.drawImage(canvas, 0, 0);
         const blurredData = blurCtx.getImageData(0, 0, width, height);
         
@@ -457,10 +459,10 @@ export default function VideoEditor({
           const alpha = maskPixels[i + 3];
           if (alpha > 0) {
             const blend = alpha / 255;
-            // Stronger blend at the center of the smudge, softer at edges
-            pixels[i] = pixels[i] * (1 - blend * 0.3) + blurredData.data[i] * (blend * 0.3);
-            pixels[i+1] = pixels[i+1] * (1 - blend * 0.3) + blurredData.data[i+1] * (blend * 0.3);
-            pixels[i+2] = pixels[i+2] * (1 - blend * 0.3) + blurredData.data[i+2] * (blend * 0.3);
+            // Stronger blend for more obvious effect
+            pixels[i] = pixels[i] * (1 - blend * 0.5) + blurredData.data[i] * (blend * 0.5);
+            pixels[i+1] = pixels[i+1] * (1 - blend * 0.5) + blurredData.data[i+1] * (blend * 0.5);
+            pixels[i+2] = pixels[i+2] * (1 - blend * 0.5) + blurredData.data[i+2] * (blend * 0.5);
           }
         }
         context.putImageData(originalData, 0, 0);
