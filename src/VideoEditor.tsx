@@ -632,16 +632,6 @@ export default function VideoEditor({
         </div>
       </div>
 
-      <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end">
-        <button 
-          onClick={() => onSubmit(task)}
-          disabled={task.storyboards.length === 0}
-          className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          <PlayCircle size={20}/> 提交视频渲染任务
-        </button>
-      </div>
-
       {/* Image Editor Modal */}
       {editingImage && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">

@@ -113,12 +113,15 @@ async function processVideoTask(filePath: string, filename: string) {
 
     // 2. Concatenate clips with transitions
     const concatPath = path.join(videoTaskDir, `temp_${filename}_concat.mp4`);
+    let finalDuration = 0;
     await concatenateClips(clipPaths, storyboards, concatPath, (p) => {
         videoJobProgress.set(filename, { progress: 40 + Math.floor(p * 0.4), status: 'running' });
+    }).then(duration => {
+        finalDuration = duration;
     });
 
     // 3. Add BGM and Intro/Outro
-    await addBgmAndFinalize(concatPath, bgm, introAnimation, outroAnimation, outputPath, (p) => {
+    await addBgmAndFinalize(concatPath, finalDuration, bgm, introAnimation, outroAnimation, outputPath, (p) => {
         videoJobProgress.set(filename, { progress: 80 + Math.floor(p * 0.2), status: 'running' });
     });
 
@@ -211,11 +214,11 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
     });
 }
 
-function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: string, onProgress: (p: number) => void): Promise<void> {
+function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: string, onProgress: (p: number) => void): Promise<number> {
     return new Promise((resolve, reject) => {
         if (clipPaths.length === 1) {
             fs.copyFileSync(clipPaths[0], outputPath);
-            return resolve();
+            return resolve(storyboards[0].duration || 3);
         }
 
         let filterComplex = '';
@@ -233,6 +236,8 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
             clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]`; });
             filterComplex += `concat=n=${clipPaths.length}:v=1:a=0[outv]`;
             
+            let totalDuration = storyboards.reduce((acc, sb) => acc + (sb.duration || 3), 0);
+
             inputs.complexFilter(filterComplex, ['outv'])
                 .outputOptions([
                     '-c:v libx264', 
@@ -242,7 +247,7 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
                 ])
                 .save(outputPath)
                 .on('progress', (p) => onProgress(p.percent || 0))
-                .on('end', () => resolve())
+                .on('end', () => resolve(totalDuration))
                 .on('error', reject);
         } else {
             // Xfade logic
@@ -250,12 +255,14 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
             let offset = storyboards[0].duration || 3;
             
             for (let i = 1; i < clipPaths.length; i++) {
-                const transition = storyboards[i-1].transition === 'fade' ? 'fade' : 'distance'; // distance is a fast cut fallback
+                const transition = storyboards[i-1].transition === 'fade' ? 'fade' : 'dissolve'; // dissolve is a safer fallback
                 const duration = storyboards[i-1].transition === 'fade' ? 1 : 0.1;
                 const nextStream = `[${i}:v]`;
                 const outStream = `[v${i}]`;
                 
-                filterComplex += `${currentStream}${nextStream}xfade=transition=${transition}:duration=${duration}:offset=${offset - duration}${outStream};`;
+                // Ensure offset is valid
+                const safeOffset = Math.max(0.1, offset - duration);
+                filterComplex += `${currentStream}${nextStream}xfade=transition=${transition}:duration=${duration}:offset=${safeOffset}${outStream};`;
                 currentStream = outStream;
                 offset += (storyboards[i].duration || 3) - duration;
             }
@@ -272,21 +279,29 @@ function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: s
                 ])
                 .save(outputPath)
                 .on('progress', (p) => onProgress(p.percent || 0))
-                .on('end', () => resolve())
+                .on('end', () => resolve(offset))
                 .on('error', reject);
         }
     });
 }
 
-function addBgmAndFinalize(videoPath: string, bgm: string, intro: string, outro: string, outputPath: string, onProgress: (p: number) => void): Promise<void> {
+function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string, intro: string, outro: string, outputPath: string, onProgress: (p: number) => void): Promise<void> {
     return new Promise((resolve, reject) => {
         let cmd = ffmpeg(videoPath);
         
-        let filterComplex = '[0:v]copy[v]';
-        if (intro === 'fade_in' && outro === 'fade_out') {
-            filterComplex = `[0:v]fade=t=in:st=0:d=1,fade=t=out:st=999:d=1[v]`; // We need actual duration for outro, simplified here
-        } else if (intro === 'fade_in') {
-            filterComplex = `[0:v]fade=t=in:st=0:d=1[v]`;
+        let filters = [];
+        if (intro === 'fade_in') {
+            filters.push('fade=t=in:st=0:d=1');
+        }
+        if (outro === 'fade_out') {
+            filters.push(`fade=t=out:st=${Math.max(0, totalDuration - 1)}:d=1`);
+        }
+        
+        let filterComplex = '[0:v]';
+        if (filters.length > 0) {
+            filterComplex += filters.join(',') + '[v]';
+        } else {
+            filterComplex += 'copy[v]';
         }
 
         if (bgm) {
