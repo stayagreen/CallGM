@@ -171,10 +171,13 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
         // IMPORTANT: Ensure target dimensions are even numbers
         const w = Math.floor(targetWidth / 2) * 2;
         const h = Math.floor(targetHeight / 2) * 2;
-        let scaleFilter = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,format=yuv444p`;
+        // Use setsar=1 to ensure square pixels before zoompan
+        let scaleFilter = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv444p`;
 
         // Animations
         let panZoom = '';
+        // Note: zoompan is very sensitive to input/output dimensions. 
+        // We ensure s=${w}x${h} matches the output of scaleFilter.
         switch (sb.animation) {
             case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`; break;
             case 'pan_lr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=${w}x${h}:fps=30`; break;
@@ -196,10 +199,10 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
             const color = sb.textColor || 'white';
             // Robust escaping for drawtext: escape backslashes, then colons, then single quotes
             const escapedText = sb.text
-                .replace(/\\/g, "\\\\")
-                .replace(/:/g, "\\:")
-                .replace(/'/g, "\\'")
-                .replace(/%/g, "\\%");
+                .replace(/\\/g, "\\\\\\\\")
+                .replace(/:/g, "\\\\:")
+                .replace(/'/g, "\\\\'")
+                .replace(/%/g, "\\\\%");
             
             let textAlpha = '1';
             if (sb.textEffect === 'fade') textAlpha = `if(lt(t,1),t,1)`;

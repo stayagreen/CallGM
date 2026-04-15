@@ -583,7 +583,29 @@ export default function VideoEditor({
                               <img src={sb.image} className="w-full h-full object-contain" />
                               <div className="absolute inset-0 bg-black/30 sm:bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                                 <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" title="编辑图片"><Scissors size={20}/></button>
-                                <a href={sb.image} download={`storyboard_${index + 1}.jpg`} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" title="下载原图"><Download size={20}/></a>
+                                <button 
+                                  onClick={async () => {
+                                    try {
+                                      const res = await fetch('/api/gallery/save', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ url: sb.image })
+                                      });
+                                      if (res.ok) {
+                                        alert('已成功保存到本地图库');
+                                      } else {
+                                        alert('保存失败，请重试');
+                                      }
+                                    } catch (e) {
+                                      console.error('Save to gallery failed', e);
+                                      alert('网络错误，保存失败');
+                                    }
+                                  }}
+                                  className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" 
+                                  title="保存到图库"
+                                >
+                                  <Download size={20}/>
+                                </button>
                                 <label className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer shadow-sm" title="更换图片">
                                   <Upload size={20}/>
                                   <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, sb.id)} />

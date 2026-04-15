@@ -162,6 +162,33 @@ async function startServer() {
     }
   });
 
+  // API to save a file to gallery (downloads folder)
+  app.post("/api/gallery/save", (req, res) => {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: "URL is required" });
+
+    try {
+      const filename = path.basename(url);
+      const sourcePath = url.startsWith('/uploads/') 
+        ? path.join(uploadsDir, filename)
+        : url.startsWith('/downloads/')
+          ? path.join(downloadDir, filename)
+          : null;
+
+      if (!sourcePath || !fs.existsSync(sourcePath)) {
+        return res.status(404).json({ error: "Source file not found" });
+      }
+
+      const newFilename = `saved_${Date.now()}_${filename}`;
+      const destPath = path.join(downloadDir, newFilename);
+      fs.copyFileSync(sourcePath, destPath);
+      res.json({ status: "ok", filename: newFilename });
+    } catch (e) {
+      console.error('Failed to save to gallery', e);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   // API route to save generation request
   app.post("/api/execute", (req, res) => {
     const { tasks } = req.body;
