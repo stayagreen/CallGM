@@ -167,24 +167,53 @@ async function startServer() {
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: "URL is required" });
 
-    try {
-      const filename = path.basename(url);
-      const sourcePath = url.startsWith('/uploads/') 
-        ? path.join(uploadsDir, filename)
-        : url.startsWith('/downloads/')
-          ? path.join(downloadDir, filename)
-          : null;
+    console.log(`[GallerySave] Request to save: ${url.substring(0, 50)}...`);
 
-      if (!sourcePath || !fs.existsSync(sourcePath)) {
+    try {
+      if (url.startsWith('data:image')) {
+        // Handle base64
+        const matches = url.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+        if (matches) {
+          const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+          const base64Data = matches[2];
+          const filename = `saved_${Date.now()}_${Math.floor(Math.random()*1000)}.${ext}`;
+          const destPath = path.join(downloadDir, filename);
+          fs.writeFileSync(destPath, base64Data, 'base64');
+          console.log(`[GallerySave] Base64 saved to: ${destPath}`);
+          return res.json({ status: "ok", filename });
+        }
+        return res.status(400).json({ error: "Invalid base64 format" });
+      }
+
+      const filename = path.basename(url);
+      let sourcePath = '';
+      
+      if (url.startsWith('/uploads/')) {
+        sourcePath = path.join(uploadsDir, filename);
+      } else if (url.startsWith('/downloads/')) {
+        sourcePath = path.join(downloadDir, filename);
+      } else {
+        // Try to resolve from filename alone if it's just a name
+        sourcePath = path.join(uploadsDir, filename);
+        if (!fs.existsSync(sourcePath)) {
+          sourcePath = path.join(downloadDir, filename);
+        }
+      }
+
+      console.log(`[GallerySave] Resolved source path: ${sourcePath}`);
+
+      if (!fs.existsSync(sourcePath)) {
+        console.error(`[GallerySave] Source file not found: ${sourcePath}`);
         return res.status(404).json({ error: "Source file not found" });
       }
 
       const newFilename = `saved_${Date.now()}_${filename}`;
       const destPath = path.join(downloadDir, newFilename);
       fs.copyFileSync(sourcePath, destPath);
+      console.log(`[GallerySave] File copied to: ${destPath}`);
       res.json({ status: "ok", filename: newFilename });
     } catch (e) {
-      console.error('Failed to save to gallery', e);
+      console.error('[GallerySave] Failed to save to gallery', e);
       res.status(500).json({ error: "Internal server error" });
     }
   });

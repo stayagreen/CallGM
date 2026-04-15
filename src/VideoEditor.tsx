@@ -584,7 +584,18 @@ export default function VideoEditor({
                               <div className="absolute inset-0 bg-black/30 sm:bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                                 <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" title="编辑图片"><Scissors size={20}/></button>
                                 <button 
-                                  onClick={async () => {
+                                  onClick={async (e) => {
+                                    const btn = e.currentTarget;
+                                    const originalContent = btn.innerHTML;
+                                    btn.disabled = true;
+                                    btn.innerHTML = '<div class="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>';
+                                    
+                                    // Immediate feedback
+                                    const toast = document.createElement('div');
+                                    toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold animate-bounce';
+                                    toast.innerText = '正在保存到本地图库...';
+                                    document.body.appendChild(toast);
+
                                     try {
                                       const res = await fetch('/api/gallery/save', {
                                         method: 'POST',
@@ -592,16 +603,26 @@ export default function VideoEditor({
                                         body: JSON.stringify({ url: sb.image })
                                       });
                                       if (res.ok) {
-                                        alert('已成功保存到本地图库');
+                                        toast.innerText = '✅ 已成功保存到本地图库';
+                                        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
+                                        setTimeout(() => toast.remove(), 2000);
                                       } else {
-                                        alert('保存失败，请重试');
+                                        const err = await res.json();
+                                        toast.innerText = `❌ 保存失败: ${err.error || '未知错误'}`;
+                                        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
+                                        setTimeout(() => toast.remove(), 3000);
                                       }
                                     } catch (e) {
                                       console.error('Save to gallery failed', e);
-                                      alert('网络错误，保存失败');
+                                      toast.innerText = '❌ 网络错误，保存失败';
+                                      toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
+                                      setTimeout(() => toast.remove(), 3000);
+                                    } finally {
+                                      btn.disabled = false;
+                                      btn.innerHTML = originalContent;
                                     }
                                   }}
-                                  className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" 
+                                  className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm disabled:opacity-50" 
                                   title="保存到图库"
                                 >
                                   <Download size={20}/>
@@ -745,9 +766,9 @@ export default function VideoEditor({
                 <button onClick={() => setEditingImage(null)} className="p-1.5 sm:p-2 text-gray-400 hover:text-gray-600"><X size={20}/></button>
               </div>
             </div>
-            <div className="flex-grow min-h-0 overflow-hidden p-2 sm:p-6 bg-gray-100 flex items-center justify-center relative touch-none">
+            <div className="flex-grow min-h-0 overflow-hidden bg-gray-100 flex items-center justify-center relative touch-none">
               {isSmudging ? (
-                <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+                <div className="w-full h-full flex items-center justify-center p-2 sm:p-6">
                   <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center bg-white">
                     <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none" />
                     <canvas 
@@ -770,10 +791,12 @@ export default function VideoEditor({
                   </div>
                 </div>
               ) : (
-                <div className="max-w-full max-h-full flex items-center justify-center overflow-hidden">
-                  <ReactCrop crop={crop} onChange={c => setCrop(c)}>
-                    <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg" />
-                  </ReactCrop>
+                <div className="w-full h-full flex items-center justify-center p-2 sm:p-6">
+                  <div className="max-w-full max-h-full flex items-center justify-center overflow-hidden">
+                    <ReactCrop crop={crop} onChange={c => setCrop(c)}>
+                      <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg" />
+                    </ReactCrop>
+                  </div>
                 </div>
               )}
             </div>

@@ -171,27 +171,26 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
         // IMPORTANT: Ensure target dimensions are even numbers
         const w = Math.floor(targetWidth / 2) * 2;
         const h = Math.floor(targetHeight / 2) * 2;
-        // Use setsar=1 to ensure square pixels before zoompan
+        // Use setsar=1 and scale to target size first
         let scaleFilter = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv444p`;
 
         // Animations
         let panZoom = '';
-        // Note: zoompan is very sensitive to input/output dimensions. 
-        // We ensure s=${w}x${h} matches the output of scaleFilter.
+        // Note: zoompan is very sensitive. We use trunc() to ensure integer coordinates and clamp values.
         switch (sb.animation) {
-            case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_lr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_rl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.1':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_tb': panZoom = `zoompan=z=1.2:x='iw*0.1':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_bt': panZoom = `zoompan=z=1.2:x='iw*0.1':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='iw*0.2 - (on/${frames})*(iw*0.2)':y='(on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
-            case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='(on/${frames})*(iw*0.2)':y='ih*0.2 - (on/${frames})*(ih*0.2)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_lr': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(ih*0.1)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_rl': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(ih*0.1)':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_tb': panZoom = `zoompan=z=1.2:x='trunc(iw*0.1)':y='trunc(min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_bt': panZoom = `zoompan=z=1.2:x='trunc(iw*0.1)':y='trunc(min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
+            case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
             default: panZoom = `zoompan=z=1:d=${frames}:s=${w}x${h}:fps=30`; break;
         }
 
-        filterComplex = `[0:v]${scaleFilter},${panZoom}[v1]`;
+        filterComplex = `[0:v]${scaleFilter},${panZoom},scale=${w}:${h}[v1]`;
 
         // Text Overlay
         if (sb.text) {
