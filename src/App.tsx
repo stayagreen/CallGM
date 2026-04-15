@@ -192,6 +192,7 @@ export default function App() {
   const [isMobile, setIsMobile] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [submittingJobs, setSubmittingJobs] = useState<Job[]>([]);
+  const [submittingVideoJobs, setSubmittingVideoJobs] = useState<Job[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
 
   useEffect(() => {
@@ -871,6 +872,15 @@ export default function App() {
                     
                     // Optimistic UI: Immediately clear tasks and switch tab
                     const currentTasks = [...validTasks];
+                    const tempJobs = currentTasks.map(task => ({
+                      id: task.id,
+                      timestamp: Date.now(),
+                      status: 'pending' as const,
+                      progress: 0,
+                      data: task
+                    }));
+                    
+                    setSubmittingVideoJobs(prev => [...tempJobs, ...prev]);
                     setVideoTasks([]);
                     setActiveVideoTaskId('');
                     setActiveTab('video_records');
@@ -878,29 +888,22 @@ export default function App() {
                     // Process submissions in background
                     for (const task of currentTasks) {
                       try {
-                        const tempJob = {
-                          id: task.id,
-                          timestamp: Date.now(),
-                          status: 'pending',
-                          progress: 0,
-                          data: task
-                        };
-                        setVideoJobs(prev => [tempJob, ...prev]);
-                        
                         fetch('/api/video/execute', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify(task)
+                        }).then(() => {
+                          // Remove from submitting list once server has it
+                          setSubmittingVideoJobs(prev => prev.filter(j => j.id !== task.id));
+                          fetchVideoJobs();
                         }).catch(e => {
                           console.error('Background submission failed', e);
+                          setSubmittingVideoJobs(prev => prev.filter(j => j.id !== task.id));
                         });
                       } catch (e) {
                         console.error('Failed to queue video task', e);
                       }
                     }
-                    
-                    // Refresh jobs after a short delay to see the new pending tasks
-                    setTimeout(fetchVideoJobs, 500);
                   }}
                   disabled={!videoTasks.some(t => t.storyboards.length > 0)}
                   className="flex items-center gap-2 bg-blue-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed text-lg"
@@ -1135,13 +1138,28 @@ export default function App() {
             </div>
           </div>
           
-          {videoJobs.length === 0 ? (
+          {videoJobs.length === 0 && submittingVideoJobs.length === 0 ? (
             <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
               <History className="w-16 h-16 mx-auto mb-4 text-gray-300" />
               <p className="text-lg font-medium text-gray-600">暂无视频渲染记录</p>
             </div>
           ) : (
             <div className="grid gap-4">
+              {submittingVideoJobs.map(job => (
+                <div key={job.id} className="bg-white border border-blue-200 rounded-2xl p-5 shadow-sm opacity-70 animate-pulse">
+                  <div className="flex justify-between items-center mb-3">
+                    <div className="flex items-center gap-3">
+                      <span className="font-bold text-gray-900 text-lg">{new Date(job.timestamp).toLocaleString()}</span>
+                      <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold bg-blue-100 text-blue-700">
+                        <Clock size={14} /> 提交中...
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    正在同步到服务器...
+                  </div>
+                </div>
+              ))}
               {videoJobs.map(job => (
                 <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
                   <div className="flex justify-between items-center mb-3">

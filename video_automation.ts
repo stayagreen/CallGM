@@ -192,9 +192,9 @@ function generateClip(sb: any, outputPath: string, targetWidth: number, targetHe
                 textAlpha = `if(lt(t,1),t,1)`; 
             }
 
-            filterComplex += `;[v1]drawtext=text='${text}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}'[v2]`;
+            filterComplex += `;[v1]drawtext=text='${text}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}',format=yuv420p[v2]`;
         } else {
-            filterComplex += `;[v1]copy[v2]`;
+            filterComplex += `;[v1]format=yuv420p[v2]`;
         }
 
         ffmpeg(imgPath)
@@ -305,9 +305,9 @@ function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string
         
         let filterComplex = '[0:v]';
         if (filters.length > 0) {
-            filterComplex += filters.join(',') + '[v]';
+            filterComplex += filters.join(',') + ',format=yuv420p[v]';
         } else {
-            filterComplex += 'copy[v]';
+            filterComplex += 'format=yuv420p[v]';
         }
 
         if (bgm) {

@@ -227,6 +227,12 @@ export default function VideoEditor({
   // Image Editor Logic
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     if (!isSmudging || !ctx || !canvasRef.current) return;
+    
+    // Prevent scrolling on touch
+    if ('touches' in e) {
+      if (e.cancelable) e.preventDefault();
+    }
+    
     setIsDrawing(true);
 
     // Save current state for undo
@@ -251,6 +257,11 @@ export default function VideoEditor({
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     if (!isDrawing || !isSmudging || !ctx || !canvasRef.current || !lastPos.current) return;
     
+    // Prevent scrolling on touch
+    if ('touches' in e) {
+      if (e.cancelable) e.preventDefault();
+    }
+
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
@@ -509,10 +520,10 @@ export default function VideoEditor({
                           </div>
                         </div>
                         
-                        <div className="relative aspect-video bg-gray-100 flex items-center justify-center group">
+                        <div className="relative aspect-video bg-gray-100 flex items-center justify-center group overflow-hidden">
                           {sb.image ? (
                             <>
-                              <img src={sb.image} className="w-full h-full object-cover" />
+                              <img src={sb.image} className="w-full h-full object-contain" />
                               <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                                 <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition"><Scissors size={20}/></button>
                                 <label className="p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition cursor-pointer">
