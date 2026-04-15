@@ -712,21 +712,21 @@ export default function VideoEditor({
 
       {/* Image Editor Modal */}
       {editingImage && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full flex flex-col max-h-[90vh]">
-            <div className="p-4 border-b border-gray-100 flex justify-between items-center">
-              <h3 className="font-bold text-lg flex items-center gap-2"><Scissors size={20}/> 图片编辑</h3>
-              <div className="flex gap-2">
-                <button onClick={() => setIsSmudging(!isSmudging)} className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition ${isSmudging ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                  <Paintbrush size={16}/> 涂抹填充
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center sm:p-4 z-[999]">
+          <div className="bg-white rounded-none sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-w-4xl sm:max-h-[90vh] flex flex-col overflow-hidden">
+            <div className="p-3 sm:p-4 border-b border-gray-100 flex justify-between items-center bg-white">
+              <h3 className="font-bold text-base sm:text-lg flex items-center gap-2"><Scissors size={18} className="sm:w-5 sm:h-5"/> 图片编辑</h3>
+              <div className="flex gap-1.5 sm:gap-2">
+                <button onClick={() => setIsSmudging(!isSmudging)} className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition ${isSmudging ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                  <Paintbrush size={14} className="sm:w-4 sm:h-4"/> 涂抹填充
                 </button>
-                <button onClick={() => setEditingImage(null)} className="p-2 text-gray-400 hover:text-gray-600"><X size={20}/></button>
+                <button onClick={() => setEditingImage(null)} className="p-1.5 sm:p-2 text-gray-400 hover:text-gray-600"><X size={20}/></button>
               </div>
             </div>
-            <div className="flex-grow overflow-hidden p-2 sm:p-6 bg-gray-100 flex items-center justify-center relative touch-none">
+            <div className="flex-grow min-h-0 overflow-hidden p-2 sm:p-6 bg-gray-100 flex items-center justify-center relative touch-none">
               {isSmudging ? (
                 <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
-                  <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center">
+                  <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center bg-white">
                     <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none" />
                     <canvas 
                       ref={canvasRef}
@@ -741,8 +741,8 @@ export default function VideoEditor({
                     />
                     {isProcessing && (
                       <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
-                        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <p className="text-blue-800 font-bold">后台智能处理中...</p>
+                        <div className="w-10 h-10 sm:w-12 sm:h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3 sm:mb-4"></div>
+                        <p className="text-blue-800 font-bold text-sm sm:text-base">后台智能处理中...</p>
                       </div>
                     )}
                   </div>
@@ -755,37 +755,39 @@ export default function VideoEditor({
                 </div>
               )}
             </div>
-            <div className="p-4 border-t border-gray-100 flex justify-between items-center bg-white flex-wrap gap-4">
+            <div className="p-3 sm:p-4 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center bg-white gap-3 sm:gap-4">
               {isSmudging ? (
-                <div className="flex items-center gap-4 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-600">画笔大小:</span>
+                <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-center sm:justify-start w-full sm:w-auto">
+                  <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                    <span className="text-[10px] sm:text-sm text-gray-500 font-medium">画笔:</span>
                     <input 
                       type="range" 
                       min="10" max="100" 
                       value={brushSize} 
                       onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                      className="w-24 sm:w-32 accent-blue-600"
+                      className="w-20 sm:w-32 accent-blue-600 h-1.5 sm:h-2"
                     />
                   </div>
-                  <button 
-                    onClick={handleUndo} 
-                    disabled={undoHistory.length === 0}
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                  >
-                    撤销
-                  </button>
-                  <button 
-                    onClick={clearMask}
-                    className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition"
-                  >
-                    清空选区
-                  </button>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={handleUndo} 
+                      disabled={undoHistory.length === 0}
+                      className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition border border-gray-200"
+                    >
+                      撤销
+                    </button>
+                    <button 
+                      onClick={clearMask}
+                      className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition border border-gray-200"
+                    >
+                      清空
+                    </button>
+                  </div>
                 </div>
-              ) : <div></div>}
-              <div className="flex gap-3">
-                <button onClick={() => setEditingImage(null)} className="px-6 py-2.5 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition">取消</button>
-                <button onClick={saveEditedImage} disabled={isProcessing} className="px-6 py-2.5 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition shadow-md disabled:opacity-50">
+              ) : <div className="hidden sm:block"></div>}
+              <div className="flex gap-2 sm:gap-3 w-full sm:w-auto justify-center sm:justify-end">
+                <button onClick={() => setEditingImage(null)} className="flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-medium text-gray-600 bg-gray-50 hover:bg-gray-100 transition border border-gray-200 text-sm sm:text-base">取消</button>
+                <button onClick={saveEditedImage} disabled={isProcessing} className="flex-1 sm:flex-none px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition shadow-md disabled:opacity-50 text-sm sm:text-base">
                   {isSmudging ? '确认去除水印' : '确认应用'}
                 </button>
               </div>
