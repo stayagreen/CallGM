@@ -295,7 +295,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             filterComplex = filterComplex.replace(`[v2]`, `[v_pre_type]`);
             filterComplex += `;color=c=black@0:s=${w}x${h}[txt_canvas];`;
             filterComplex += `[txt_canvas]drawtext=${textParams}[txt_full];`;
-            filterComplex += `[txt_full]crop=w='max(1, iw*min(1, t/${revealDuration}))':h=ih:x=0:y=0[txt_reveal];`;
+            filterComplex += `[txt_full]crop=w='if(eq(t,0),1,iw*min(1, t/${revealDuration}))':h=ih:x=0:y=0[txt_reveal];`;
             filterComplex += `[v_pre_type][txt_reveal]overlay=x=0:y=0:format=auto[v2]`;
         }
 
