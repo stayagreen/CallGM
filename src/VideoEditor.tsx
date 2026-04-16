@@ -258,6 +258,14 @@ export default function VideoEditor({
     return () => observer.disconnect();
   }, [isSmudging, editingImage]);
 
+  useEffect(() => {
+    if (ctx && canvasRef.current) {
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      setUndoHistory([]);
+      setStampSource(null);
+    }
+  }, [smudgeMode]);
+
   // Image Editor Logic
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     if (!isSmudging || !ctx || !canvasRef.current || !imageRef.current) return;
@@ -415,7 +423,7 @@ export default function VideoEditor({
         // For stamp mode, we just draw the canvas content (which already contains cloned pixels)
         context.drawImage(canvasRef.current, 0, 0);
       } else {
-        // For inpaint mode, we use the diffusion algorithm
+        // For inpaint mode, we use an optimized diffusion algorithm
         const maskCtx = canvasRef.current.getContext('2d');
         if (!maskCtx) return;
         
@@ -426,31 +434,63 @@ export default function VideoEditor({
         if (!tempMaskCtx) return;
         tempMaskCtx.drawImage(canvasRef.current, 0, 0, width, height);
         const maskData = tempMaskCtx.getImageData(0, 0, width, height);
+        const maskPixels = maskData.data;
+
+        // 1. Find bounding box of mask to optimize processing
+        let minX = width, minY = height, maxX = 0, maxY = 0;
+        let hasMask = false;
+        for (let i = 0; i < width * height; i++) {
+          if (maskPixels[i * 4 + 3] > 20) {
+            const x = i % width;
+            const y = Math.floor(i / width);
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+            hasMask = true;
+          }
+        }
+
+        if (!hasMask) {
+          setIsProcessing(false);
+          setEditingImage(null);
+          return;
+        }
+
+        // Add padding to bounding box for context
+        const padding = 30;
+        minX = Math.max(0, minX - padding);
+        minY = Math.max(0, minY - padding);
+        maxX = Math.min(width - 1, maxX + padding);
+        maxY = Math.min(height - 1, maxY + padding);
         
         const originalData = context.getImageData(0, 0, width, height);
         const pixels = originalData.data;
-        const maskPixels = maskData.data;
         
         const hole = new Uint8Array(width * height);
         const initialHole = new Uint8Array(width * height);
         let holeCount = 0;
 
-        for (let i = 0; i < width * height; i++) {
-          if (maskPixels[i * 4 + 3] > 20) {
-            initialHole[i] = 1;
+        // Only process within bounding box
+        for (let y = minY; y <= maxY; y++) {
+          for (let x = minX; x <= maxX; x++) {
+            const idx = y * width + x;
+            if (maskPixels[idx * 4 + 3] > 20) {
+              initialHole[idx] = 1;
+            }
           }
         }
 
-        const dilation = 8; // Increased dilation for better coverage and blending
-        for (let y = 0; y < height; y++) {
-          for (let x = 0; x < width; x++) {
+        const dilation = 6; 
+        for (let y = minY; y <= maxY; y++) {
+          for (let x = minX; x <= maxX; x++) {
             const idx = y * width + x;
             if (initialHole[idx] === 1) {
               for (let dy = -dilation; dy <= dilation; dy++) {
                 for (let dx = -dilation; dx <= dilation; dx++) {
                   const nx = x + dx;
                   const ny = y + dy;
-                  if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                  if (nx >= minX && nx <= maxX && ny >= minY && ny <= maxY) {
                     const nidx = ny * width + nx;
                     if (hole[nidx] === 0) {
                       hole[nidx] = 1;
@@ -464,8 +504,8 @@ export default function VideoEditor({
         }
 
         let boundary = [];
-        for (let y = 0; y < height; y++) {
-          for (let x = 0; x < width; x++) {
+        for (let y = minY; y <= maxY; y++) {
+          for (let x = minX; x <= maxX; x++) {
             const idx = y * width + x;
             if (hole[idx] === 1) {
               let isBoundary = false;
@@ -488,7 +528,7 @@ export default function VideoEditor({
         }
 
         let iterations = 0;
-        const maxIterations = 600; 
+        const maxIterations = 800; 
         
         while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
           const nextBoundary = new Set<number>();
@@ -496,7 +536,8 @@ export default function VideoEditor({
 
           for (const p of boundary) {
             let r = 0, g = 0, b = 0, count = 0;
-            const radius = 6;
+            const radius = 8;
+            // Sampling logic
             for (let dy = -radius; dy <= radius; dy++) {
               for (let dx = -radius; dx <= radius; dx++) {
                 const nx = p.x + dx;
