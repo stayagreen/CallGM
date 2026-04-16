@@ -115,7 +115,7 @@ export default function VideoEditor({
       textSize: 20,
       textColor: '#ffffff',
       textEffect: 'none',
-      duration: 3
+      duration: 3.5
     };
     updateTask({ storyboards: [...task.storyboards, newSb] });
     setShowAddMenu(false);
@@ -980,12 +980,26 @@ export default function VideoEditor({
                               <label className="text-xs text-gray-500">时长(秒):</label>
                               <input 
                                 type="number" 
-                                min="1" 
+                                step="0.1"
+                                min="0.1" 
                                 max="60" 
                                 value={sb.duration} 
-                                onChange={e => updateStoryboard(sb.id, { duration: parseInt(e.target.value) || 3 })} 
+                                onChange={e => updateStoryboard(sb.id, { duration: parseFloat(e.target.value) || 3.5 })} 
                                 className="w-16 text-sm p-1.5 rounded border border-gray-200" 
                               />
+                              <button 
+                                onClick={() => {
+                                  updateTask({
+                                    storyboards: task.storyboards.map(s => ({
+                                      ...s,
+                                      duration: sb.duration
+                                    }))
+                                  });
+                                }} 
+                                className="text-[10px] text-blue-600 hover:underline ml-2"
+                              >
+                                应用到所有
+                              </button>
                             </div>
                             {sb.text && (
                               <div className="grid grid-cols-2 gap-2">
@@ -1310,7 +1324,7 @@ export default function VideoEditor({
                     textSize: 20,
                     textColor: '#ffffff',
                     textEffect: 'none',
-                    duration: 3
+                    duration: 3.5
                   }));
                   updateTask({ storyboards: [...task.storyboards, ...newStoryboards] });
                   setSplitImages([]);
