@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target } from 'lucide-react';
 import ReactCrop, { type Crop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 
@@ -72,11 +72,17 @@ export default function VideoEditor({
   // Image Editor State
   const [crop, setCrop] = useState<Crop>();
   const [isSmudging, setIsSmudging] = useState(false);
+  const [smudgeMode, setSmudgeMode] = useState<'inpaint' | 'stamp'>('inpaint');
+  const [stampSource, setStampSource] = useState<{x: number, y: number} | null>(null);
+  const [isSelectingSource, setIsSelectingSource] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [brushSize, setBrushSize] = useState(30);
+  const [brushSize, setBrushSize] = useState(40);
+  const [brushFeather, setBrushFeather] = useState(20);
   const [undoHistory, setUndoHistory] = useState<ImageData[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastPos = useRef<{x: number, y: number} | null>(null);
+  const startPos = useRef<{x: number, y: number} | null>(null);
+  const stampOffset = useRef<{dx: number, dy: number} | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [ctx, setCtx] = useState<CanvasRenderingContext2D | null>(null);
@@ -254,8 +260,23 @@ export default function VideoEditor({
 
   // Image Editor Logic
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isSmudging || !ctx || !canvasRef.current) return;
+    if (!isSmudging || !ctx || !canvasRef.current || !imageRef.current) return;
     
+    const rect = canvasRef.current.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
+
+    if (isSelectingSource) {
+      setStampSource({ x, y });
+      setIsSelectingSource(false);
+      return;
+    }
+
     // Prevent scrolling on touch
     if ('touches' in e) {
       if (e.cancelable) e.preventDefault();
@@ -267,30 +288,33 @@ export default function VideoEditor({
     const currentState = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
     setUndoHistory(prev => [...prev, currentState]);
 
-    const rect = canvasRef.current.getBoundingClientRect();
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    
-    const scaleX = canvasRef.current.width / rect.width;
-    const scaleY = canvasRef.current.height / rect.height;
-    const x = (clientX - rect.left) * scaleX;
-    const y = (clientY - rect.top) * scaleY;
-
     lastPos.current = { x, y };
+    startPos.current = { x, y };
 
-    // Use a radial gradient for a softer brush edge
+    if (smudgeMode === 'stamp' && stampSource) {
+      stampOffset.current = {
+        dx: stampSource.x - x,
+        dy: stampSource.y - y
+      };
+    }
+
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
-    ctx.lineWidth = brushSize;
     
-    // Create a soft brush effect by using shadowBlur
-    ctx.shadowBlur = brushSize / 2;
-    ctx.shadowColor = 'rgba(255, 0, 0, 0.8)';
+    if (smudgeMode === 'inpaint') {
+      ctx.strokeStyle = 'rgba(255, 0, 0, 0.6)';
+      ctx.shadowBlur = brushFeather;
+      ctx.shadowColor = 'rgba(255, 0, 0, 0.6)';
+    } else {
+      // Stamp mode: we'll use a pattern or manual pixel copying in draw()
+      ctx.shadowBlur = brushFeather;
+      ctx.shadowColor = 'rgba(0,0,0,0.2)';
+    }
+    ctx.lineWidth = brushSize;
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !isSmudging || !ctx || !canvasRef.current || !lastPos.current) return;
+    if (!isDrawing || !isSmudging || !ctx || !canvasRef.current || !lastPos.current || !imageRef.current) return;
     
     // Prevent scrolling on touch
     if ('touches' in e) {
@@ -306,10 +330,42 @@ export default function VideoEditor({
     const x = (clientX - rect.left) * scaleX;
     const y = (clientY - rect.top) * scaleY;
 
-    ctx.beginPath();
-    ctx.moveTo(lastPos.current.x, lastPos.current.y);
-    ctx.lineTo(x, y);
-    ctx.stroke();
+    if (smudgeMode === 'inpaint') {
+      ctx.beginPath();
+      ctx.moveTo(lastPos.current.x, lastPos.current.y);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    } else if (smudgeMode === 'stamp' && stampOffset.current) {
+      // Clone Stamp implementation with feathering
+      const brushCanvas = document.createElement('canvas');
+      brushCanvas.width = brushSize;
+      brushCanvas.height = brushSize;
+      const bCtx = brushCanvas.getContext('2d');
+      if (!bCtx) return;
+
+      // 1. Draw the source pixels
+      bCtx.drawImage(
+        imageRef.current,
+        x + stampOffset.current.dx - brushSize/2,
+        y + stampOffset.current.dy - brushSize/2,
+        brushSize, brushSize,
+        0, 0, brushSize, brushSize
+      );
+
+      // 2. Apply radial gradient for feathering
+      bCtx.globalCompositeOperation = 'destination-in';
+      const grad = bCtx.createRadialGradient(
+        brushSize / 2, brushSize / 2, (brushSize / 2) * (1 - brushFeather / 100),
+        brushSize / 2, brushSize / 2, brushSize / 2
+      );
+      grad.addColorStop(0, 'rgba(0,0,0,1)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      bCtx.fillStyle = grad;
+      bCtx.fillRect(0, 0, brushSize, brushSize);
+
+      // 3. Draw to main canvas
+      ctx.drawImage(brushCanvas, x - brushSize/2, y - brushSize/2);
+    }
 
     lastPos.current = { x, y };
   };
@@ -318,6 +374,8 @@ export default function VideoEditor({
     if (!isDrawing) return;
     setIsDrawing(false);
     lastPos.current = null;
+    startPos.current = null;
+    stampOffset.current = null;
     if (ctx) {
       ctx.shadowBlur = 0; // Reset shadow
     }
@@ -341,9 +399,6 @@ export default function VideoEditor({
     if (isSmudging && canvasRef.current && editingImage && imageRef.current) {
       setIsProcessing(true);
       
-      // Simulate backend processing delay for UX
-      await new Promise(resolve => setTimeout(resolve, 800));
-
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d');
       if (!context) return;
@@ -356,172 +411,142 @@ export default function VideoEditor({
       // 1. Draw original image
       context.drawImage(imageRef.current, 0, 0);
 
-      // 2. Get mask data from the smudge canvas and scale to natural size
-      const maskCtx = canvasRef.current.getContext('2d');
-      if (!maskCtx) return;
-      
-      const tempMaskCanvas = document.createElement('canvas');
-      tempMaskCanvas.width = width;
-      tempMaskCanvas.height = height;
-      const tempMaskCtx = tempMaskCanvas.getContext('2d');
-      if (!tempMaskCtx) return;
-      tempMaskCtx.drawImage(canvasRef.current, 0, 0, width, height);
-      const maskData = tempMaskCtx.getImageData(0, 0, width, height);
-      
-      // 3. Optimized Iterative Boundary Diffusion Algorithm
-      const originalData = context.getImageData(0, 0, width, height);
-      const pixels = originalData.data;
-      const maskPixels = maskData.data;
-      
-      // Create a hole map with dilation
-      const hole = new Uint8Array(width * height);
-      const initialHole = new Uint8Array(width * height);
-      let holeCount = 0;
+      if (smudgeMode === 'stamp') {
+        // For stamp mode, we just draw the canvas content (which already contains cloned pixels)
+        context.drawImage(canvasRef.current, 0, 0);
+      } else {
+        // For inpaint mode, we use the diffusion algorithm
+        const maskCtx = canvasRef.current.getContext('2d');
+        if (!maskCtx) return;
+        
+        const tempMaskCanvas = document.createElement('canvas');
+        tempMaskCanvas.width = width;
+        tempMaskCanvas.height = height;
+        const tempMaskCtx = tempMaskCanvas.getContext('2d');
+        if (!tempMaskCtx) return;
+        tempMaskCtx.drawImage(canvasRef.current, 0, 0, width, height);
+        const maskData = tempMaskCtx.getImageData(0, 0, width, height);
+        
+        const originalData = context.getImageData(0, 0, width, height);
+        const pixels = originalData.data;
+        const maskPixels = maskData.data;
+        
+        const hole = new Uint8Array(width * height);
+        const initialHole = new Uint8Array(width * height);
+        let holeCount = 0;
 
-      for (let i = 0; i < width * height; i++) {
-        if (maskPixels[i * 4 + 3] > 20) { // Lower threshold to catch soft edges
-          initialHole[i] = 1;
+        for (let i = 0; i < width * height; i++) {
+          if (maskPixels[i * 4 + 3] > 20) {
+            initialHole[i] = 1;
+          }
         }
-      }
 
-      // Dilate mask by 3px to ensure watermark edges are covered
-      const dilation = 3;
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const idx = y * width + x;
-          if (initialHole[idx] === 1) {
-            for (let dy = -dilation; dy <= dilation; dy++) {
-              for (let dx = -dilation; dx <= dilation; dx++) {
-                const nx = x + dx;
-                const ny = y + dy;
-                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                  const nidx = ny * width + nx;
-                  if (hole[nidx] === 0) {
-                    hole[nidx] = 1;
-                    holeCount++;
+        const dilation = 8; // Increased dilation for better coverage and blending
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const idx = y * width + x;
+            if (initialHole[idx] === 1) {
+              for (let dy = -dilation; dy <= dilation; dy++) {
+                for (let dx = -dilation; dx <= dilation; dx++) {
+                  const nx = x + dx;
+                  const ny = y + dy;
+                  if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    const nidx = ny * width + nx;
+                    if (hole[nidx] === 0) {
+                      hole[nidx] = 1;
+                      holeCount++;
+                    }
                   }
                 }
               }
             }
           }
         }
-      }
 
-      // Initial boundary finding
-      let boundary = [];
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const idx = y * width + x;
-          if (hole[idx] === 1) {
-            let isBoundary = false;
+        let boundary = [];
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const idx = y * width + x;
+            if (hole[idx] === 1) {
+              let isBoundary = false;
+              for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                  const nx = x + dx;
+                  const ny = y + dy;
+                  if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    if (hole[ny * width + nx] === 0) {
+                      isBoundary = true;
+                      break;
+                    }
+                  }
+                }
+                if (isBoundary) break;
+              }
+              if (isBoundary) boundary.push({x, y, idx});
+            }
+          }
+        }
+
+        let iterations = 0;
+        const maxIterations = 600; 
+        
+        while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
+          const nextBoundary = new Set<number>();
+          const filledThisIteration = [];
+
+          for (const p of boundary) {
+            let r = 0, g = 0, b = 0, count = 0;
+            const radius = 6;
+            for (let dy = -radius; dy <= radius; dy++) {
+              for (let dx = -radius; dx <= radius; dx++) {
+                const nx = p.x + dx;
+                const ny = p.y + dy;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                  const nidx = ny * width + nx;
+                  if (hole[nidx] === 0) {
+                    const off = nidx * 4;
+                    const weight = 1 / (dx * dx + dy * dy + 0.1);
+                    r += pixels[off] * weight;
+                    g += pixels[off+1] * weight;
+                    b += pixels[off+2] * weight;
+                    count += weight;
+                  }
+                }
+              }
+            }
+
+            if (count > 0) {
+              const off = p.idx * 4;
+              pixels[off] = r / count;
+              pixels[off+1] = g / count;
+              pixels[off+2] = b / count;
+              filledThisIteration.push(p.idx);
+            }
+          }
+
+          for (const idx of filledThisIteration) {
+            hole[idx] = 0;
+            holeCount--;
+            const x = idx % width;
+            const y = Math.floor(idx / width);
             for (let dy = -1; dy <= 1; dy++) {
               for (let dx = -1; dx <= 1; dx++) {
                 const nx = x + dx;
                 const ny = y + dy;
                 if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                  if (hole[ny * width + nx] === 0) {
-                    isBoundary = true;
-                    break;
-                  }
-                }
-              }
-              if (isBoundary) break;
-            }
-            if (isBoundary) boundary.push({x, y, idx});
-          }
-        }
-      }
-
-      // Iterative Diffusion Loop
-      let iterations = 0;
-      const maxIterations = 400; 
-      
-      while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
-        const nextBoundary = new Set<number>();
-        const filledThisIteration = [];
-
-        for (const p of boundary) {
-          let r = 0, g = 0, b = 0, count = 0;
-          // 9x9 neighbor sampling for balanced performance and context
-          const radius = 4;
-          for (let dy = -radius; dy <= radius; dy++) {
-            for (let dx = -radius; dx <= radius; dx++) {
-              const nx = p.x + dx;
-              const ny = p.y + dy;
-              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                const nidx = ny * width + nx;
-                if (hole[nidx] === 0) {
-                  const off = nidx * 4;
-                  const weight = 1 / (dx * dx + dy * dy + 0.5);
-                  r += pixels[off] * weight;
-                  g += pixels[off+1] * weight;
-                  b += pixels[off+2] * weight;
-                  count += weight;
+                  const nidx = ny * width + nx;
+                  if (hole[nidx] === 1) nextBoundary.add(nidx);
                 }
               }
             }
           }
 
-          if (count > 0) {
-            const off = p.idx * 4;
-            pixels[off] = r / count;
-            pixels[off+1] = g / count;
-            pixels[off+2] = b / count;
-            filledThisIteration.push(p.idx);
-          }
-        }
-
-        // Update hole map and find next boundary
-        for (const idx of filledThisIteration) {
-          hole[idx] = 0;
-          holeCount--;
-          
-          const x = idx % width;
-          const y = Math.floor(idx / width);
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = x + dx;
-              const ny = y + dy;
-              if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                const nidx = ny * width + nx;
-                if (hole[nidx] === 1) {
-                  nextBoundary.add(nidx);
-                }
-              }
-            }
-          }
-        }
-
-        boundary = Array.from(nextBoundary).map(idx => ({
-          x: idx % width,
-          y: Math.floor(idx / width),
-          idx
-        }));
-        
-        iterations++;
-      }
-      
-      // 4. Post-processing: Smooth and Composite
-      context.putImageData(originalData, 0, 0);
-      
-      const blurCanvas = document.createElement('canvas');
-      blurCanvas.width = width;
-      blurCanvas.height = height;
-      const blurCtx = blurCanvas.getContext('2d');
-      if (blurCtx) {
-        blurCtx.filter = 'blur(2px)'; // User requested 2px blur
-        blurCtx.drawImage(canvas, 0, 0);
-        const blurredData = blurCtx.getImageData(0, 0, width, height);
-        
-        for (let i = 0; i < maskPixels.length; i += 4) {
-          const alpha = maskPixels[i + 3];
-          if (alpha > 20) {
-            // Smooth blending based on alpha
-            const blend = Math.min(1, alpha / 150); // Boost coverage in center
-            pixels[i] = pixels[i] * (1 - blend) + blurredData.data[i] * blend;
-            pixels[i+1] = pixels[i+1] * (1 - blend) + blurredData.data[i+1] * blend;
-            pixels[i+2] = pixels[i+2] * (1 - blend) + blurredData.data[i+2] * blend;
-          }
+          boundary = Array.from(nextBoundary).map(idx => ({
+            x: idx % width,
+            y: Math.floor(idx / width),
+            idx
+          }));
+          iterations++;
         }
         context.putImageData(originalData, 0, 0);
       }
@@ -876,9 +901,20 @@ export default function VideoEditor({
             <div className="p-3 sm:p-4 border-b border-gray-100 flex justify-between items-center bg-white">
               <h3 className="font-bold text-base sm:text-lg flex items-center gap-2"><Scissors size={18} className="sm:w-5 sm:h-5"/> 图片编辑</h3>
               <div className="flex gap-1.5 sm:gap-2">
-                <button onClick={() => setIsSmudging(!isSmudging)} className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-1.5 sm:gap-2 transition ${isSmudging ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                  <Paintbrush size={14} className="sm:w-4 sm:h-4"/> 涂抹填充
-                </button>
+                <div className="flex bg-gray-100 p-1 rounded-xl">
+                  <button 
+                    onClick={() => { setIsSmudging(true); setSmudgeMode('inpaint'); }} 
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${isSmudging && smudgeMode === 'inpaint' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    智能填充
+                  </button>
+                  <button 
+                    onClick={() => { setIsSmudging(true); setSmudgeMode('stamp'); }} 
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${isSmudging && smudgeMode === 'stamp' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                  >
+                    克隆图章
+                  </button>
+                </div>
                 <button onClick={() => setEditingImage(null)} className="p-1.5 sm:p-2 text-gray-400 hover:text-gray-600"><X size={20}/></button>
               </div>
             </div>
@@ -904,14 +940,31 @@ export default function VideoEditor({
                     onTouchStart={startDrawing}
                     onTouchMove={draw}
                     onTouchEnd={stopDrawing}
-                    className="absolute cursor-crosshair touch-none"
+                    className={`absolute cursor-crosshair touch-none ${isSelectingSource ? 'cursor-copy' : ''}`}
                     style={{
-                      // These will be updated by useEffect, but we ensure it's centered
                       top: '50%',
                       left: '50%',
                       transform: 'translate(-50%, -50%)'
                     }}
                   />
+                  {isSelectingSource && (
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg animate-bounce z-20">
+                      请点击图片选择采样点
+                    </div>
+                  )}
+                  {stampSource && canvasRef.current && smudgeMode === 'stamp' && (
+                    <div 
+                      className="absolute border-2 border-blue-600 rounded-full w-6 h-6 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-20 shadow-lg"
+                      style={{
+                        left: `calc(50% + ${(stampSource.x - canvasRef.current.width/2) / canvasRef.current.width * parseFloat(canvasRef.current.style.width)}px)`,
+                        top: `calc(50% + ${(stampSource.y - canvasRef.current.height/2) / canvasRef.current.height * parseFloat(canvasRef.current.style.height)}px)`
+                      }}
+                    >
+                      <div className="absolute inset-0 border border-white rounded-full flex items-center justify-center">
+                        <div className="w-1 h-1 bg-blue-600 rounded-full"></div>
+                      </div>
+                    </div>
+                  )}
                   {isProcessing && (
                     <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
                       <div className="w-10 h-10 sm:w-12 sm:h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3 sm:mb-4"></div>
@@ -930,14 +983,32 @@ export default function VideoEditor({
             <div className="p-3 sm:p-4 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center bg-white gap-3 sm:gap-4">
               {isSmudging ? (
                 <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-center sm:justify-start w-full sm:w-auto">
+                  {smudgeMode === 'stamp' && (
+                    <button 
+                      onClick={() => setIsSelectingSource(true)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition ${isSelectingSource ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
+                    >
+                      <Target size={14}/> {stampSource ? '重新采样' : '选择采样点'}
+                    </button>
+                  )}
                   <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
                     <span className="text-[10px] sm:text-sm text-gray-500 font-medium">画笔:</span>
                     <input 
                       type="range" 
-                      min="5" max="100" 
+                      min="5" max="150" 
                       value={brushSize} 
                       onChange={(e) => setBrushSize(parseInt(e.target.value))}
-                      className="w-20 sm:w-32 accent-blue-600 h-1.5 sm:h-2"
+                      className="w-16 sm:w-24 accent-blue-600 h-1.5 sm:h-2"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                    <span className="text-[10px] sm:text-sm text-gray-500 font-medium">羽化:</span>
+                    <input 
+                      type="range" 
+                      min="0" max="100" 
+                      value={brushFeather} 
+                      onChange={(e) => setBrushFeather(parseInt(e.target.value))}
+                      className="w-16 sm:w-24 accent-blue-600 h-1.5 sm:h-2"
                     />
                   </div>
                   <div className="flex gap-2">
@@ -949,10 +1020,15 @@ export default function VideoEditor({
                       撤销
                     </button>
                     <button 
-                      onClick={clearMask}
+                      onClick={() => {
+                        if (ctx && canvasRef.current) {
+                          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                          setUndoHistory([]);
+                        }
+                      }}
                       className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-xs sm:text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition border border-gray-200"
                     >
-                      清空
+                      重置
                     </button>
                   </div>
                 </div>

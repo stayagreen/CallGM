@@ -250,7 +250,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             break;
     }
     // Add setpts and ensure exact frame count to avoid pauses
-    filterComplex += `;[v0]${panZoom},setpts=PTS-STARTPTS[v1]`;
+    filterComplex += `;[v0]${panZoom},setpts=PTS-STARTPTS,trim=duration=${duration},fps=30[v1]`;
 
     // 3. Text Overlay
     let lastLabel = '[v1]';
@@ -295,8 +295,8 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             filterComplex = filterComplex.replace(`[v2]`, `[v_pre_type]`);
             filterComplex += `;color=c=black@0:s=${w}x${h}[txt_canvas];`;
             filterComplex += `[txt_canvas]drawtext=${textParams}[txt_full];`;
-            filterComplex += `[txt_full]crop=w='min(tw, tw*t/${revealDuration})':h=th:x=0:y=0[txt_reveal];`;
-            filterComplex += `[v_pre_type][txt_reveal]overlay=x=${textX}:y=${textY}:format=auto[v2]`;
+            filterComplex += `[txt_full]crop=w='iw*min(1, t/${revealDuration})':h=ih:x=0:y=0[txt_reveal];`;
+            filterComplex += `[v_pre_type][txt_reveal]overlay=x=0:y=0:format=auto[v2]`;
         }
 
         // Special handling for Blur Fade In (requires post-processing the text layer)
