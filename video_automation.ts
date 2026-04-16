@@ -197,24 +197,27 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
     const h = Math.floor(targetHeight / 2) * 2;
     
     // Build filter_complex
-    // 1. Scale and Pad to target size
-    let filterComplex = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv444p[v0]`;
+    // 1. Scale and Pad to a LARGER size for better zoom quality (2x target)
+    const scaleW = w * 2;
+    const scaleH = h * 2;
+    let filterComplex = `[0:v]scale=${scaleW}:${scaleH}:force_original_aspect_ratio=decrease,pad=${scaleW}:${scaleH}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv444p[v0]`;
 
     // 2. Add Animation (Zoompan)
     let panZoom = '';
     switch (sb.animation) {
-        case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_lr': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(ih*0.1)':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_rl': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(ih*0.1)':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_tb': panZoom = `zoompan=z=1.2:x='trunc(iw*0.1)':y='trunc(min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_bt': panZoom = `zoompan=z=1.2:x='trunc(iw*0.1)':y='trunc(min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='trunc(min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom))':y='trunc(min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom))':d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'pan_lr': panZoom = `zoompan=z=1.2:x='min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='ih*0.1':d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'pan_rl': panZoom = `zoompan=z=1.2:x='min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='ih*0.1':d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'pan_tb': panZoom = `zoompan=z=1.2:x='iw*0.1':y='min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'pan_bt': panZoom = `zoompan=z=1.2:x='iw*0.1':y='min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
         default: panZoom = `zoompan=z=1:d=${frames}:s=${w}x${h}:fps=30`; break;
     }
-    filterComplex += `;[v0]${panZoom},scale=${w}:${h}[v1]`;
+    // Add setpts and ensure exact frame count to avoid pauses
+    filterComplex += `;[v0]${panZoom},setpts=PTS-STARTPTS[v1]`;
 
     // 3. Text Overlay
     let lastLabel = '[v1]';
@@ -227,10 +230,24 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             .replace(/'/g, "'\\\\\\''")
             .replace(/%/g, "\\\\%");
         
-        let textAlpha = '1';
-        if (sb.textEffect === 'fade') textAlpha = `if(lt(t,1),t,1)`;
+        // Font path for Chinese support (Windows & Linux)
+        const fontPath = process.platform === 'win32' 
+            ? 'C\\:/Windows/Fonts/msyh.ttc' 
+            : '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc';
+
+        let textParams = `text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:fontfile='${fontPath}'`;
         
-        filterComplex += `;${lastLabel}drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:alpha='${textAlpha}'[v2]`;
+        // Implement effects
+        if (sb.textEffect === 'fade') {
+            textParams += `:alpha='min(t/1,1)'`; // 1s fade in
+        } else if (sb.textEffect === 'rotate') {
+            textParams += `:rotation='t*PI/2'`; // Rotate 90deg/s
+        } else if (sb.textEffect === 'typewriter') {
+            // Typewriter reveal: alpha 0 until time reaches index
+            textParams += `:alpha='if(lt(t,0.5),0,1)'`; // Simple delay for now
+        }
+        
+        filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
         lastLabel = '[v2]';
     }
 
@@ -303,7 +320,8 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
             const outStream = `[xf${i}]`;
             
             const safeOffset = Math.max(0.1, offset - duration);
-            filterComplex += `${currentStream}${nextStream}xfade=transition=${transition}:duration=${duration}:offset=${safeOffset}${outStream};`;
+            // Add fifo to prevent buffer issues and pauses
+            filterComplex += `${currentStream}fifo[f${i}a];${nextStream}fifo[f${i}b];[f${i}a][f${i}b]xfade=transition=${transition}:duration=${duration}:offset=${safeOffset}${outStream};`;
             currentStream = outStream;
             const sbDuration = storyboards[i].duration || 3;
             offset += sbDuration - duration;
