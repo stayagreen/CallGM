@@ -1576,6 +1576,18 @@ export default function App() {
           }}
           onSave={async (newImage) => {
             const targetFilename = editingGalleryImage || Array.from(manualProcessingImages.current).pop();
+            
+            // Close modal immediately to avoid "stuck" feeling
+            setEditingGalleryImage(null);
+
+            if (targetFilename) {
+              // Ensure it's in processing state if it wasn't already by onProcessStart
+              if (!manualProcessingImages.current.has(targetFilename)) {
+                manualProcessingImages.current.add(targetFilename);
+                setProcessingGalleryImages(prev => new Set(prev).add(targetFilename));
+              }
+            }
+
             try {
               const uploadRes = await fetch('/api/gallery/update', {
                 method: 'POST',
