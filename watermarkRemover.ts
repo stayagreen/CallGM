@@ -2,10 +2,6 @@ import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
 
-import sharp from 'sharp';
-import fs from 'fs';
-import path from 'path';
-
 const TEMPLATE_PATH = path.join(process.cwd(), 'watermark_template.png');
 
 /**
@@ -14,6 +10,7 @@ const TEMPLATE_PATH = path.join(process.cwd(), 'watermark_template.png');
  */
 export async function autoInpaint(filePath: string): Promise<boolean> {
   const fileName = path.basename(filePath);
+  const extension = path.extname(filePath).toLowerCase();
   console.log(`🔍 [去水印Debug] 开始处理文件: ${fileName}`);
   
   try {
