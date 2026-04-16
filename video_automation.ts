@@ -194,6 +194,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
     }
 
     const duration = sb.duration || 3;
+    console.log(`[FFmpeg] Generating clip with duration: ${duration}, sb.duration: ${sb.duration}`);
     const fps = 30;
     const frames = Math.round(duration * fps);
 
@@ -275,10 +276,8 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             textParams += `:alpha='min(t/1,1)'`; // 1s fade in
             filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
         } else if (sb.textEffect === 'blur') {
-            // 毛玻璃淡入
-            const blur = `'(1-min(t/0.8,1))*20'`;
-            // 修复：确保 split 的输出被正确连接，且最终输出为 [v2]
-            filterComplex += `;${lastLabel}split[v_pre_blur][v_blur_layer];[v_blur_layer]boxblur=${blur},fade=t=out:st=0:d=0.8:alpha=1[v_blurred];[v_pre_blur][v_blurred]overlay=format=auto[v_overlayed]`;
+            // 毛玻璃淡入: 使用固定模糊半径并淡出
+            filterComplex += `;${lastLabel}split[v_pre_blur][v_blur_layer];[v_blur_layer]boxblur=20,fade=t=out:st=0:d=0.8:alpha=1[v_blurred];[v_pre_blur][v_blurred]overlay=format=auto[v_overlayed]`;
             // 重新应用文字绘制到 v_overlayed 的输出，并最终命名为 [v2]
             filterComplex += `;[v_overlayed]drawtext=${textParams}:alpha='min(t/0.8,1)'[v2]`;
         } else if (sb.textEffect === 'typewriter') {
@@ -346,6 +345,8 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
 
     let totalDuration = 0;
     let hasTransitions = storyboards.some(sb => sb.transition === 'fade');
+    
+    console.log(`[FFmpeg] Concatenating clips. Storyboards: ${JSON.stringify(storyboards.map(sb => sb.duration))}`);
     
     // Fallback if xfade is not supported by the current ffmpeg version
     if (hasTransitions && !xfadeSupported) {
