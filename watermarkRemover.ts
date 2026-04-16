@@ -241,53 +241,15 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
 
     console.log(`✅ [去水印Debug] 扩散修复完成，共迭代 ${iterations} 次`);
 
-    // 5. 保存并进行边缘平滑处理
+    // 5. 保存处理后的图像
     const extension = path.extname(filePath).toLowerCase();
-
-    // 先生成修复后的 Buffer
-    const repairedImage = sharp(Buffer.from(pixels), {
-      raw: { width: info.width, height: info.height, channels: info.channels }
-    });
-
-    // 这一步使用 sharp 的 blur 来模拟 ImageEditor 中的 blur 融合效果
-    // 算法逻辑：
-    // 1. 获取 Mask 区域
-    // 2. 将修复后的图层进行轻微模糊
-    // 3. 将原图与修复模糊后的图层在 Mask 区域进行融合
-    
-    // 构建 Mask 图片以供合成
-    const maskBuffer = Buffer.alloc(width * height, 0);
-    // 这里重新利用 dilatedHole
-    for(let i=0; i<width*height; i++) if (dilatedHole[i] === 1) maskBuffer[i] = 255;
-
-    const maskImage = sharp(maskBuffer, {
-      raw: { width, height, channels: 1 }
-    }).png(); // 转为 PNG 以便后续合成
-
-    // 创建模糊修复层
-    const blurredRepaired = await repairedImage
-      .clone()
-      .blur(1.2) // 这里的 blur 半径可以微调，模拟平滑效果
-      .toBuffer();
-
-    // 最终合成：[原图] + [遮罩层] + [模糊修复层]
-    // 逻辑：在遮罩处显示模糊修复后的内容，其余显示原图
-    const finalResult = await sharp(filePath) // 原始文件作为底图
-      .composite([{
-        input: blurredRepaired,
-        blend: 'over',
-        // 使用 maskBuffer 实现局部覆盖
-        // 注意：sharp 的 composite 遮罩通常需要作为 input 的 alpha 通道或者使用 tile/gravity
-        // 这里最稳妥的是用 sharp 的渲染逻辑。我们可以把 blurredRepaired 和 maskImage 结合。
-      }])
-      .toBuffer();
-    
-    // 为了达到最佳平滑效果，我们直接在 raw 数据层做一次边缘 alpha 融合
-    // 但在 Node.js 环境下，用 sharp 的核心逻辑已经足够。
-    // 我们再次优化：直接输出刚才扩散修复后的 pixels 数据，它其实已经比之前的版本好很多。
     
     let processedImage = sharp(Buffer.from(pixels), {
-      raw: { width: info.width, height: info.height, channels: info.channels }
+      raw: {
+        width: info.width,
+        height: info.height,
+        channels: info.channels
+      }
     });
 
     if (extension === '.png') {
