@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon } from 'lucide-react';
 import ReactCrop, { type Crop } from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 
@@ -848,6 +848,15 @@ export default function VideoEditor({
                             <>
                               <img src={sb.image} className="w-full h-full object-contain" />
                               <div className="absolute inset-0 bg-black/30 sm:bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                                <button onClick={() => updateStoryboard(sb.id, { image: '' })} className="p-2.5 sm:p-2 bg-white rounded-full text-red-600 hover:bg-red-50 transition shadow-sm" title="清空图片"><X size={20}/></button>
+                                <button onClick={() => {
+                                  updateTask({
+                                    storyboards: task.storyboards.map(s => ({
+                                      ...s,
+                                      image: sb.image
+                                    }))
+                                  });
+                                }} className="p-2.5 sm:p-2 bg-white rounded-full text-blue-600 hover:bg-blue-50 transition shadow-sm" title="应用到所有"><ListIcon size={20}/></button>
                                 <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" title="编辑图片"><Scissors size={20}/></button>
                                 <button 
                                   onClick={async (e) => {
