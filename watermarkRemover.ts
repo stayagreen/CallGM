@@ -101,7 +101,8 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     cvInst.cvtColor(roi, gray, cvInst.COLOR_RGBA2GRAY);
     
     let binary = new cvInst.Mat();
-    cvInst.threshold(gray, 240, 255, cvInst.THRESH_BINARY);
+    // 4.3.0 标准 API: src, dst, thresh, maxval, type
+    cvInst.threshold(gray, binary, 240, 255, cvInst.THRESH_BINARY);
 
     // 5. 轮廓提取
     let contours = new cvInst.MatVector();
@@ -111,15 +112,18 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     let mask = cvInst.Mat.zeros(h, w, cvInst.CV_8UC1);
     let watermarkFound = false;
 
+    // 统一配置 Scalar 和 Point 避免某些版本报错
+    const whiteScalar = new cvInst.Scalar(255, 255, 255, 255);
+    const offsetPoint = new cvInst.Point(roiX, roiY);
+
     for (let i = 0; i < contours.size(); ++i) {
       const cnt = contours.get(i);
       const area = cvInst.contourArea(cnt);
       
-      // 这里的逻辑必须非常精确：面积筛选
       if (area > 20 && area < 3000) {
         console.log(`✨ [去水印-WASM] 锁定目标轮廓 [${i}], 面积: ${Math.round(area)}`);
-        // 注意：4.3.0 的 Scalar 需要指定全部 4 个值
-        cvInst.drawContours(mask, contours, i, new cvInst.Scalar(255, 255, 255, 255), -1, cvInst.LINE_8, hierarchy, 0, new cvInst.Point(roiX, roiY));
+        // 标准 drawContours 参数: 目标Mat, 轮廓向量, 轮廓索引, 颜色, 粗细, 线型, 层次, 最大层级, 偏移量
+        cvInst.drawContours(mask, contours, i, whiteScalar, -1, cvInst.LINE_8, hierarchy, 0, offsetPoint);
         watermarkFound = true;
       }
     }
