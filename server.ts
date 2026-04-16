@@ -348,9 +348,6 @@ async function startServer() {
   });
 
   // API route for config
-  const dataDir = path.join(__dirname, 'data');
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-  
   const configPath = path.join(dataDir, 'config.json');
   const oldConfigPath = path.join(__dirname, 'config.json');
   
