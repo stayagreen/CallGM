@@ -6,12 +6,17 @@ import path from 'path';
  * 自动检测右下角水印并进行去水印处理 (非AI传统算法)
  */
 export async function autoInpaint(filePath: string): Promise<boolean> {
+  console.log(`🔍 [去水印Debug] 开始处理文件: ${path.basename(filePath)}`);
   try {
     const image = sharp(filePath);
     const metadata = await image.metadata();
-    if (!metadata.width || !metadata.height) return false;
+    if (!metadata.width || !metadata.height) {
+      console.log(`❌ [去水印Debug] 无法获取图片元数据`);
+      return false;
+    }
 
     const { width, height } = metadata;
+    console.log(`📏 [去水印Debug] 图片尺寸: ${width}x${height}`);
 
     // 1. 获取像素数据
     const { data, info } = await image
@@ -19,37 +24,49 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       .toBuffer({ resolveWithObject: true });
 
     // 2. 识别遮罩 (Mask)
-    // 目标区域：右下角 (宽度 25%, 高度 12%)
-    const roiW = Math.floor(width * 0.25);
-    const roiH = Math.floor(height * 0.12);
+    // 目标区域：右下角 (宽度 30%, 高度 15%) - 稍作扩大以防万一
+    const roiW = Math.floor(width * 0.30);
+    const roiH = Math.floor(height * 0.15);
     const startX = width - roiW;
     const startY = height - roiH;
+    console.log(`🎯 [去水印Debug] 检测区域(ROI): x=${startX}-${width}, y=${startY}-${height}`);
 
     const hole = new Uint8Array(width * height);
-    let holeCount = 0;
+    let detectedPixels = 0;
 
-    // 水印检测算法：寻找高亮/高对比度像素 (通常水印是白色或浅灰色)
+    // 水印检测算法：寻找高亮/高对比度像素
     for (let y = startY; y < height; y++) {
       for (let x = startX; x < width; x++) {
         const idx = y * width + x;
         const off = idx * info.channels;
         
-        // 简单的亮度检测 (R+G+B)/3
         const r = data[off];
         const g = data[off+1];
         const b = data[off+2];
         const brightness = (r + g + b) / 3;
 
-        // 阈值检测：亮度较高且与周围有一定对比度，或者纯高亮
-        if (brightness > 210) { 
+        // 阈值检测
+        if (brightness > 200) { // 稍微降低阈值以增加检测敏感度
           hole[idx] = 1;
+          detectedPixels++;
         }
       }
     }
 
+    console.log(`✨ [去水印Debug] 初步检测到疑似水印像素: ${detectedPixels} 个`);
+
+    if (detectedPixels === 0) {
+      console.log(`⚠️ [去水印Debug] 未在指定区域检测到高亮像素，跳过处理`);
+      return false;
+    }
+
+    // 3. 统计检测到的连通域分布情况 (可选，增加智能度)
+    // ...
+
     // 膨胀遮罩 (Dilation): 保证覆盖完整
-    const dilation = 4;
+    const dilation = 5;
     const dilatedHole = new Uint8Array(width * height);
+    let finalHoleCount = 0;
     for (let y = startY - dilation; y < height; y++) {
       if (y < 0) continue;
       for (let x = startX - dilation; x < width; x++) {
@@ -61,32 +78,31 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
           const maxX = Math.min(width - 1, x + dilation);
           for (let dy = minY; dy <= maxY; dy++) {
             for (let dx = minX; dx <= maxX; dx++) {
-              dilatedHole[dy * width + dx] = 1;
+              if (dilatedHole[dy * width + dx] === 0) {
+                dilatedHole[dy * width + dx] = 1;
+                finalHoleCount++;
+              }
             }
           }
         }
       }
     }
     hole.set(dilatedHole);
+    console.log(`📢 [去水印Debug] 遮罩扩充(Dilation)完成，最终待修复面积: ${finalHoleCount} 像素`);
 
-    for (let i = 0; i < width * height; i++) if (hole[i] === 1) holeCount++;
-
-    if (holeCount === 0) return false;
-
-    // 3. 扩散修复算法 (Diffusion Inpainting)
+    // 4. 扩散修复算法 (Diffusion Inpainting)
     const pixels = new Uint8ClampedArray(data);
     let iterations = 0;
-    const maxIterations = 300;
+    const maxIterations = 500;
+    let holeCount = finalHoleCount;
 
     // 初始边界
     let boundary: number[] = [];
-    const minX_bbox = startX - dilation;
-    const minY_bbox = startY - dilation;
+    const minX_bbox = Math.max(0, startX - dilation * 2);
+    const minY_bbox = Math.max(0, startY - dilation * 2);
 
     for (let y = minY_bbox; y < height; y++) {
-      if (y < 0) continue;
       for (let x = minX_bbox; x < width; x++) {
-        if (x < 0) continue;
         const idx = y * width + x;
         if (hole[idx] === 1) {
           let isBoundary = false;
@@ -107,6 +123,8 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       }
     }
 
+    console.log(`🖌️ [去水印Debug] 修复算法启动，初始边界点: ${boundary.length}`);
+
     while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
       const nextBoundary = new Set<number>();
       const filledThisIteration = [];
@@ -120,7 +138,12 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
           (x > 0) ? idx - 1 : -1,
           (x < width - 1) ? idx + 1 : -1,
           (y > 0) ? idx - width : -1,
-          (y < height - 1) ? idx + width : -1
+          (y < height - 1) ? idx + width : -1,
+          // 增加 8 邻域以提高平滑度
+          (x > 0 && y > 0) ? idx - width - 1 : -1,
+          (x < width - 1 && y > 0) ? idx - width + 1 : -1,
+          (x > 0 && y < height - 1) ? idx + width - 1 : -1,
+          (x < width - 1 && y < height - 1) ? idx + width + 1 : -1
         ];
 
         for (const nidx of neighbors) {
@@ -163,7 +186,9 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       iterations++;
     }
 
-    // 4. 保存处理后的图像
+    console.log(`✅ [去水印Debug] 修复完成，共迭代 ${iterations} 次，剩余未修复像素: ${holeCount}`);
+
+    // 5. 保存处理后的图像
     const buffer = Buffer.from(pixels);
     const extension = path.extname(filePath).toLowerCase();
     
@@ -184,11 +209,11 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     }
 
     await processedImage.toFile(filePath + '.tmp');
-
     fs.renameSync(filePath + '.tmp', filePath);
+    console.log(`💾 [去水印Debug] 文件已覆盖保存: ${filePath}`);
     return true;
   } catch (error) {
-    console.error('Auto inpaint failed:', error);
+    console.error('❌ [去水印Debug] 严重错误:', error);
     return false;
   }
 }
