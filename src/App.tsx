@@ -1474,14 +1474,21 @@ export default function App() {
             </div>
             <button 
               onClick={() => {
-                // Import logic: This would need to be passed down or handled here
-                // For now, just close the modal
+                const newTask: VideoTask = {
+                  id: Date.now().toString(),
+                  storyboards: viewingVideoJobDetails.data.storyboards || [],
+                  bgm: viewingVideoJobDetails.data.bgm || '',
+                  introAnimation: viewingVideoJobDetails.data.introAnimation || 'none',
+                  outroAnimation: viewingVideoJobDetails.data.outroAnimation || 'none'
+                };
+                setVideoTasks([...videoTasks, newTask]);
+                setActiveVideoTaskId(newTask.id);
+                setActiveTab('video_tasks');
                 setViewingVideoJobDetails(null);
-                alert('导入功能待实现');
               }}
               className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition"
             >
-              导入任务 (待实现)
+              导入任务
             </button>
           </div>
         </div>
