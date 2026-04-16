@@ -407,195 +407,197 @@ export default function VideoEditor({
     if (isSmudging && canvasRef.current && editingImage && imageRef.current) {
       setIsProcessing(true);
       
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      if (!context) return;
-
-      canvas.width = imageRef.current.naturalWidth;
-      canvas.height = imageRef.current.naturalHeight;
-      const width = canvas.width;
-      const height = canvas.height;
-
-      // 1. Draw original image
-      context.drawImage(imageRef.current, 0, 0);
-
-      if (smudgeMode === 'stamp') {
-        // For stamp mode, we just draw the canvas content (which already contains cloned pixels)
-        context.drawImage(canvasRef.current, 0, 0);
-      } else {
-        // For inpaint mode, we use an optimized diffusion algorithm
-        const maskCtx = canvasRef.current.getContext('2d');
-        if (!maskCtx) return;
-        
-        const tempMaskCanvas = document.createElement('canvas');
-        tempMaskCanvas.width = width;
-        tempMaskCanvas.height = height;
-        const tempMaskCtx = tempMaskCanvas.getContext('2d');
-        if (!tempMaskCtx) return;
-        tempMaskCtx.drawImage(canvasRef.current, 0, 0, width, height);
-        const maskData = tempMaskCtx.getImageData(0, 0, width, height);
-        const maskPixels = maskData.data;
-
-        // 1. Find bounding box of mask to optimize processing
-        let minX = width, minY = height, maxX = 0, maxY = 0;
-        let hasMask = false;
-        for (let i = 0; i < width * height; i++) {
-          if (maskPixels[i * 4 + 3] > 20) {
-            const x = i % width;
-            const y = Math.floor(i / width);
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
-            hasMask = true;
-          }
-        }
-
-        if (!hasMask) {
+      // Use setTimeout to allow the UI to render the processing state
+      setTimeout(async () => {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) {
           setIsProcessing(false);
-          setEditingImage(null);
           return;
         }
 
-        // Add padding to bounding box for context
-        const padding = 30;
-        minX = Math.max(0, minX - padding);
-        minY = Math.max(0, minY - padding);
-        maxX = Math.min(width - 1, maxX + padding);
-        maxY = Math.min(height - 1, maxY + padding);
-        
-        const originalData = context.getImageData(0, 0, width, height);
-        const pixels = originalData.data;
-        
-        const hole = new Uint8Array(width * height);
-        const initialHole = new Uint8Array(width * height);
-        let holeCount = 0;
+        canvas.width = imageRef.current!.naturalWidth;
+        canvas.height = imageRef.current!.naturalHeight;
+        const width = canvas.width;
+        const height = canvas.height;
 
-        // Only process within bounding box
-        for (let y = minY; y <= maxY; y++) {
-          for (let x = minX; x <= maxX; x++) {
-            const idx = y * width + x;
-            if (maskPixels[idx * 4 + 3] > 20) {
-              initialHole[idx] = 1;
+        // 1. Draw original image
+        context.drawImage(imageRef.current!, 0, 0);
+
+        if (smudgeMode === 'stamp') {
+          // For stamp mode, we just draw the canvas content (which already contains cloned pixels)
+          context.drawImage(canvasRef.current!, 0, 0);
+        } else {
+          // 1. Dual-Canvas Masking: Get mask data
+          const maskCanvas = canvasRef.current!;
+          const maskCtx = maskCanvas.getContext('2d');
+          if (!maskCtx) {
+            setIsProcessing(false);
+            return;
+          }
+          
+          const maskData = maskCtx.getImageData(0, 0, width, height);
+          const maskPixels = maskData.data;
+          
+          // 2. Iterative Boundary Diffusion
+          const originalData = context.getImageData(0, 0, width, height);
+          const pixels = originalData.data;
+          
+          const hole = new Uint8Array(width * height);
+          let holeCount = 0;
+
+          // Hole Positioning (Threshold 50)
+          for (let i = 0; i < width * height; i++) {
+            if (maskPixels[i * 4 + 3] > 50) {
+              hole[i] = 1;
+              holeCount++;
             }
           }
-        }
 
-        const dilation = 6; 
-        for (let y = minY; y <= maxY; y++) {
-          for (let x = minX; x <= maxX; x++) {
-            const idx = y * width + x;
-            if (initialHole[idx] === 1) {
-              for (let dy = -dilation; dy <= dilation; dy++) {
-                for (let dx = -dilation; dx <= dilation; dx++) {
-                  const nx = x + dx;
-                  const ny = y + dy;
-                  if (nx >= minX && nx <= maxX && ny >= minY && ny <= maxY) {
+          if (holeCount === 0) {
+            setIsProcessing(false);
+            setEditingImage(null);
+            return;
+          }
+
+          // Diffusion Loop (Max 200 iterations)
+          let iterations = 0;
+          const maxIterations = 200;
+          
+          // Find initial boundary
+          let boundary = [];
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const idx = y * width + x;
+              if (hole[idx] === 1) {
+                let isBoundary = false;
+                for (let dy = -1; dy <= 1; dy++) {
+                  for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                      if (hole[ny * width + nx] === 0) {
+                        isBoundary = true;
+                        break;
+                      }
+                    }
+                  }
+                  if (isBoundary) break;
+                }
+                if (isBoundary) boundary.push({x, y, idx});
+              }
+            }
+          }
+
+          while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
+            const nextBoundary = new Set<number>();
+            const filledThisIteration = [];
+
+            for (const p of boundary) {
+              let r = 0, g = 0, b = 0, count = 0;
+              // 8-neighbor sampling (3x3 window)
+              for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                  if (dx === 0 && dy === 0) continue;
+                  const nx = p.x + dx;
+                  const ny = p.y + dy;
+                  if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                     const nidx = ny * width + nx;
                     if (hole[nidx] === 0) {
-                      hole[nidx] = 1;
-                      holeCount++;
+                      const off = nidx * 4;
+                      r += pixels[off];
+                      g += pixels[off+1];
+                      b += pixels[off+2];
+                      count++;
                     }
                   }
                 }
               }
-            }
-          }
-        }
 
-        let boundary = [];
-        for (let y = minY; y <= maxY; y++) {
-          for (let x = minX; x <= maxX; x++) {
-            const idx = y * width + x;
-            if (hole[idx] === 1) {
-              let isBoundary = false;
+              if (count > 0) {
+                const off = p.idx * 4;
+                pixels[off] = r / count;
+                pixels[off+1] = g / count;
+                pixels[off+2] = b / count;
+                filledThisIteration.push(p.idx);
+              }
+            }
+
+            for (const idx of filledThisIteration) {
+              hole[idx] = 0;
+              holeCount--;
+              const x = idx % width;
+              const y = Math.floor(idx / width);
               for (let dy = -1; dy <= 1; dy++) {
                 for (let dx = -1; dx <= 1; dx++) {
                   const nx = x + dx;
                   const ny = y + dy;
                   if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                    if (hole[ny * width + nx] === 0) {
-                      isBoundary = true;
-                      break;
-                    }
-                  }
-                }
-                if (isBoundary) break;
-              }
-              if (isBoundary) boundary.push({x, y, idx});
-            }
-          }
-        }
-
-        let iterations = 0;
-        const maxIterations = 800; 
-        
-        while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
-          const nextBoundary = new Set<number>();
-          const filledThisIteration = [];
-
-          for (const p of boundary) {
-            let r = 0, g = 0, b = 0, count = 0;
-            const radius = 8;
-            // Sampling logic
-            for (let dy = -radius; dy <= radius; dy++) {
-              for (let dx = -radius; dx <= radius; dx++) {
-                const nx = p.x + dx;
-                const ny = p.y + dy;
-                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                  const nidx = ny * width + nx;
-                  if (hole[nidx] === 0) {
-                    const off = nidx * 4;
-                    const weight = 1 / (dx * dx + dy * dy + 0.1);
-                    r += pixels[off] * weight;
-                    g += pixels[off+1] * weight;
-                    b += pixels[off+2] * weight;
-                    count += weight;
+                    const nidx = ny * width + nx;
+                    if (hole[nidx] === 1) nextBoundary.add(nidx);
                   }
                 }
               }
             }
 
-            if (count > 0) {
-              const off = p.idx * 4;
-              pixels[off] = r / count;
-              pixels[off+1] = g / count;
-              pixels[off+2] = b / count;
-              filledThisIteration.push(p.idx);
-            }
+            boundary = Array.from(nextBoundary).map(idx => ({
+              x: idx % width,
+              y: Math.floor(idx / width),
+              idx
+            }));
+            iterations++;
           }
 
-          for (const idx of filledThisIteration) {
-            hole[idx] = 0;
-            holeCount--;
-            const x = idx % width;
-            const y = Math.floor(idx / width);
-            for (let dy = -1; dy <= 1; dy++) {
-              for (let dx = -1; dx <= 1; dx++) {
-                const nx = x + dx;
-                const ny = y + dy;
-                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                  const nidx = ny * width + nx;
-                  if (hole[nidx] === 1) nextBoundary.add(nidx);
-                }
-              }
-            }
+          // 3. Post-processing: Smooth and Blend
+          const workCanvas = document.createElement('canvas');
+          workCanvas.width = width;
+          workCanvas.height = height;
+          const workCtx = workCanvas.getContext('2d');
+          if (!workCtx) {
+            setIsProcessing(false);
+            return;
           }
 
-          boundary = Array.from(nextBoundary).map(idx => ({
-            x: idx % width,
-            y: Math.floor(idx / width),
-            idx
-          }));
-          iterations++;
+          // Put the filled data into work canvas
+          const filledData = new ImageData(new Uint8ClampedArray(pixels), width, height);
+          workCtx.putImageData(filledData, 0, 0);
+
+          // Apply 2px blur
+          const blurCanvas = document.createElement('canvas');
+          blurCanvas.width = width;
+          blurCanvas.height = height;
+          const blurCtx = blurCanvas.getContext('2d');
+          if (!blurCtx) {
+            setIsProcessing(false);
+            return;
+          }
+          blurCtx.filter = 'blur(2px)';
+          blurCtx.drawImage(workCanvas, 0, 0);
+
+          // Clip to mask shape using destination-in
+          const finalPatchCanvas = document.createElement('canvas');
+          finalPatchCanvas.width = width;
+          finalPatchCanvas.height = height;
+          const finalPatchCtx = finalPatchCanvas.getContext('2d');
+          if (!finalPatchCtx) {
+            setIsProcessing(false);
+            return;
+          }
+
+          finalPatchCtx.drawImage(blurCanvas, 0, 0);
+          finalPatchCtx.globalCompositeOperation = 'destination-in';
+          finalPatchCtx.drawImage(maskCanvas, 0, 0);
+
+          // Final Composite: Overlay on original
+          context.drawImage(finalPatchCanvas, 0, 0);
         }
-        context.putImageData(originalData, 0, 0);
-      }
 
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-      updateStoryboard(editingImage.id, { image: dataUrl });
-      setEditingImage(null);
-      setIsProcessing(false);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+        updateStoryboard(editingImage!.id, { image: dataUrl });
+        setEditingImage(null);
+        setIsProcessing(false);
+      }, 0);
     } else if (!isSmudging && crop && editingImage && imageRef.current) {
       const canvas = document.createElement('canvas');
       const scaleX = imageRef.current.naturalWidth / imageRef.current.width;
@@ -1036,7 +1038,7 @@ export default function VideoEditor({
                     <span className="text-[10px] sm:text-sm text-gray-500 font-medium">画笔:</span>
                     <input 
                       type="range" 
-                      min="5" max="150" 
+                      min="5" max="100" 
                       value={brushSize} 
                       onChange={(e) => setBrushSize(parseInt(e.target.value))}
                       className="w-16 sm:w-24 accent-blue-600 h-1.5 sm:h-2"
