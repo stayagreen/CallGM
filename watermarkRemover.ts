@@ -17,9 +17,15 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     
     let cvInst: any = null;
 
-    // 探测路径 1: 检查是否嵌套在 .default 中 (ESM 导入 CommonJS 的常见情况)
+    // 探测路径 0: 针对发现的 [ 'cv', 'cvTranslateError' ] 结构进行提取
     let potentialCv: any = cv;
-    if (potentialCv && potentialCv.default) {
+    // 如果根对象有 cv 属性，说明它是包装版本
+    if (potentialCv && potentialCv.cv) {
+      console.log(`🔎 [去水印-WASM] 发现包装好的 .cv 属性，提取中...`);
+      potentialCv = potentialCv.cv;
+    } 
+    // 常规解包
+    else if (potentialCv && potentialCv.default) {
       console.log(`🔎 [去水印-WASM] 发现 .default 嵌套，深入解包...`);
       potentialCv = potentialCv.default;
     }
@@ -28,6 +34,7 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     if (typeof potentialCv === 'function') {
       console.log(`⏳ [去水印-WASM] 检测到工厂函数，执行并解析...`);
       try {
+        // 调用工厂函数
         const result = potentialCv();
         if (result && typeof result.then === 'function') {
           cvInst = await result;
