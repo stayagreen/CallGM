@@ -385,8 +385,8 @@ export default function VideoEditor({
 
         for (const p of boundary) {
           let r = 0, g = 0, b = 0, count = 0;
-          // 5x5 neighbor sampling for more context
-          const radius = 2;
+          // 11x11 neighbor sampling for maximum context (watermark removal mindset)
+          const radius = 5;
           for (let dy = -radius; dy <= radius; dy++) {
             for (let dx = -radius; dx <= radius; dx++) {
               if (dx === 0 && dy === 0) continue;
@@ -396,8 +396,9 @@ export default function VideoEditor({
                 const nidx = ny * width + nx;
                 if (hole[nidx] === 0) {
                   const off = nidx * 4;
-                  // Weight closer pixels more
-                  const weight = 1 / (dx * dx + dy * dy);
+                  // Stronger weighting for non-hole pixels
+                  const distSq = dx * dx + dy * dy;
+                  const weight = 1 / (distSq * distSq); // Inverse biquad distance weight
                   r += pixels[off] * weight;
                   g += pixels[off+1] * weight;
                   b += pixels[off+2] * weight;

@@ -213,7 +213,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
     // Exact range and progress calculation to avoid pauses at start/end
     const rangeX = '(iw-iw/zoom)';
     const rangeY = '(ih-ih/zoom)';
-    const progress = '(on-1)/(d-1)';
+    const progress = `(on-1)/(${frames}-1)`; // Use literal frames instead of 'd' for compatibility
     const centerX = `(${rangeX}/2)`;
     const centerY = `(${rangeY}/2)`;
 
