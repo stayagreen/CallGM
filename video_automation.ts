@@ -12,6 +12,7 @@ let FFMPEG_PATH = 'ffmpeg'; // Default to system ffmpeg
 // Check if system ffmpeg is available and supports required features
 async function checkFfmpegSupport() {
     try {
+        console.log('[FFmpeg] 正在检测系统 FFmpeg...');
         const { stdout: filters } = await execa('ffmpeg', ['-filters']);
         const { stdout: encoders } = await execa('ffmpeg', ['-encoders']);
         
@@ -21,10 +22,14 @@ async function checkFfmpegSupport() {
         if (hasLibx264) {
             console.log(`✅ 使用系统 FFmpeg (支持 libx264${hasXfade ? ', 支持 xfade' : ''})`);
             return { supported: true, xfade: hasXfade, path: 'ffmpeg' };
+        } else {
+            console.log('❌ 系统 FFmpeg 缺少 libx264 编码器');
         }
-    } catch (e) {}
+    } catch (e: any) {
+        console.log(`❌ 系统 FFmpeg 检测失败: ${e.message}`);
+    }
     
-    console.log('⚠️ 系统 FFmpeg 不可用或不支持 libx264，回退到内置版本');
+    console.log('⚠️ 回退到内置 FFmpeg 版本');
     return { supported: false, xfade: false, path: ffmpegInstaller.path };
 }
 
@@ -252,8 +257,9 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
 
         // Special handling for Blur Fade In (requires post-processing the text layer)
         if (sb.textEffect === 'blur') {
-            // Apply a static blur and blend it out over 1.5 seconds for better compatibility with older FFmpeg
-            filterComplex += `;${lastLabel}split[vb1][vb2];[vb2]boxblur=10:1[vblurred];[vb1][vblurred]blend=all_expr='A*(min(t/1.5,1)) + B*(1-min(t/1.5,1))'[vblurout]`;
+            // Use fade + overlay for better compatibility (blend filter doesn't support 't' constant)
+            // vb2 is the blurred layer that fades out, revealing the clear vb1 layer underneath
+            filterComplex += `;${lastLabel}split[vb1][vb2];[vb2]boxblur=10:1,fade=t=out:st=0:d=1.5:alpha=1[vblurred];[vb1][vblurred]overlay=format=auto[vblurout]`;
             lastLabel = '[vblurout]';
         }
     }
