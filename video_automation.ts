@@ -277,10 +277,10 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         } else if (sb.textEffect === 'blur') {
             // 毛玻璃淡入
             const blur = `'(1-min(t/0.8,1))*20'`;
-            filterComplex += `;${lastLabel}split[v_pre_blur][v_blur_layer];[v_blur_layer]boxblur=${blur},fade=t=out:st=0:d=0.8:alpha=1[v_blurred];[v_pre_blur][v_blurred]overlay=format=auto[v2]`;
-            // 重新应用文字绘制到 v2
-            filterComplex += `;[v2]drawtext=${textParams}:alpha='min(t/0.8,1)'[v2_text]`;
-            filterComplex = filterComplex.replace(`[v2]`, `[v2_text]`);
+            // 修复：确保 split 的输出被正确连接，且最终输出为 [v2]
+            filterComplex += `;${lastLabel}split[v_pre_blur][v_blur_layer];[v_blur_layer]boxblur=${blur},fade=t=out:st=0:d=0.8:alpha=1[v_blurred];[v_pre_blur][v_blurred]overlay=format=auto[v_overlayed]`;
+            // 重新应用文字绘制到 v_overlayed 的输出，并最终命名为 [v2]
+            filterComplex += `;[v_overlayed]drawtext=${textParams}:alpha='min(t/0.8,1)'[v2]`;
         } else if (sb.textEffect === 'typewriter') {
             // 打字机
             const revealSpeed = 10; // chars per second
