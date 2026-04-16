@@ -49,6 +49,39 @@ const TEXT_EFFECTS = [
   { value: 'rotate', label: '文字转圈' }
 ];
 
+const showToast = (message: string, type: 'success' | 'error' | 'loading' = 'success') => {
+  const existingToast = document.getElementById('global-toast');
+  if (existingToast) existingToast.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'global-toast';
+  
+  let bgClass = 'bg-black/80';
+  if (type === 'success') bgClass = 'bg-green-600';
+  if (type === 'error') bgClass = 'bg-red-600';
+  if (type === 'loading') bgClass = 'bg-blue-600';
+
+  toast.className = `fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 ${bgClass} text-white px-6 py-4 rounded-xl shadow-2xl z-[99999] font-bold flex items-center gap-3 text-lg pointer-events-none transition-all duration-300`;
+  
+  if (type === 'loading') {
+    toast.innerHTML = `<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>${message}`;
+  } else {
+    toast.innerText = message;
+  }
+  
+  document.body.appendChild(toast);
+  
+  if (type !== 'loading') {
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translate(-50%, -30%)';
+      setTimeout(() => toast.remove(), 300);
+    }, 2000);
+  }
+  
+  return toast;
+};
+
 export default function VideoEditor({ 
   task,
   onChange,
@@ -184,6 +217,7 @@ export default function VideoEditor({
     updateTask({
       storyboards: task.storyboards.map(sb => ({ ...sb, [field]: value }))
     });
+    showToast('✅ 应用成功');
   };
 
   const moveStoryboard = (index: number, direction: 1 | -1) => {
@@ -856,11 +890,7 @@ export default function VideoEditor({
                                     image: sb.image
                                   }))
                                 });
-                                const toast = document.createElement('div');
-                                toast.innerText = '✅ 应用成功';
-                                toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
-                                document.body.appendChild(toast);
-                                setTimeout(() => toast.remove(), 2000);
+                                showToast('✅ 应用成功');
                               }}
                               className="p-2 bg-white rounded-full text-blue-600 hover:bg-blue-50 transition shadow-sm"
                               title="应用到所有"
@@ -881,10 +911,7 @@ export default function VideoEditor({
                                     btn.innerHTML = '<div class="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>';
                                     
                                     // Immediate feedback
-                                    const toast = document.createElement('div');
-                                    toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold animate-bounce';
-                                    toast.innerText = '正在保存到本地图库...';
-                                    document.body.appendChild(toast);
+                                    const toast = showToast('正在保存到本地图库...', 'loading');
 
                                     try {
                                       const res = await fetch('/api/gallery/save', {
@@ -893,20 +920,14 @@ export default function VideoEditor({
                                         body: JSON.stringify({ url: sb.image })
                                       });
                                       if (res.ok) {
-                                        toast.innerText = '✅ 已成功保存到本地图库';
-                                        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
-                                        setTimeout(() => toast.remove(), 2000);
+                                        showToast('✅ 已成功保存到本地图库', 'success');
                                       } else {
                                         const err = await res.json();
-                                        toast.innerText = `❌ 保存失败: ${err.error || '未知错误'}`;
-                                        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
-                                        setTimeout(() => toast.remove(), 3000);
+                                        showToast(`❌ 保存失败: ${err.error || '未知错误'}`, 'error');
                                       }
                                     } catch (e) {
                                       console.error('Save to gallery failed', e);
-                                      toast.innerText = '❌ 网络错误，保存失败';
-                                      toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-red-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
-                                      setTimeout(() => toast.remove(), 3000);
+                                      showToast('❌ 网络错误，保存失败', 'error');
                                     } finally {
                                       btn.disabled = false;
                                       btn.innerHTML = originalContent;
@@ -986,6 +1007,7 @@ export default function VideoEditor({
                                         textEffect: sb.textEffect
                                       }))
                                     });
+                                    showToast('✅ 应用成功');
                                   }} 
                                   className="text-[10px] text-blue-600 hover:underline"
                                 >
@@ -1019,11 +1041,7 @@ export default function VideoEditor({
                                       duration: sb.duration
                                     }))
                                   });
-                                  const toast = document.createElement('div');
-                                  toast.innerText = '✅ 应用成功';
-                                  toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
-                                  document.body.appendChild(toast);
-                                  setTimeout(() => toast.remove(), 2000);
+                                  showToast('✅ 应用成功');
                                 }} 
                                 className="text-[10px] text-blue-600 hover:underline ml-2"
                               >
