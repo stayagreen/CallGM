@@ -856,6 +856,11 @@ export default function VideoEditor({
                                     image: sb.image
                                   }))
                                 });
+                                const toast = document.createElement('div');
+                                toast.innerText = '✅ 应用成功';
+                                toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
+                                document.body.appendChild(toast);
+                                setTimeout(() => toast.remove(), 2000);
                               }}
                               className="p-2 bg-white rounded-full text-blue-600 hover:bg-blue-50 transition shadow-sm"
                               title="应用到所有"
@@ -1014,6 +1019,11 @@ export default function VideoEditor({
                                       duration: sb.duration
                                     }))
                                   });
+                                  const toast = document.createElement('div');
+                                  toast.innerText = '✅ 应用成功';
+                                  toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-green-600 text-white px-6 py-3 rounded-xl shadow-2xl z-[9999] font-bold';
+                                  document.body.appendChild(toast);
+                                  setTimeout(() => toast.remove(), 2000);
                                 }} 
                                 className="text-[10px] text-blue-600 hover:underline ml-2"
                               >
