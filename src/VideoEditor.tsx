@@ -844,19 +844,29 @@ export default function VideoEditor({
                         </div>
                         
                         <div className="relative aspect-video bg-gray-100 flex items-center justify-center group overflow-hidden">
+                          <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                            {sb.image && (
+                              <button onClick={() => updateStoryboard(sb.id, { image: '' })} className="p-2.5 sm:p-2 bg-white rounded-full text-red-600 hover:bg-red-50 transition shadow-sm" title="清空图片"><X size={20}/></button>
+                            )}
+                            <button 
+                              onClick={() => {
+                                updateTask({
+                                  storyboards: task.storyboards.map(s => ({
+                                    ...s,
+                                    image: sb.image
+                                  }))
+                                });
+                              }}
+                              className="p-2.5 sm:p-2 bg-white rounded-full text-blue-600 hover:bg-blue-50 transition shadow-sm"
+                              title="应用到所有"
+                            >
+                              <ListIcon size={20}/>
+                            </button>
+                          </div>
                           {sb.image ? (
                             <>
                               <img src={sb.image} className="w-full h-full object-contain" />
                               <div className="absolute inset-0 bg-black/30 sm:bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                                <button onClick={() => updateStoryboard(sb.id, { image: '' })} className="p-2.5 sm:p-2 bg-white rounded-full text-red-600 hover:bg-red-50 transition shadow-sm" title="清空图片"><X size={20}/></button>
-                                <button onClick={() => {
-                                  updateTask({
-                                    storyboards: task.storyboards.map(s => ({
-                                      ...s,
-                                      image: sb.image
-                                    }))
-                                  });
-                                }} className="p-2.5 sm:p-2 bg-white rounded-full text-blue-600 hover:bg-blue-50 transition shadow-sm" title="应用到所有"><ListIcon size={20}/></button>
                                 <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" title="编辑图片"><Scissors size={20}/></button>
                                 <button 
                                   onClick={async (e) => {
