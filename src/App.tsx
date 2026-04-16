@@ -21,7 +21,7 @@ interface Job {
   id: string;
   timestamp: number;
   tasks: Task[];
-  status: 'pending' | 'running' | 'completed';
+  status: 'pending' | 'running' | 'completed' | 'failed';
   progress: number;
 }
 
@@ -77,12 +77,14 @@ const JobItem = React.memo(({
                 <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
                   job.status === 'completed' ? 'bg-green-100 text-green-700' : 
                   job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
+                  job.status === 'failed' ? 'bg-red-100 text-red-700' :
                   'bg-yellow-100 text-yellow-700'
                 }`}>
                   {job.status === 'completed' && <CheckCircle2 size={14} />}
                   {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
                   {job.status === 'pending' && <Clock size={14} />}
-                  {job.status === 'completed' ? '已完成' : job.status === 'running' ? '执行中' : '排队中'}
+                  {job.status === 'failed' && <X size={14} />}
+                  {job.status === 'completed' ? '已完成' : job.status === 'running' ? '执行中' : job.status === 'failed' ? '执行失败' : '排队中'}
                 </span>
               </div>
               <div className="text-sm text-gray-500 font-medium flex items-center gap-1">
@@ -110,7 +112,16 @@ const JobItem = React.memo(({
                 <div key={idx} className="bg-gray-50 p-4 rounded-xl border border-gray-200">
                   <div className="flex justify-between items-start mb-3">
                     <p className="text-sm font-bold text-gray-800 flex-grow">任务 {idx + 1}: <span className="font-normal text-gray-600">{t.prompt}</span></p>
-                    <span className="text-xs font-medium text-gray-500 bg-gray-200 px-2 py-1 rounded">循环 {t.count} 次</span>
+                    <div className="flex gap-2">
+                      <span className={`text-xs font-bold px-2 py-1 rounded ${
+                        t.status === 'completed' ? 'bg-green-100 text-green-600' :
+                        t.status === 'failed' ? 'bg-red-100 text-red-600' :
+                        'bg-gray-200 text-gray-600'
+                      }`}>
+                        {t.status === 'completed' ? '已完成' : t.status === 'failed' ? '失败' : '未执行'}
+                      </span>
+                      <span className="text-xs font-medium text-gray-500 bg-gray-200 px-2 py-1 rounded">循环 {t.count} 次</span>
+                    </div>
                   </div>
                   
                   {t.images && t.images.length > 0 && (
@@ -773,7 +784,6 @@ export default function App() {
 
         <div className="flex gap-6 mb-6 text-gray-700">
           <label className="flex items-center gap-2">执行次数: <input type="number" value={activeTask?.count || 1} onChange={(e) => updateTask({ count: parseInt(e.target.value) })} className="w-20 border border-gray-200 p-2 rounded-lg" /></label>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={activeTask?.download || false} onChange={(e) => updateTask({ download: e.target.checked })} className="w-5 h-5" /> 自动下载</label>
         </div>
 
         <button 
@@ -1009,7 +1019,7 @@ export default function App() {
                   }}
                   onViewImage={setViewingImage}
                   onImportTask={(t) => {
-                    const newTask = { id: Date.now().toString(), prompt: t.prompt, images: t.images || [], count: 1, download: false };
+                    const newTask = { id: Date.now().toString(), prompt: t.prompt, images: t.images || [], count: 1, download: true };
                     setTasks([...tasks, newTask]);
                     setActiveTaskId(newTask.id);
                     setActiveTab('tasks');

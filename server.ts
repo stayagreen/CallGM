@@ -269,11 +269,15 @@ async function startServer() {
         try {
           const stat = fs.statSync(path.join(historyDir, file));
           const data = JSON.parse(fs.readFileSync(path.join(historyDir, file), 'utf-8'));
+          
+          // 如果任务列表里有任何一个任务的状态是 failed，则整个 Job 标记为 failed
+          const hasFailedTask = Array.isArray(data) && data.some((t: any) => t.status === 'failed');
+          
           jobs.push({
             id: file,
             timestamp: stat.mtimeMs,
             tasks: data,
-            status: 'completed',
+            status: hasFailedTask ? 'failed' : 'completed',
             progress: 100
           });
         } catch (e) {}

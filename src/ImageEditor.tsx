@@ -288,18 +288,18 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
 
             // Dilation: Expand hole to sample from a wider area
             const dilatedHole = new Uint8Array(width * height);
-            const dilation = 2; // Reduced dilation for better precision
+            const dilation = Math.max(3, Math.floor(brushSize / 10)); // Dynamic dilation
             if (dilation > 0) {
               for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
                   if (hole[y * width + x] === 1) {
-                    for (let dy = -dilation; dy <= dilation; dy++) {
-                      for (let dx = -dilation; dx <= dilation; dx++) {
-                        const nx = x + dx;
-                        const ny = y + dy;
-                        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                          dilatedHole[ny * width + nx] = 1;
-                        }
+                    const minY = Math.max(0, y - dilation);
+                    const maxY = Math.min(height - 1, y + dilation);
+                    const minX = Math.max(0, x - dilation);
+                    const maxX = Math.min(width - 1, x + dilation);
+                    for (let dy = minY; dy <= maxY; dy++) {
+                      for (let dx = minX; dx <= maxX; dx++) {
+                        dilatedHole[dy * width + dx] = 1;
                       }
                     }
                   }
@@ -308,6 +308,7 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
               hole.set(dilatedHole);
             }
             
+            holeCount = 0;
             for (let i = 0; i < width * height; i++) if (hole[i] === 1) holeCount++;
 
             if (holeCount === 0) {
@@ -367,30 +368,48 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
               }
             }
 
-            // Diffusion Loop (Max 500 iterations)
+            // Diffusion Loop
             let iterations = 0;
-            const maxIterations = 200; // Reduced iterations for performance
+            const maxIterations = 350; // Increased iterations for larger holes
             
+            // Optimization: Only process relevant bounding box
+            let minX = width, minY = height, maxX = 0, maxY = 0;
+            for (let i = 0; i < width * height; i++) {
+              if (hole[i] === 1) {
+                const x = i % width;
+                const y = Math.floor(i / width);
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+              }
+            }
+            
+            // Expand bbox slightly
+            minX = Math.max(0, minX - 2);
+            minY = Math.max(0, minY - 2);
+            maxX = Math.min(width - 1, maxX + 2);
+            maxY = Math.min(height - 1, maxY + 2);
+
             // Find initial boundary
             let boundary: number[] = [];
-            for (let y = 0; y < height; y++) {
-              for (let x = 0; x < width; x++) {
+            for (let y = minY; y <= maxY; y++) {
+              for (let x = minX; x <= maxX; x++) {
                 const idx = y * width + x;
                 if (hole[idx] === 1) {
                   let isBoundary = false;
-                  for (let dy = -1; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                      if (dx === 0 && dy === 0) continue;
-                      const nx = x + dx;
-                      const ny = y + dy;
-                      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                        if (hole[ny * width + nx] === 0) {
-                          isBoundary = true;
-                          break;
-                        }
-                      }
+                  // Check 4-connectivity for speed
+                  const check = [
+                    (x > 0) ? idx - 1 : -1,
+                    (x < width - 1) ? idx + 1 : -1,
+                    (y > 0) ? idx - width : -1,
+                    (y < height - 1) ? idx + width : -1
+                  ];
+                  for (const nidx of check) {
+                    if (nidx !== -1 && hole[nidx] === 0) {
+                      isBoundary = true;
+                      break;
                     }
-                    if (isBoundary) break;
                   }
                   if (isBoundary) boundary.push(idx);
                 }
@@ -406,21 +425,21 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
                 const y = Math.floor(idx / width);
                 let r = 0, g = 0, b = 0, count = 0;
                 
-                for (let dy = -1; dy <= 1; dy++) {
-                  for (let dx = -1; dx <= 1; dx++) {
-                    if (dx === 0 && dy === 0) continue;
-                    const nx = x + dx;
-                    const ny = y + dy;
-                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                      const nidx = ny * width + nx;
-                      if (hole[nidx] === 0) {
-                        const off = nidx * 4;
-                        r += pixels[off];
-                        g += pixels[off+1];
-                        b += pixels[off+2];
-                        count++;
-                      }
-                    }
+                // 4-neighborhood for speed
+                const neighbors = [
+                  (x > 0) ? idx - 1 : -1,
+                  (x < width - 1) ? idx + 1 : -1,
+                  (y > 0) ? idx - width : -1,
+                  (y < height - 1) ? idx + width : -1
+                ];
+
+                for (const nidx of neighbors) {
+                  if (nidx !== -1 && hole[nidx] === 0) {
+                    const off = nidx * 4;
+                    r += pixels[off];
+                    g += pixels[off+1];
+                    b += pixels[off+2];
+                    count++;
                   }
                 }
 
@@ -438,15 +457,15 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
                 holeCount--;
                 const x = idx % width;
                 const y = Math.floor(idx / width);
-                for (let dy = -1; dy <= 1; dy++) {
-                  for (let dx = -1; dx <= 1; dx++) {
-                    const nx = x + dx;
-                    const ny = y + dy;
-                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                      const nidx = ny * width + nx;
-                      if (hole[nidx] === 1) nextBoundary.add(nidx);
-                    }
-                  }
+                
+                const neighbors = [
+                  (x > 0) ? idx - 1 : -1,
+                  (x < width - 1) ? idx + 1 : -1,
+                  (y > 0) ? idx - width : -1,
+                  (y < height - 1) ? idx + width : -1
+                ];
+                for (const nidx of neighbors) {
+                  if (nidx !== -1 && hole[nidx] === 1) nextBoundary.add(nidx);
                 }
               }
 

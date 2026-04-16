@@ -579,6 +579,16 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
         console.error('详细堆栈:', error.stack);
     }
     console.log('\n(提示: 如果上方报错提示找不到模块，请在本地运行 npm install @nut-tree-fork/nut-js open)');
+    
+    // 把所有未完成的任务都标记为 failed，确保写入历史记录时能体现出报错
+    if (tasks && Array.isArray(tasks)) {
+        for (const task of tasks) {
+            if (task.status !== 'completed') {
+                task.status = 'failed';
+            }
+        }
+    }
+    return tasks;
   } finally {
     jobProgress.delete(filename);
   }
