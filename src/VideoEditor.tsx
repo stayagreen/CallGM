@@ -497,6 +497,45 @@ export default function VideoEditor({
           hole.set(dilatedHole);
           for (let i = 0; i < width * height; i++) if (hole[i] === 1) holeCount++;
 
+          // Pre-fill: Fill the hole with the average color of the boundary pixels
+          let sumR = 0, sumG = 0, sumB = 0, boundaryCount = 0;
+          for (let i = 0; i < width * height; i++) {
+            if (hole[i] === 1) {
+              const x = i % width;
+              const y = Math.floor(i / width);
+              for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                  const nx = x + dx;
+                  const ny = y + dy;
+                  if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    const nidx = ny * width + nx;
+                    if (hole[nidx] === 0) {
+                      const off = nidx * 4;
+                      sumR += pixels[off];
+                      sumG += pixels[off+1];
+                      sumB += pixels[off+2];
+                      boundaryCount++;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          
+          if (boundaryCount > 0) {
+            const avgR = sumR / boundaryCount;
+            const avgG = sumG / boundaryCount;
+            const avgB = sumB / boundaryCount;
+            for (let i = 0; i < width * height; i++) {
+              if (hole[i] === 1) {
+                const off = i * 4;
+                pixels[off] = avgR;
+                pixels[off+1] = avgG;
+                pixels[off+2] = avgB;
+              }
+            }
+          }
+
           if (holeCount === 0) {
             setIsProcessing(false);
             setEditingImage(null);
