@@ -143,13 +143,17 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     cvInst.inpaint(srcRGB, mask, dst, 3, cvInst.INPAINT_TELEA);
 
     // 7. 保存结果
+    console.log(`💾 [去水印-WASM] 正在回写图片数据...`);
     const processedBuffer = Buffer.from(dst.data);
+    const ext = path.extname(filePath);
+    const tempPath = filePath.replace(ext, `.tmp${ext}`);
+    
     await sharp(processedBuffer, {
       raw: { width: dst.cols, height: dst.rows, channels: 3 }
     })
-    .toFile(filePath + '.tmp');
+    .toFile(tempPath);
 
-    fs.renameSync(filePath + '.tmp', filePath);
+    fs.renameSync(tempPath, filePath);
     console.log(`✅ [去水印-WASM] 修复成功！`);
 
     // 8. 严格内存释放 (4.3.0 JS 极易 OOM)
