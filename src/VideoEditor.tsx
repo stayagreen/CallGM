@@ -976,6 +976,17 @@ export default function VideoEditor({
                               value={sb.text}
                               onChange={e => updateStoryboard(sb.id, { text: e.target.value })}
                             />
+                            <div className="flex items-center gap-2 mb-2">
+                              <label className="text-xs text-gray-500">时长(秒):</label>
+                              <input 
+                                type="number" 
+                                min="1" 
+                                max="60" 
+                                value={sb.duration} 
+                                onChange={e => updateStoryboard(sb.id, { duration: parseInt(e.target.value) || 3 })} 
+                                className="w-16 text-sm p-1.5 rounded border border-gray-200" 
+                              />
+                            </div>
                             {sb.text && (
                               <div className="grid grid-cols-2 gap-2">
                                 <input type="color" value={sb.textColor} onChange={e => updateStoryboard(sb.id, { textColor: e.target.value })} className="w-full h-8 rounded cursor-pointer" />
