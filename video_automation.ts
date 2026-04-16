@@ -273,39 +273,35 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         // Implement effects
         if (sb.textEffect === 'fade') {
             textParams += `:alpha='min(t/1,1)'`; // 1s fade in
-        } else if (sb.textEffect === 'rotate') {
-            textParams += `:rotation='t*PI/2'`; // Rotate 90deg/s
-        }
-        
-        filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
-        lastLabel = '[v2]';
-
-        // Special handling for Typewriter (using a sliding crop)
-        if (sb.textEffect === 'typewriter') {
+            filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
+        } else if (sb.textEffect === 'blur') {
+            // 毛玻璃淡入
+            const blur = `(1-min(t/0.8,1))*20`;
+            filterComplex += `;${lastLabel}split[v_pre_blur][v_blur_layer];[v_blur_layer]boxblur=${blur},fade=t=out:st=0:d=0.8:alpha=1[v_blurred];[v_pre_blur][v_blurred]overlay=format=auto[v2]`;
+            // 重新应用文字绘制到 v2
+            filterComplex += `;[v2]drawtext=${textParams}:alpha='min(t/0.8,1)'[v2_text]`;
+            filterComplex = filterComplex.replace(`[v2]`, `[v2_text]`);
+        } else if (sb.textEffect === 'typewriter') {
+            // 打字机
             const revealSpeed = 10; // chars per second
             const revealDuration = Math.min(duration, sb.text.length / revealSpeed);
-            
-            // 1. Create a transparent text layer
-            // 2. Crop it based on time
-            // 3. Overlay it on the original video
-            // We use color=c=black@0 to create a transparent canvas of the video size
             const textX = '(w-text_w)/2';
             const textY = '(h-text_h)/2';
             
-            filterComplex = filterComplex.replace(`[v2]`, `[v_pre_type]`);
             filterComplex += `;color=c=black@0:s=${w}x${h}[txt_canvas];`;
-            filterComplex += `[txt_canvas]drawtext=${textParams}[txt_full];`;
-            filterComplex += `[txt_full]crop=w='iw*min(1, t/${revealDuration})':h=ih:x=0:y=0[txt_reveal];`;
-            filterComplex += `[v_pre_type][txt_reveal]overlay=x=0:y=0:format=auto[v2]`;
+            filterComplex += `[txt_canvas]drawtext=${textParams}:text='${escapedText}':x=${textX}:y=${textY}[txt_full];`;
+            filterComplex += `[txt_full]drawtext=text='|':x=${textX}+text_w:y=${textY}:fontfile='${fontPath}':fontsize=${fontSize}:fontcolor=${color}:alpha='if(lt(mod(t,0.5),0.25),1,0)'[txt_full_cursor];`;
+            filterComplex += `[txt_full_cursor]crop=w='iw*min(1, t/${revealDuration})':h=ih:x=0:y=0[txt_reveal];`;
+            filterComplex += `;${lastLabel}[txt_reveal]overlay=x=0:y=0:format=auto[v2]`;
+        } else if (sb.textEffect === 'rotate') {
+            // 文字转圈
+            textParams += `:rotation='t*360/2'`;
+            filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
+        } else {
+            // 无特效
+            filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
         }
-
-        // Special handling for Blur Fade In (requires post-processing the text layer)
-        if (sb.textEffect === 'blur') {
-            // Use fade + overlay for better compatibility (blend filter doesn't support 't' constant)
-            // vb2 is the blurred layer that fades out, revealing the clear vb1 layer underneath
-            filterComplex += `;${lastLabel}split[vb1][vb2];[vb2]boxblur=10:1,fade=t=out:st=0:d=1.5:alpha=1[vblurred];[vb1][vblurred]overlay=format=auto[vblurout]`;
-            lastLabel = '[vblurout]';
-        }
+        lastLabel = '[v2]';
     }
 
     filterComplex += `;${lastLabel}format=yuv420p[outv]`;
