@@ -13,18 +13,35 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
 
   try {
     // 0. 等待 OpenCV WASM 加载完成
+    console.log(`📦 [去水印-WASM] 检查 OpenCV 运行环境...`);
     // @ts-ignore
-    if (!cv.Mat) {
+    if (!cv.Mat || !cv.onRuntimeInitialized) {
+      console.log(`⏳ [去水印-WASM] 等待运行时初始化...`);
       // @ts-ignore
-      await new Promise(resolve => cv.onRuntimeInitialized = resolve);
+      await new Promise((resolve, reject) => {
+        // 设置超时，防止永久挂起
+        const timeout = setTimeout(() => reject(new Error('OpenCV WASM 初始化超时')), 15000);
+        // @ts-ignore
+        cv.onRuntimeInitialized = () => {
+          clearTimeout(timeout);
+          console.log(`✅ [去水印-WASM] 运行时初始化成功`);
+          resolve(true);
+        };
+        // 如果已经初始化过了，Mat 会存在
+        // @ts-ignore
+        if (cv.Mat) {
+          clearTimeout(timeout);
+          resolve(true);
+        }
+      });
     }
+    console.log(`🚀 [去水印-WASM] 环境就绪，开始解码图片...`);
 
     // 1. 读取图片并转换为 OpenCV 格式
-    // 注意：opencv-wasm readImage 主要是处理像素 buffer
     const image = sharp(filePath);
     const { data: buffer, info } = await image.raw().toBuffer({ resolveWithObject: true });
+    console.log(`及 [去水印-WASM] 图片解码完成: ${info.width}x${info.height}, 通道: ${info.channels}`);
     
-    // 创建 OpenCV Mat (RGBA)
     let src = new cv.Mat(info.height, info.width, cv.CV_8UC4);
     src.data.set(new Uint8ClampedArray(buffer));
 
@@ -34,13 +51,13 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     // 2. 锁定右下角 ROI 区域 (75% 处开始)
     const roiX = Math.floor(w * 0.75);
     const roiY = Math.floor(h * 0.85);
-    const roiW = w - roiX;
-    const roiH = h - roiY;
+    console.log(`📍 [去水印-WASM] ROI 设定: 起点(${roiX}, ${roiY}), 大小(${w-roiX}x${h-roiY})`);
     
-    let rect = new cv.Rect(roiX, roiY, roiW, roiH);
+    let rect = new cv.Rect(roiX, roiY, w - roiX, h - roiY);
     let roi = src.roi(rect);
 
     // 3. 灰度化 + 二值化
+    console.log(`🎨 [去水印-WASM] 正在提取颜色特征...`);
     let gray = new cv.Mat();
     cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
     
@@ -48,60 +65,48 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     cv.threshold(gray, 240, 255, cv.THRESH_BINARY, binary);
 
     // 4. 轮廓检测
+    console.log(`🔍 [去水印-WASM] 正在分析视觉形状...`);
     let contours = new cv.MatVector();
     let hierarchy = new cv.Mat();
     cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
     
-    // 初始化掩码 mask (必须是单通道 8UC1)
     let mask = cv.Mat.zeros(h, w, cv.CV_8UC1);
-
     let watermarkFound = false;
 
     for (let i = 0; i < contours.size(); ++i) {
       const cnt = contours.get(i);
       const area = cv.contourArea(cnt);
-      
-      // 过滤特征：面积在 20~2500 像素之间
       if (area > 20 && area < 2500) {
-        console.log(`✨ [去水印-WASM] 发现候选轮廓 [${i}], 面积: ${Math.round(area)}`);
-        
-        // 由于没有原生 translate 方法，手动在全图 Mask 上根据坐标偏移绘制
-        // 我们创建一个临时向量来存放偏移后的轮廓 (或者在 draw 时候加 offset)
-        // WASM 版的 drawContours 支持 offset 参数
+        console.log(`✨ [去水印-WASM] 找到匹配目标! 索引:${i}, 面积:${Math.round(area)}`);
         cv.drawContours(mask, contours, i, new cv.Scalar(255), -1, cv.LINE_8, hierarchy, 0, new cv.Point(roiX, roiY));
         watermarkFound = true;
       }
     }
 
     if (!watermarkFound) {
-      console.log(`⚠️ [去水印-WASM] 角落 ROI 内未匹配到水印形状，跳过`);
-      // 资源清理
+      console.log(`⚠️ [去水印-WASM] 区域内未检测到水印形状，任务结束`);
       src.delete(); roi.delete(); gray.delete(); binary.delete();
       contours.delete(); hierarchy.delete(); mask.delete();
       return false;
     }
 
-    // 将 src 转为 RGB (inpaint 只支持 1 或 3 通道)
+    console.log(`🛠️ [去水印-WASM] 正在应用 Telea 纹理修复算法...`);
     let srcRGB = new cv.Mat();
     cv.cvtColor(src, srcRGB, cv.COLOR_RGBA2RGB);
 
-    // 5. 核心：Telea 修复
     let dst = new cv.Mat();
     cv.inpaint(srcRGB, mask, dst, 3, cv.INPAINT_TELEA);
 
     // 6. 将结果转回 Sharp 并保存
+    console.log(`💾 [去水印-WASM] 修复完成，正在保存文件...`);
     const processedBuffer = Buffer.from(dst.data);
     await sharp(processedBuffer, {
-      raw: {
-        width: dst.cols,
-        height: dst.rows,
-        channels: 3
-      }
+      raw: { width: dst.cols, height: dst.rows, channels: 3 }
     })
     .toFile(filePath + '.tmp');
 
     fs.renameSync(filePath + '.tmp', filePath);
-    console.log(`✅ [去水印-WASM] 修复完成并覆盖原图`);
+    console.log(`✅ [去水印-WASM] 处理成功，文件已覆盖`);
 
     // 7. 严格的内存清理 (WASM 必须手动 delete)
     src.delete(); roi.delete(); gray.delete(); binary.delete();
