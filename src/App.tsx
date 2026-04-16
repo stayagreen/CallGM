@@ -44,7 +44,8 @@ const JobItem = React.memo(({
   onToggleSelect, 
   onToggleExpand, 
   onViewImage, 
-  onImportTask 
+  onImportTask,
+  galleryUpdateToken
 }: { 
   job: Job, 
   isSelected: boolean, 
@@ -52,7 +53,8 @@ const JobItem = React.memo(({
   onToggleSelect: (id: string, checked: boolean) => void, 
   onToggleExpand: (id: string) => void, 
   onViewImage: (url: string) => void, 
-  onImportTask: (task: Task) => void 
+  onImportTask: (task: Task) => void,
+  galleryUpdateToken?: number
 }) => {
   return (
     <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
@@ -148,7 +150,7 @@ const JobItem = React.memo(({
                       <div className="flex gap-2 flex-wrap">
                         {t.downloadedFiles.map((img: string, i: number) => (
                           <div key={i} onClick={() => onViewImage(`/downloads/${img}`)} className="block w-20 h-20 rounded-lg border border-gray-300 overflow-hidden hover:border-blue-500 transition-colors shadow-sm relative group cursor-pointer">
-                            <img src={`/api/thumbnails/downloads/${img}`} className="w-full h-full object-cover" loading="lazy" />
+                            <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} className="w-full h-full object-cover" loading="lazy" />
                           </div>
                         ))}
                       </div>
@@ -906,6 +908,7 @@ export default function App() {
                       setVideoTasks(prev => prev.map(pt => pt.id === updatedTask.id ? updatedTask : pt));
                     }}
                     galleryImages={galleryImages}
+                    galleryUpdateToken={galleryUpdateToken}
                   />
                 </div>
               ))}
@@ -1053,6 +1056,7 @@ export default function App() {
                     setActiveTaskId(newTask.id);
                     setActiveTab('tasks');
                   }}
+                  galleryUpdateToken={galleryUpdateToken}
                 />
               ))}
             </>
@@ -1492,7 +1496,7 @@ export default function App() {
                       }}
                       className={`relative aspect-square rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${selectedGalleryImages.has(img) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300'}`}
                     >
-                      <img src={`/api/thumbnails/downloads/${img}`} className="w-full h-full object-cover" loading="lazy" />
+                      <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} className="w-full h-full object-cover" loading="lazy" />
                       {selectedGalleryImages.has(img) && (
                         <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
                           <CheckCircle2 className="text-white drop-shadow-md" size={32} />

@@ -84,11 +84,13 @@ const showToast = (message: string, type: 'success' | 'error' | 'loading' = 'suc
 export default function VideoEditor({ 
   task,
   onChange,
-  galleryImages 
+  galleryImages,
+  galleryUpdateToken
 }: { 
   task: VideoTask,
   onChange: (task: VideoTask) => void,
-  galleryImages: string[]
+  galleryImages: string[],
+  galleryUpdateToken?: number
 }) {
   const [bgmList, setBgmList] = useState<string[]>([]);
   const [playingBgm, setPlayingBgm] = useState<string | null>(null);
@@ -100,6 +102,11 @@ export default function VideoEditor({
   const [activeStoryboardId, setActiveStoryboardId] = useState<string | null>(null);
   const [activeStoryboardIndex, setActiveStoryboardIndex] = useState(0);
   const [editingImage, setEditingImage] = useState<{ id: string, image: string } | null>(null);
+
+  const getBustedUrl = (url: string) => {
+    if (!url || !galleryUpdateToken || (!url.startsWith('/downloads/') && !url.startsWith('/api/thumbnails/'))) return url;
+    return `${url}${url.includes('?') ? '&' : '?'}t=${galleryUpdateToken}`;
+  };
 
   // Split Images State
   const [splitImages, setSplitImages] = useState<string[]>([]);
@@ -383,7 +390,7 @@ export default function VideoEditor({
                           </div>
                           {sb.image ? (
                             <>
-                              <img src={sb.image} className="w-full h-full object-contain" />
+                              <img src={getBustedUrl(sb.image)} className="w-full h-full object-contain" />
                               <div className="absolute inset-0 bg-black/30 sm:bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
                                 <button onClick={() => setEditingImage({ id: sb.id, image: sb.image })} className="p-2.5 sm:p-2 bg-white rounded-full text-gray-800 hover:bg-blue-50 hover:text-blue-600 transition shadow-sm" title="编辑图片"><Scissors size={20}/></button>
                                 <button 
@@ -400,7 +407,7 @@ export default function VideoEditor({
                                       const res = await fetch('/api/gallery/save', {
                                         method: 'POST',
                                         headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ url: sb.image })
+                                        body: JSON.stringify({ url: sb.image.includes('?t=') ? sb.image.split('?t=')[0] : sb.image })
                                       });
                                       if (res.ok) {
                                         showToast('✅ 已成功保存到本地图库', 'success');
@@ -556,7 +563,7 @@ export default function VideoEditor({
                       className={`relative w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${activeStoryboardIndex === idx ? 'border-blue-600 shadow-md scale-105' : 'border-transparent opacity-60 hover:opacity-100'}`}
                     >
                       {sb.image ? (
-                        <img src={sb.image} className="w-full h-full object-cover" />
+                        <img src={getBustedUrl(sb.image)} className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full bg-gray-100 flex items-center justify-center text-gray-400">
                           <ImageIcon size={20}/>
@@ -608,7 +615,7 @@ export default function VideoEditor({
                     onClick={() => {
                       if (galleryMode === '4grid') {
                         // Process 4-grid from gallery image
-                        const imgUrl = `/downloads/${img}`;
+                        const imgUrl = getBustedUrl(`/downloads/${img}`);
                         const image = new Image();
                         image.onload = () => {
                           const canvas = document.createElement('canvas');
@@ -662,7 +669,7 @@ export default function VideoEditor({
                     }}
                     className="relative aspect-square rounded-lg overflow-hidden border-2 border-gray-200 hover:border-blue-500 cursor-pointer transition-all"
                   >
-                    <img src={`/api/thumbnails/downloads/${img}`} className="w-full h-full object-cover" loading="lazy" />
+                    <img src={`/api/thumbnails/downloads/${img}${galleryUpdateToken ? `?t=${galleryUpdateToken}` : ''}`} className="w-full h-full object-cover" loading="lazy" />
                   </div>
                 ))}
               </div>
