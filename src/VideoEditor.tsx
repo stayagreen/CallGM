@@ -844,9 +844,9 @@ export default function VideoEditor({
                         </div>
                         
                         <div className="relative aspect-video bg-gray-100 flex items-center justify-center group overflow-hidden">
-                          <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                          <div className="absolute top-2 right-2 flex gap-2 z-10">
                             {sb.image && (
-                              <button onClick={() => updateStoryboard(sb.id, { image: '' })} className="p-2.5 sm:p-2 bg-white rounded-full text-red-600 hover:bg-red-50 transition shadow-sm" title="清空图片"><X size={20}/></button>
+                              <button onClick={() => updateStoryboard(sb.id, { image: '' })} className="p-2 bg-white rounded-full text-red-600 hover:bg-red-50 transition shadow-sm" title="清空图片"><X size={16}/></button>
                             )}
                             <button 
                               onClick={() => {
@@ -857,10 +857,10 @@ export default function VideoEditor({
                                   }))
                                 });
                               }}
-                              className="p-2.5 sm:p-2 bg-white rounded-full text-blue-600 hover:bg-blue-50 transition shadow-sm"
+                              className="p-2 bg-white rounded-full text-blue-600 hover:bg-blue-50 transition shadow-sm"
                               title="应用到所有"
                             >
-                              <ListIcon size={20}/>
+                              <ListIcon size={16}/>
                             </button>
                           </div>
                           {sb.image ? (
