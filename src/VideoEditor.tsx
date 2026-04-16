@@ -473,9 +473,29 @@ export default function VideoEditor({
           for (let i = 0; i < width * height; i++) {
             if (maskPixels[i * 4 + 3] > 50) {
               hole[i] = 1;
-              holeCount++;
             }
           }
+
+          // Dilation: Expand hole to sample from a wider area
+          const dilatedHole = new Uint8Array(width * height);
+          const dilation = 4;
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              if (hole[y * width + x] === 1) {
+                for (let dy = -dilation; dy <= dilation; dy++) {
+                  for (let dx = -dilation; dx <= dilation; dx++) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                      dilatedHole[ny * width + nx] = 1;
+                    }
+                  }
+                }
+              }
+            }
+          }
+          hole.set(dilatedHole);
+          for (let i = 0; i < width * height; i++) if (hole[i] === 1) holeCount++;
 
           if (holeCount === 0) {
             setIsProcessing(false);
@@ -483,9 +503,9 @@ export default function VideoEditor({
             return;
           }
 
-          // Diffusion Loop (Max 200 iterations)
+          // Diffusion Loop (Max 500 iterations)
           let iterations = 0;
-          const maxIterations = 200;
+          const maxIterations = 500;
           
           // Find initial boundary
           let boundary = [];
@@ -494,8 +514,8 @@ export default function VideoEditor({
               const idx = y * width + x;
               if (hole[idx] === 1) {
                 let isBoundary = false;
-                for (let dy = -1; dy <= 1; dy++) {
-                  for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -2; dy <= 2; dy++) {
+                  for (let dx = -2; dx <= 2; dx++) {
                     if (dx === 0 && dy === 0) continue;
                     const nx = x + dx;
                     const ny = y + dy;
@@ -519,9 +539,9 @@ export default function VideoEditor({
 
             for (const p of boundary) {
               let r = 0, g = 0, b = 0, count = 0;
-              // 8-neighbor sampling (3x3 window)
-              for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
+              // 24-neighbor sampling (5x5 window)
+              for (let dy = -2; dy <= 2; dy++) {
+                for (let dx = -2; dx <= 2; dx++) {
                   if (dx === 0 && dy === 0) continue;
                   const nx = p.x + dx;
                   const ny = p.y + dy;
@@ -552,8 +572,8 @@ export default function VideoEditor({
               holeCount--;
               const x = idx % width;
               const y = Math.floor(idx / width);
-              for (let dy = -1; dy <= 1; dy++) {
-                for (let dx = -1; dx <= 1; dx++) {
+              for (let dy = -2; dy <= 2; dy++) {
+                for (let dx = -2; dx <= 2; dx++) {
                   const nx = x + dx;
                   const ny = y + dy;
                   if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
