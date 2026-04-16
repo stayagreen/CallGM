@@ -199,6 +199,7 @@ export default function App() {
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
   const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
   const [editingGalleryImage, setEditingGalleryImage] = useState<string | null>(null);
+  const [galleryUpdateToken, setGalleryUpdateToken] = useState<number>(Date.now());
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
@@ -284,6 +285,7 @@ export default function App() {
       const res = await fetch('/api/images');
       const data = await res.json();
       setGalleryImages(data);
+      setGalleryUpdateToken(Date.now());
     } catch (error) {
       console.error('Failed to fetch gallery:', error);
     }
@@ -1127,8 +1129,8 @@ export default function App() {
               ))}
               {galleryImages.map(img => (
                 <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
-                  <div onClick={() => setViewingImage(`/downloads/${img}`)} className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
-                    <img src={`/api/thumbnails/downloads/${img}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
+                  <div onClick={() => setViewingImage(`/downloads/${img}?t=${galleryUpdateToken}`)} className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
+                    <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
                       <ImageIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                     </div>
@@ -1524,7 +1526,7 @@ export default function App() {
       
       {editingGalleryImage && (
         <ImageEditor
-          image={`/downloads/${editingGalleryImage}`}
+          image={`/downloads/${editingGalleryImage}?t=${galleryUpdateToken}`}
           onSave={async (newImage) => {
             try {
               const uploadRes = await fetch('/api/gallery/update', {
