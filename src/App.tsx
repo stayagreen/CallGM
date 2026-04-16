@@ -185,6 +185,7 @@ export default function App() {
   const [videoGallery, setVideoGallery] = useState<string[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
+  const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
@@ -1208,12 +1209,20 @@ export default function App() {
 
                   {job.status === 'error' && (
                     <div className="text-red-500 text-sm mb-3 bg-red-50 p-3 rounded-lg">
-                      错误信息: {job.error}
+                      视频渲染失败
                     </div>
                   )}
                   
-                  <div className="text-sm text-gray-600">
-                    包含 {job.data.storyboards?.length || 0} 个分镜
+                  <div className="flex justify-between items-center">
+                    <div className="text-sm text-gray-600">
+                      包含 {job.data.storyboards?.length || 0} 个分镜
+                    </div>
+                    <button 
+                      onClick={() => setViewingVideoJobDetails(job)}
+                      className="text-sm text-blue-600 font-medium hover:underline"
+                    >
+                      查看详情
+                    </button>
                   </div>
 
                   {job.status === 'completed' && job.data.outputVideo && (
@@ -1443,6 +1452,41 @@ export default function App() {
           </div>
         </div>
       )}
+      {viewingVideoJobDetails && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999]" onClick={() => setViewingVideoJobDetails(null)}>
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">视频任务详情</h2>
+              <button onClick={() => setViewingVideoJobDetails(null)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
+            </div>
+            <div className="flex-grow overflow-y-auto mb-6 pr-2 text-sm text-gray-700 space-y-2">
+              <p><strong>渲染时间:</strong> {new Date(viewingVideoJobDetails.timestamp).toLocaleString()}</p>
+              <p><strong>分镜数量:</strong> {viewingVideoJobDetails.data.storyboards?.length || 0}</p>
+              <div className="mt-4">
+                <strong>分镜详情:</strong>
+                {viewingVideoJobDetails.data.storyboards?.map((sb: any, i: number) => (
+                  <div key={i} className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                    <p>分镜 {i + 1}: {sb.text || '无文字'}</p>
+                    <p className="text-xs text-gray-500">动画: {sb.animation}, 转场: {sb.transition}, 时长: {sb.duration}s</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                // Import logic: This would need to be passed down or handled here
+                // For now, just close the modal
+                setViewingVideoJobDetails(null);
+                alert('导入功能待实现');
+              }}
+              className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition"
+            >
+              导入任务 (待实现)
+            </button>
+          </div>
+        </div>
+      )}
+      
       {viewingImage && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[999]" onClick={() => setViewingImage(null)}>
           <div className="relative max-w-4xl w-full max-h-[90vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>

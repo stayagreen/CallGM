@@ -1258,8 +1258,25 @@ export default function VideoEditor({
                           setShowGallery(false);
                         };
                         image.src = imgUrl;
-                      } else if (activeStoryboardId) {
-                        updateStoryboard(activeStoryboardId, { image: `/downloads/${img}` });
+                      } else {
+                        // Find first empty storyboard or append
+                        const emptyIndex = task.storyboards.findIndex(sb => !sb.image);
+                        if (emptyIndex !== -1) {
+                          updateStoryboard(task.storyboards[emptyIndex].id, { image: `/downloads/${img}` });
+                        } else {
+                          const newSb = {
+                            id: Date.now().toString() + Math.random().toString(36).substring(7),
+                            image: `/downloads/${img}`,
+                            animation: 'none',
+                            transition: 'none',
+                            text: '',
+                            textSize: 20,
+                            textColor: '#ffffff',
+                            textEffect: 'none',
+                            duration: 3.5
+                          };
+                          updateTask({ storyboards: [...task.storyboards, newSb] });
+                        }
                         setShowGallery(false);
                       }
                     }}
@@ -1326,7 +1343,20 @@ export default function VideoEditor({
                     textEffect: 'none',
                     duration: 3.5
                   }));
-                  updateTask({ storyboards: [...task.storyboards, ...newStoryboards] });
+
+                  const currentStoryboards = [...task.storyboards];
+                  let remainingNewStoryboards = [...newStoryboards];
+
+                  // Fill empty ones
+                  for (let i = 0; i < currentStoryboards.length && remainingNewStoryboards.length > 0; i++) {
+                    if (!currentStoryboards[i].image) {
+                      currentStoryboards[i] = { ...currentStoryboards[i], image: remainingNewStoryboards[0].image };
+                      remainingNewStoryboards.shift();
+                    }
+                  }
+
+                  // Append remaining
+                  updateTask({ storyboards: [...currentStoryboards, ...remainingNewStoryboards] });
                   setSplitImages([]);
                   setSelectedSplitIndices([]);
                 }}
