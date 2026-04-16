@@ -385,9 +385,10 @@ export default function VideoEditor({
 
         for (const p of boundary) {
           let r = 0, g = 0, b = 0, count = 0;
-          // 8-neighbor sampling (3x3 window)
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
+          // 5x5 neighbor sampling for more context
+          const radius = 2;
+          for (let dy = -radius; dy <= radius; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
               if (dx === 0 && dy === 0) continue;
               const nx = p.x + dx;
               const ny = p.y + dy;
@@ -395,10 +396,12 @@ export default function VideoEditor({
                 const nidx = ny * width + nx;
                 if (hole[nidx] === 0) {
                   const off = nidx * 4;
-                  r += pixels[off];
-                  g += pixels[off+1];
-                  b += pixels[off+2];
-                  count++;
+                  // Weight closer pixels more
+                  const weight = 1 / (dx * dx + dy * dy);
+                  r += pixels[off] * weight;
+                  g += pixels[off+1] * weight;
+                  b += pixels[off+2] * weight;
+                  count += weight;
                 }
               }
             }
@@ -457,12 +460,11 @@ export default function VideoEditor({
         
         for (let i = 0; i < maskPixels.length; i += 4) {
           const alpha = maskPixels[i + 3];
-          if (alpha > 0) {
-            const blend = alpha / 255;
-            // Increased blend intensity for more obvious effect (0.8 instead of 0.5)
-            pixels[i] = pixels[i] * (1 - blend * 0.8) + blurredData.data[i] * (blend * 0.8);
-            pixels[i+1] = pixels[i+1] * (1 - blend * 0.8) + blurredData.data[i+1] * (blend * 0.8);
-            pixels[i+2] = pixels[i+2] * (1 - blend * 0.8) + blurredData.data[i+2] * (blend * 0.8);
+          if (alpha > 50) {
+            // Full coverage for smudge area (no original pixels left)
+            pixels[i] = blurredData.data[i];
+            pixels[i+1] = blurredData.data[i+1];
+            pixels[i+2] = blurredData.data[i+2];
           }
         }
         context.putImageData(originalData, 0, 0);

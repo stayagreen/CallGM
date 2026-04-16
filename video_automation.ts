@@ -209,17 +209,45 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
 
     // 2. Add Animation (Zoompan)
     let panZoom = '';
+    
+    // Exact range and progress calculation to avoid pauses at start/end
+    const rangeX = '(iw-iw/zoom)';
+    const rangeY = '(ih-ih/zoom)';
+    const progress = '(on-1)/(d-1)';
+    const centerX = `(${rangeX}/2)`;
+    const centerY = `(${rangeY}/2)`;
+
     switch (sb.animation) {
-        case 'zoom_in': panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_lr': panZoom = `zoompan=z=1.2:x='min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='ih*0.1':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_rl': panZoom = `zoompan=z=1.2:x='min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='ih*0.1':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_tb': panZoom = `zoompan=z=1.2:x='iw*0.1':y='min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_bt': panZoom = `zoompan=z=1.2:x='iw*0.1':y='min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_tl_br': panZoom = `zoompan=z=1.2:x='min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_br_tl': panZoom = `zoompan=z=1.2:x='min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_tr_bl': panZoom = `zoompan=z=1.2:x='min(max(0, iw*0.2 - (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='min(max(0, (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
-        case 'pan_bl_tr': panZoom = `zoompan=z=1.2:x='min(max(0, (on/${frames})*(iw*0.2)), iw-iw/zoom)':y='min(max(0, ih*0.2 - (on/${frames})*(ih*0.2)), ih-ih/zoom)':d=${frames}:s=${w}x${h}:fps=30`; break;
-        default: panZoom = `zoompan=z=1:d=${frames}:s=${w}x${h}:fps=30`; break;
+        case 'zoom_in': 
+            panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
+        case 'pan_lr': 
+            panZoom = `zoompan=z=1.2:x='trunc(${progress}*${rangeX})':y='trunc(${centerY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
+        case 'pan_rl': 
+            panZoom = `zoompan=z=1.2:x='trunc((1-${progress})*${rangeX})':y='trunc(${centerY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
+        case 'pan_tb': 
+            panZoom = `zoompan=z=1.2:x='trunc(${centerX})':y='trunc(${progress}*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
+        case 'pan_bt': 
+            panZoom = `zoompan=z=1.2:x='trunc(${centerX})':y='trunc((1-${progress})*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
+        case 'pan_tl_br': 
+            panZoom = `zoompan=z=1.2:x='trunc(${progress}*${rangeX})':y='trunc(${progress}*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
+        case 'pan_br_tl': 
+            panZoom = `zoompan=z=1.2:x='trunc((1-${progress})*${rangeX})':y='trunc((1-${progress})*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
+        case 'pan_tr_bl': 
+            panZoom = `zoompan=z=1.2:x='trunc((1-${progress})*${rangeX})':y='trunc(${progress}*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
+        case 'pan_bl_tr': 
+            panZoom = `zoompan=z=1.2:x='trunc(${progress}*${rangeX})':y='trunc((1-${progress})*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
+        default: 
+            panZoom = `zoompan=z=1:d=${frames}:s=${w}x${h}:fps=30`; 
+            break;
     }
     // Add setpts and ensure exact frame count to avoid pauses
     filterComplex += `;[v0]${panZoom},setpts=PTS-STARTPTS[v1]`;
@@ -267,7 +295,6 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
     filterComplex += `;${lastLabel}format=yuv420p[outv]`;
 
     const args = [
-        '-loop', '1',
         '-i', imgPath,
         '-filter_complex', filterComplex,
         '-map', '[outv]',
@@ -328,7 +355,7 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
         
         for (let i = 1; i < clipPaths.length; i++) {
             const transition = storyboards[i-1].transition === 'fade' ? 'fade' : 'dissolve';
-            const duration = storyboards[i-1].transition === 'fade' ? 1 : 0.1;
+            const duration = storyboards[i-1].transition === 'fade' ? 0.5 : 0.1; // Reduced to 0.5s for snappier feel
             const nextStream = `[v${i}]`;
             const outStream = `[xf${i}]`;
             
