@@ -25,154 +25,102 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
     const channels = info.channels;
 
-    // 目标区域：右下角 (宽度 30%, 高度 15%)
-    const roiW = Math.floor(width * 0.30);
-    const roiH = Math.floor(height * 0.15);
+    // 目标区域：收缩到右下角极小范围 (宽度 20%, 高度 12%) - 避开中心灯具干扰
+    const roiW = Math.floor(width * 0.20);
+    const roiH = Math.floor(height * 0.12);
     const startX = width - roiW;
     const startY = height - roiH;
 
     const hole = new Uint8Array(width * height);
     let detectedPixels = 0;
 
-    // 💡 预筛选：先寻找 ROI 区域内的“亮度重心”
-    let sumX = 0, sumY = 0, brightCount = 0;
-    let minBX = width, minBY = height, maxBX = 0, maxBY = 0;
-    
+    // 💡 改进检测：寻找最亮的“小”连通域
+    let brightPixels: {x: number, y: number}[] = [];
     for (let y = startY; y < height; y++) {
       for (let x = startX; x < width; x++) {
         const off = (y * width + x) * channels;
-        const b = (data[off] + data[off+1] + data[off+2]) / 3;
-        if (b > 190) { // 寻找显著亮点 (水印通常很亮)
-          sumX += x; sumY += y;
-          brightCount++;
-          if (x < minBX) minBX = x; if (x > maxBX) maxBX = x;
-          if (y < minBY) minBY = y; if (y > maxBY) maxBY = y;
-        }
-      }
-    }
-
-    let centroidX = -1, centroidY = -1;
-    if (brightCount > 10) {
-      centroidX = sumX / brightCount;
-      centroidY = sumY / brightCount;
-      console.log(`💡 [去水印Debug] 发现亮度区块中心: (${Math.round(centroidX)}, ${Math.round(centroidY)}), 包含像素: ${brightCount}`);
-    }
-
-    // 尝试加载模板
-    let templateData: Buffer | null = null;
-    let templateInfo: sharp.OutputInfo | null = null;
-    
-    if (fs.existsSync(TEMPLATE_PATH)) {
-      try {
-        const { data: tData, info: tInfo } = await sharp(TEMPLATE_PATH).raw().toBuffer({ resolveWithObject: true });
-        templateData = tData;
-        templateInfo = tInfo;
-        console.log(`🖼️ [去水印Debug] 已加载水印模板: ${templateInfo.width}x${templateInfo.height}`);
-      } catch (e) {
-        console.error(`⚠️ [去水印Debug] 加载模板失败:`, e);
-      }
-    }
-
-    if (templateData && templateInfo) {
-      // 算法 A: 模板匹配 (带权重的滑动窗口)
-      const tw = templateInfo.width;
-      const th = templateInfo.height;
-      const tc = templateInfo.channels;
-
-      const tGray = new Float32Array(tw * th);
-      for (let i = 0; i < tw * th; i++) {
-        const r = templateData[i * tc];
-        const g = templateData[i * tc + 1];
-        const b = templateData[i * tc + 2];
-        tGray[i] = (r + g + b) / 3;
-      }
-
-      console.log(`🎯 [去水印Debug] 正在执行模板匹配...`);
-      let maxCorr = -1;
-      let bestX = -1, bestY = -1;
-
-      // 搜索范围：在 ROI 内搜索，且重点关注亮度重心附近
-      for (let y = startY; y < height - th; y += 4) {
-        for (let x = startX; x < width - tw; x += 4) {
-          let corr = 0;
-          let localBrightness = 0;
-          for (let ty = 0; ty < th; ty += 2) {
-            for (let tx = 0; tx < tw; tx += 2) {
-              const tidx = ty * tw + tx;
-              const sidx = (y + ty) * width + (x + tx);
-              const soff = sidx * channels;
-              const sGray = (data[soff] + data[soff+1] + data[soff+2]) / 3;
-              corr += (sGray - 128) * (tGray[tidx] - 128);
-              if (sGray > 200) localBrightness++;
-            }
-          }
-          
-          // 如果该区域完全没有亮点，则即便纹理相似也降低权重 (这就是防止在墙面误判的关键)
-          if (localBrightness < 5) corr = -1000000;
-
-          if (corr > maxCorr) {
-            maxCorr = corr;
-            bestX = x;
-            bestY = y;
-          }
-        }
-      }
-
-      // 如果匹配结果远离亮度重心，则可能误判
-      if (centroidX !== -1 && centroidY !== -1) {
-        const dist = Math.sqrt(Math.pow(bestX + tw/2 - centroidX, 2) + Math.pow(bestY + th/2 - centroidY, 2));
-        if (dist > roiW * 0.5) {
-          console.log(`⚠️ [去水印Debug] 模板匹配结果偏离重心 (${Math.round(dist)}px)，采用重心锚点替代`);
-          bestX = Math.round(centroidX - tw/2);
-          bestY = Math.round(centroidY - th/2);
-        }
-      }
-
-      if (maxCorr > -1000 || (centroidX !== -1)) {
-        console.log(`✨ [去水印Debug] 最终锁定位置: (${bestX}, ${bestY})`);
+        const r = data[off];
+        const g = data[off+1];
+        const b = data[off+2];
+        const brightness = (r + g + b) / 3;
         
-        // 自动缩放机制：如果发现亮点区块比模板显著小，则缩小 Mask
-        let scale = 1.0;
-        if (centroidX !== -1 && brightCount > 0) {
-          const blobW = maxBX - minBX;
-          const blobH = maxBY - minBY;
-          // 如果亮点连通域比模板小很多，说明缩放不一致
-          if (blobW < tw * 0.6 || blobH < th * 0.6) {
-             scale = Math.max(0.1, Math.min(blobW / tw, blobH / th) * 2.0); // 稍微留点余量
-             console.log(`📏 [去水印Debug] 检测到尺寸差异，Mask 自动缩放: ${scale.toFixed(2)}`);
-          }
+        // 增加白色权重：R,G,B 必须都很高且接近
+        if (brightness > 225 && Math.abs(r - g) < 20 && Math.abs(g - b) < 20) {
+          brightPixels.push({x, y});
         }
+      }
+    }
 
-        for (let ty = 0; ty < th; ty++) {
-          for (let tx = 0; tx < tw; tx++) {
-            const tidx = ty * tw + tx;
-            if (tGray[tidx] > 100) {
-              // 应用缩放后的偏移
-              const ox = Math.round((tx - tw/2) * scale + tw/2);
-              const oy = Math.round((ty - th/2) * scale + th/2);
-              const sx = bestX + ox;
-              const sy = bestY + oy;
-              if (sx >= 0 && sx < width && sy >= 0 && sy < height) {
-                hole[sy * width + sx] = 1;
-                detectedPixels++;
+    console.log(`✨ [去水印Debug] 区域内检测到高亮像素: ${brightPixels.length}`);
+
+    let bestX = -1, bestY = -1;
+    let scale = 0.2; 
+
+    if (brightPixels.length > 5) {
+      // 找到高亮点的中心
+      let sx = 0, sy = 0;
+      let minX = width, minY = height, maxX = 0, maxY = 0;
+      for (const p of brightPixels) {
+        sx += p.x; sy += p.y;
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      }
+      const cx = sx / brightPixels.length;
+      const cy = sy / brightPixels.length;
+      const blobW = maxX - minX;
+      const blobH = maxY - minY;
+
+      console.log(`🎯 [去水印Debug] 锁定高亮中心: (${Math.round(cx)}, ${Math.round(cy)}), 尺寸: ${blobW}x${blobH}`);
+
+      // 尝试加载模板
+      if (fs.existsSync(TEMPLATE_PATH)) {
+        try {
+          const { data: tData, info: tInfo } = await sharp(TEMPLATE_PATH).raw().toBuffer({ resolveWithObject: true });
+          const tw = tInfo.width;
+          const th = tInfo.height;
+          const tc = tInfo.channels;
+
+          // 计算缩放：以高亮区块为基准，给 1.5 倍余量封顶
+          scale = Math.min(1.0, Math.max(0.05, Math.max(blobW / tw, blobH / th) * 1.5));
+          console.log(`📏 [去水印Debug] 根据实际水印尺寸计算缩放: ${scale.toFixed(2)}`);
+
+          const tGray = new Float32Array(tw * th);
+          for (let i = 0; i < tw * th; i++) {
+            tGray[i] = (tData[i * tc] + tData[i * tc + 1] + tData[i * tc + 2]) / 3;
+          }
+
+          for (let ty = 0; ty < th; ty++) {
+            for (let tx = 0; tx < tw; tx++) {
+              if (tGray[ty * tw + tx] > 128) {
+                // 以中心对齐进行缩放
+                const ox = Math.round((tx - tw/2) * scale);
+                const oy = Math.round((ty - th/2) * scale);
+                const fx = Math.round(cx + ox);
+                const fy = Math.round(cy + oy);
+                if (fx >= 0 && fx < width && fy >= 0 && fy < height) {
+                  hole[fy * width + fx] = 1;
+                  detectedPixels++;
+                }
               }
             }
           }
+        } catch (e) {
+          console.error(`⚠️ [去水印Debug] 模板处理失败:`, e);
         }
       }
-    } 
+    }
 
-    // 后备方案：如果没有模板或识别彻底失败，仍使用纯亮度点
-    if (detectedPixels === 0) {
-      console.log(`💡 [去水印Debug] 回退到亮度检测模式...`);
-      for (let y = startY; y < height; y++) {
-        for (let x = startX; x < width; x++) {
-          const idx = y * width + x;
-          const off = idx * channels;
-          const brightness = (data[off] + data[off+1] + data[off+2]) / 3;
-          if (brightness > 190) { // 更激进的阈值
-            hole[idx] = 1;
-            detectedPixels++;
+    // 后备方案
+    if (detectedPixels === 0 && brightPixels.length > 0) {
+      console.log(`💡 [去水印Debug] 回退到点阵扩展模式`);
+      for (const p of brightPixels) {
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            const ny = p.y + dy, nx = p.x + dx;
+            if (nx >= startX && nx < width && ny >= startY && ny < height) {
+              hole[ny * width + nx] = 1;
+              detectedPixels++;
+            }
           }
         }
       }
