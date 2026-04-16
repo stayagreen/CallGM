@@ -206,25 +206,50 @@ export default function VideoEditor({
   };
 
   useEffect(() => {
-    if (isSmudging && editingImage && canvasRef.current && imageRef.current) {
-      const canvas = canvasRef.current;
-      const img = imageRef.current;
+    if (!isSmudging || !editingImage || !canvasRef.current || !imageRef.current) return;
+
+    const canvas = canvasRef.current;
+    const img = imageRef.current;
+    
+    const updateCanvasSize = () => {
       const context = canvas.getContext('2d');
-      if (context) {
-        // Match canvas internal resolution to image natural resolution
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        
-        // Match canvas display size to image display size to ensure perfect overlay
-        canvas.style.width = `${img.clientWidth}px`;
-        canvas.style.height = `${img.clientHeight}px`;
-        
-        context.lineCap = 'round';
-        context.lineJoin = 'round';
-        setCtx(context);
-        setUndoHistory([]); // Reset history on load
+      if (!context) return;
+
+      // Calculate actual rendered image dimensions (accounting for object-contain)
+      const naturalRatio = img.naturalWidth / img.naturalHeight;
+      const clientRatio = img.clientWidth / img.clientHeight;
+      
+      let renderWidth, renderHeight;
+      if (naturalRatio > clientRatio) {
+        renderWidth = img.clientWidth;
+        renderHeight = img.clientWidth / naturalRatio;
+      } else {
+        renderHeight = img.clientHeight;
+        renderWidth = img.clientHeight * naturalRatio;
       }
-    }
+
+      // Match canvas internal resolution to image natural resolution
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      
+      // Match canvas display size to actual rendered image size
+      canvas.style.width = `${renderWidth}px`;
+      canvas.style.height = `${renderHeight}px`;
+      
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+      setCtx(context);
+    };
+
+    // Initial update
+    updateCanvasSize();
+
+    // Use ResizeObserver to handle window resizing or layout changes
+    const observer = new ResizeObserver(updateCanvasSize);
+    observer.observe(img);
+    observer.observe(img.parentElement!);
+
+    return () => observer.disconnect();
   }, [isSmudging, editingImage]);
 
   // Image Editor Logic
