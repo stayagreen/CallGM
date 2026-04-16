@@ -80,6 +80,7 @@ export default function VideoEditor({
   const [brushFeather, setBrushFeather] = useState(20);
   const [undoHistory, setUndoHistory] = useState<ImageData[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const maskCanvasRef = useRef<HTMLCanvasElement>(null);
   const lastPos = useRef<{x: number, y: number} | null>(null);
   const startPos = useRef<{x: number, y: number} | null>(null);
   const stampOffset = useRef<{dx: number, dy: number} | null>(null);
@@ -268,7 +269,7 @@ export default function VideoEditor({
 
   // Image Editor Logic
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isSmudging || !ctx || !canvasRef.current || !imageRef.current) return;
+    if (!isSmudging || !ctx || !canvasRef.current || !imageRef.current || !maskCanvasRef.current) return;
     
     const rect = canvasRef.current.getBoundingClientRect();
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
@@ -310,11 +311,10 @@ export default function VideoEditor({
     ctx.lineJoin = 'round';
     
     if (smudgeMode === 'inpaint') {
-      ctx.strokeStyle = 'rgba(255, 0, 0, 0.6)';
+      ctx.strokeStyle = 'rgba(0, 100, 255, 0.3)'; // Blue overlay
       ctx.shadowBlur = brushFeather;
-      ctx.shadowColor = 'rgba(255, 0, 0, 0.6)';
+      ctx.shadowColor = 'rgba(0, 100, 255, 0.3)';
     } else {
-      // Stamp mode: we'll use a pattern or manual pixel copying in draw()
       ctx.shadowBlur = brushFeather;
       ctx.shadowColor = 'rgba(0,0,0,0.2)';
     }
@@ -322,7 +322,7 @@ export default function VideoEditor({
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !isSmudging || !ctx || !canvasRef.current || !lastPos.current || !imageRef.current) return;
+    if (!isDrawing || !isSmudging || !ctx || !canvasRef.current || !lastPos.current || !imageRef.current || !maskCanvasRef.current) return;
     
     // Prevent scrolling on touch
     if ('touches' in e) {
@@ -339,10 +339,24 @@ export default function VideoEditor({
     const y = (clientY - rect.top) * scaleY;
 
     if (smudgeMode === 'inpaint') {
+      // Main Canvas: Blue overlay
       ctx.beginPath();
       ctx.moveTo(lastPos.current.x, lastPos.current.y);
       ctx.lineTo(x, y);
       ctx.stroke();
+
+      // Mask Canvas: White mask
+      const maskCtx = maskCanvasRef.current.getContext('2d');
+      if (maskCtx) {
+        maskCtx.beginPath();
+        maskCtx.moveTo(lastPos.current.x, lastPos.current.y);
+        maskCtx.lineTo(x, y);
+        maskCtx.strokeStyle = 'white';
+        maskCtx.lineWidth = brushSize;
+        maskCtx.lineCap = 'round';
+        maskCtx.lineJoin = 'round';
+        maskCtx.stroke();
+      }
     } else if (smudgeMode === 'stamp' && stampOffset.current) {
       // Clone Stamp implementation with feathering
       const brushCanvas = document.createElement('canvas');
@@ -397,10 +411,12 @@ export default function VideoEditor({
   };
 
   const clearMask = () => {
-    if (!ctx || !canvasRef.current) return;
+    if (!ctx || !canvasRef.current || !maskCanvasRef.current) return;
     const currentState = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
     setUndoHistory(prev => [...prev, currentState]);
     ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    const maskCtx = maskCanvasRef.current.getContext('2d');
+    if (maskCtx) maskCtx.clearRect(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
   };
 
   const saveEditedImage = async () => {
@@ -429,7 +445,7 @@ export default function VideoEditor({
           context.drawImage(canvasRef.current!, 0, 0);
         } else {
           // 1. Dual-Canvas Masking: Get mask data
-          const maskCanvas = canvasRef.current!;
+          const maskCanvas = maskCanvasRef.current!;
           const maskCtx = maskCanvas.getContext('2d');
           if (!maskCtx) {
             setIsProcessing(false);
@@ -987,7 +1003,19 @@ export default function VideoEditor({
                     style={{
                       top: '50%',
                       left: '50%',
-                      transform: 'translate(-50%, -50%)'
+                      transform: 'translate(-50%, -50%)',
+                      zIndex: 10
+                    }}
+                  />
+                  <canvas 
+                    ref={maskCanvasRef}
+                    className="absolute pointer-events-none"
+                    style={{
+                      top: '50%',
+                      left: '50%',
+                      transform: 'translate(-50%, -50%)',
+                      zIndex: 5,
+                      display: 'none'
                     }}
                   />
                   {isSelectingSource && (
