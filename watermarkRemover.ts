@@ -12,51 +12,65 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
   console.log(`🔍 [去水印-WASM] 开始处理文件: ${fileName}`);
 
   try {
-    // 0. 智能等待 OpenCV WASM 加载完成
+    // 0. 地毯式探测 OpenCV WASM 加载完成
     console.log(`📦 [去水印-WASM] 探测导入入口... 类型: ${typeof cv}`);
     
-    let cvInst: any = cv;
+    let cvInst: any = null;
 
-    // 方案 A: 检查是否需要调用工厂函数 (4.3.0 常见模式)
-    try {
-      if (typeof cv === 'function') {
-        console.log(`⏳ [去水印-WASM] 执行工厂函数 cv()...`);
-        const result = (cv as any)();
+    // 探测路径 1: 检查是否嵌套在 .default 中 (ESM 导入 CommonJS 的常见情况)
+    let potentialCv: any = cv;
+    if (potentialCv && potentialCv.default) {
+      console.log(`🔎 [去水印-WASM] 发现 .default 嵌套，深入解包...`);
+      potentialCv = potentialCv.default;
+    }
+
+    // 探测路径 2: 检查是否是工厂函数
+    if (typeof potentialCv === 'function') {
+      console.log(`⏳ [去水印-WASM] 检测到工厂函数，执行并解析...`);
+      try {
+        const result = potentialCv();
         if (result && typeof result.then === 'function') {
           cvInst = await result;
           console.log(`✅ [去水印-WASM] 工厂 Promise 解析成功`);
         } else {
           cvInst = result;
-          console.log(`✅ [去水印-WASM] 工厂同步返回成功`);
+          console.log(`✅ [去水印-WASM] 工厂同步调用成功`);
         }
+      } catch (e) {
+        console.log(`⚠️ [去水印-WASM] 工厂模式启动失败: ${e}`);
       }
-    } catch (e) {
-      console.log(`⚠️ [去水印-WASM] 工厂模式调用失败，尝试直接使用: ${e}`);
+    } else {
+      cvInst = potentialCv;
     }
 
-    // 方案 B: 检查 ready 属性
+    // 方案 B: 检查 ready 属性 (WASM 标准)
     if (cvInst && cvInst.ready && typeof cvInst.ready.then === 'function') {
       console.log(`⏳ [去水印-WASM] 检测到 .ready 属性，等待中...`);
       await cvInst.ready;
     }
 
-    // 方案 C: 轮询探测关键 API (Mat)
+    // 方案 C: 终极轮询 (10秒)
     if (!cvInst || !cvInst.Mat) {
-      console.log(`⏳ [去水印-WASM] 关键构造函数未就绪，开始 5s 高频轮询...`);
+      console.log(`⏳ [去水印-WASM] 关键 API (Mat) 仍缺失，开始 10s 轮询...`);
       const start = Date.now();
-      while ((!cvInst || !cvInst.Mat) && Date.now() - start < 5000) {
-        await new Promise(r => setTimeout(r, 100));
-        // 尝试从全局获取 (某些版本会自动挂载)
-        if ((global as any).cv) cvInst = (global as any).cv;
+      while ((!cvInst || !cvInst.Mat) && Date.now() - start < 10000) {
+        await new Promise(r => setTimeout(r, 200));
+        // 特别探测：有些包会挂在全图
+        if ((global as any).cv) {
+          cvInst = (global as any).cv;
+          if (cvInst.Mat) break;
+        }
       }
     }
 
     if (!cvInst || !cvInst.Mat) {
-      console.error(`❌ [去水印-WASM] 无法初始化 OpenCV。可用键:`, Object.keys(cvInst || {}));
-      throw new Error('OpenCV WASM 初始化失败或 API 不兼容。');
+      console.error(`❌ [去水印-WASM] 初始化失败。`);
+      console.error(`- 根对象 Key:`, Object.keys(cv || {}));
+      if (cv && (cv as any).default) console.error(`- .default 对象 Key:`, Object.keys((cv as any).default));
+      throw new Error('无法定位 OpenCV Mat 构造函数。请确保依赖已正确安装并在本地运行 npm install。');
     }
 
-    console.log(`🚀 [去水印-WASM] 环境就绪，准备处理像素...`);
+    console.log(`🚀 [去水印-WASM] 环境就绪 (API版本: ${cvInst.version || '未知'})，开始像素操作...`);
 
     // 1. 读取图片
     const image = sharp(filePath);
