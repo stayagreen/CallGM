@@ -439,59 +439,35 @@ export default function VideoEditor({
           const maskData = maskCtx.getImageData(0, 0, width, height);
           const maskPixels = maskData.data;
           
-          // 2. Iterative Boundary Diffusion with Bounding Box Optimization
-          let minX = width, minY = height, maxX = 0, maxY = 0;
-          let hasMask = false;
-          for (let i = 0; i < width * height; i++) {
-            if (maskPixels[i * 4 + 3] > 50) {
-              const x = i % width;
-              const y = Math.floor(i / width);
-              minX = Math.min(minX, x);
-              minY = Math.min(minY, y);
-              maxX = Math.max(maxX, x);
-              maxY = Math.max(maxY, y);
-              hasMask = true;
-            }
-          }
-
-          if (!hasMask) {
-            setIsProcessing(false);
-            setEditingImage(null);
-            return;
-          }
-
-          // Add padding to bounding box for context
-          const padding = 30;
-          minX = Math.max(0, minX - padding);
-          minY = Math.max(0, minY - padding);
-          maxX = Math.min(width - 1, maxX + padding);
-          maxY = Math.min(height - 1, maxY + padding);
-
+          // 2. Iterative Boundary Diffusion
           const originalData = context.getImageData(0, 0, width, height);
           const pixels = originalData.data;
           
           const hole = new Uint8Array(width * height);
           let holeCount = 0;
 
-          // Hole Positioning (Threshold 50) within bounding box
-          for (let y = minY; y <= maxY; y++) {
-            for (let x = minX; x <= maxX; x++) {
-              const idx = y * width + x;
-              if (maskPixels[idx * 4 + 3] > 50) {
-                hole[idx] = 1;
-                holeCount++;
-              }
+          // Hole Positioning (Threshold 50)
+          for (let i = 0; i < width * height; i++) {
+            if (maskPixels[i * 4 + 3] > 50) {
+              hole[i] = 1;
+              holeCount++;
             }
+          }
+
+          if (holeCount === 0) {
+            setIsProcessing(false);
+            setEditingImage(null);
+            return;
           }
 
           // Diffusion Loop (Max 200 iterations)
           let iterations = 0;
           const maxIterations = 200;
           
-          // Find initial boundary within bounding box
+          // Find initial boundary
           let boundary = [];
-          for (let y = minY; y <= maxY; y++) {
-            for (let x = minX; x <= maxX; x++) {
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
               const idx = y * width + x;
               if (hole[idx] === 1) {
                 let isBoundary = false;
