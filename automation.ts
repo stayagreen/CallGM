@@ -214,7 +214,9 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
   if (fs.existsSync(configPath)) {
       try {
           config = { ...config, ...JSON.parse(fs.readFileSync(configPath, 'utf-8')) };
-          if (config.systemDownloadsDir) systemDownloadsDir = config.systemDownloadsDir;
+          if (config.systemDownloadsDir) {
+              systemDownloadsDir = config.systemDownloadsDir.replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '').trim();
+          }
       } catch (e) {}
   }
 

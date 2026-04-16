@@ -521,11 +521,18 @@ export default function App() {
   };
 
   const saveConfig = async () => {
+    // Clean up systemDownloadsDir to remove invisible characters (like LRM from Windows Explorer) and trim whitespace
+    const cleanedConfig = {
+      ...systemConfig,
+      systemDownloadsDir: systemConfig.systemDownloadsDir ? systemConfig.systemDownloadsDir.replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '').trim() : ''
+    };
+    
     await fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(systemConfig)
+      body: JSON.stringify(cleanedConfig)
     });
+    setSystemConfig(cleanedConfig);
     setShowConfigModal(false);
   };
 
