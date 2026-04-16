@@ -927,6 +927,19 @@ export default function VideoEditor({
                         <div className="p-4 space-y-4 flex-grow bg-white rounded-b-2xl">
                           <div>
                             <div className="flex justify-between items-center mb-1">
+                              <label className="text-xs font-bold text-gray-500">显示时长 (秒)</label>
+                            </div>
+                            <input 
+                              type="number" 
+                              min="1" 
+                              max="60" 
+                              className="w-full text-sm p-2 rounded border border-gray-200" 
+                              value={sb.duration} 
+                              onChange={e => updateStoryboard(sb.id, { duration: parseInt(e.target.value) || 3 })}
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
                               <label className="text-xs font-bold text-gray-500">运镜动画</label>
                               <button onClick={() => applyToAll('animation', sb.animation)} className="text-[10px] text-blue-600 hover:underline">应用到全部</button>
                             </div>
