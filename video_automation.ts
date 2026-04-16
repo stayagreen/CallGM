@@ -275,13 +275,40 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             textParams += `:alpha='min(t/1,1)'`; // 1s fade in
         } else if (sb.textEffect === 'rotate') {
             textParams += `:rotation='t*PI/2'`; // Rotate 90deg/s
-        } else if (sb.textEffect === 'typewriter') {
-            // Typewriter reveal: simple fast fade as fallback (x is not available in drawtext alpha)
-            textParams += `:alpha='min(t/0.5,1)'`; 
         }
         
         filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
         lastLabel = '[v2]';
+
+        // Special handling for Typewriter (using a moving mask)
+        if (sb.textEffect === 'typewriter') {
+            // Create a white rectangle that moves from left to right to reveal the text
+            // We use a separate stream for the mask
+            const revealSpeed = 10; // chars per second approx
+            const revealDuration = Math.min(duration, sb.text.length / revealSpeed);
+            filterComplex += `;${lastLabel}split[v_orig][v_txt];`;
+            // v_mask: a white rectangle that expands to reveal the text
+            // Since we can't easily create a dynamic mask from scratch, we use a trick with crop/overlay
+            // We draw the text on a transparent background, then crop it
+            filterComplex += `[v_txt]drawtext=${textParams}:fontcolor=white[v_white_txt];`;
+            // Actually, a simpler way: draw the text, then overlay a rectangle that matches the background? No.
+            // Let's use the alpha parameter with a time-based expression if we can target characters.
+            // Since we can't, we'll use the 'enable' parameter with multiple drawtext filters for the first 10 chars
+            // OR we use a sliding crop.
+            // Sliding crop:
+            // 1. Draw text on a transparent canvas
+            // 2. Crop it based on time
+            // 3. Overlay it on the original video
+            // But we don't have a transparent canvas easily.
+            
+            // Let's use the alpha parameter with a trick: 
+            // alpha='if(lt(tw*t/${revealDuration}, x-((w-text_w)/2)), 0, 1)'
+            // Wait, drawtext alpha DOES support 'x' (the current pixel x coordinate) in some versions!
+            // Let's try it. If it fails, we'll know.
+            const textX = '(w-text_w)/2';
+            filterComplex = filterComplex.replace(`[v2]`, `[v_pre_type]`);
+            filterComplex += `;[v_pre_type]drawtext=${textParams}:alpha='if(lt(t*tw/${revealDuration}, x-${textX}), 0, 1)'[v2]`;
+        }
 
         // Special handling for Blur Fade In (requires post-processing the text layer)
         if (sb.textEffect === 'blur') {

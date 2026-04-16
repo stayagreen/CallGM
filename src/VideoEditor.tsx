@@ -206,20 +206,23 @@ export default function VideoEditor({
   };
 
   useEffect(() => {
-    if (isSmudging && editingImage && canvasRef.current) {
+    if (isSmudging && editingImage && canvasRef.current && imageRef.current) {
       const canvas = canvasRef.current;
+      const img = imageRef.current;
       const context = canvas.getContext('2d');
       if (context) {
-        const img = new Image();
-        img.onload = () => {
-          canvas.width = img.width;
-          canvas.height = img.height;
-          context.lineCap = 'round';
-          context.lineJoin = 'round';
-          setCtx(context);
-          setUndoHistory([]); // Reset history on load
-        };
-        img.src = editingImage.image;
+        // Match canvas internal resolution to image natural resolution
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        
+        // Match canvas display size to image display size to ensure perfect overlay
+        canvas.style.width = `${img.clientWidth}px`;
+        canvas.style.height = `${img.clientHeight}px`;
+        
+        context.lineCap = 'round';
+        context.lineJoin = 'round';
+        setCtx(context);
+        setUndoHistory([]); // Reset history on load
       }
     }
   }, [isSmudging, editingImage]);
@@ -857,7 +860,16 @@ export default function VideoEditor({
             <div className="flex-grow min-h-0 overflow-hidden bg-gray-100 flex items-center justify-center relative touch-none p-4 sm:p-8">
               {isSmudging ? (
                 <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center bg-white">
-                  <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none block" style={{ maxHeight: 'calc(90vh - 200px)' }} />
+                  <img 
+                    ref={imageRef} 
+                    src={editingImage.image} 
+                    className="max-w-full max-h-full object-contain pointer-events-none block" 
+                    style={{ maxHeight: 'calc(90vh - 200px)' }} 
+                    onLoad={() => {
+                      // Trigger re-render to update canvas size once image is loaded and sized
+                      if (isSmudging) setUndoHistory(prev => [...prev]); 
+                    }}
+                  />
                   <canvas 
                     ref={canvasRef}
                     onMouseDown={startDrawing}
@@ -867,7 +879,13 @@ export default function VideoEditor({
                     onTouchStart={startDrawing}
                     onTouchMove={draw}
                     onTouchEnd={stopDrawing}
-                    className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
+                    className="absolute cursor-crosshair touch-none"
+                    style={{
+                      // These will be updated by useEffect, but we ensure it's centered
+                      top: '50%',
+                      left: '50%',
+                      transform: 'translate(-50%, -50%)'
+                    }}
                   />
                   {isProcessing && (
                     <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
