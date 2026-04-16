@@ -322,36 +322,65 @@ export default function VideoEditor({
 
       canvas.width = imageRef.current.naturalWidth;
       canvas.height = imageRef.current.naturalHeight;
+      const width = canvas.width;
+      const height = canvas.height;
 
       // 1. Draw original image
       context.drawImage(imageRef.current, 0, 0);
 
-      // 2. Get mask data from the smudge canvas
+      // 2. Get mask data from the smudge canvas and scale to natural size
       const maskCtx = canvasRef.current.getContext('2d');
       if (!maskCtx) return;
-      const maskData = maskCtx.getImageData(0, 0, canvas.width, canvas.height);
+      
+      const tempMaskCanvas = document.createElement('canvas');
+      tempMaskCanvas.width = width;
+      tempMaskCanvas.height = height;
+      const tempMaskCtx = tempMaskCanvas.getContext('2d');
+      if (!tempMaskCtx) return;
+      tempMaskCtx.drawImage(canvasRef.current, 0, 0, width, height);
+      const maskData = tempMaskCtx.getImageData(0, 0, width, height);
       
       // 3. Optimized Iterative Boundary Diffusion Algorithm
-      const originalData = context.getImageData(0, 0, canvas.width, canvas.height);
-      const width = canvas.width;
-      const height = canvas.height;
+      const originalData = context.getImageData(0, 0, width, height);
       const pixels = originalData.data;
       const maskPixels = maskData.data;
       
-      // Create a hole map
+      // Create a hole map with dilation
       const hole = new Uint8Array(width * height);
+      const initialHole = new Uint8Array(width * height);
       let holeCount = 0;
-      let boundary = [];
 
       for (let i = 0; i < width * height; i++) {
-        // Mask Threshold: 50
-        if (maskPixels[i * 4 + 3] > 50) {
-          hole[i] = 1;
-          holeCount++;
+        if (maskPixels[i * 4 + 3] > 20) { // Lower threshold to catch soft edges
+          initialHole[i] = 1;
+        }
+      }
+
+      // Dilate mask by 3px to ensure watermark edges are covered
+      const dilation = 3;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = y * width + x;
+          if (initialHole[idx] === 1) {
+            for (let dy = -dilation; dy <= dilation; dy++) {
+              for (let dx = -dilation; dx <= dilation; dx++) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                  const nidx = ny * width + nx;
+                  if (hole[nidx] === 0) {
+                    hole[nidx] = 1;
+                    holeCount++;
+                  }
+                }
+              }
+            }
+          }
         }
       }
 
       // Initial boundary finding
+      let boundary = [];
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
           const idx = y * width + x;
@@ -377,7 +406,7 @@ export default function VideoEditor({
 
       // Iterative Diffusion Loop
       let iterations = 0;
-      const maxIterations = 500; // Increased for better watermark removal
+      const maxIterations = 400; 
       
       while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
         const nextBoundary = new Set<number>();
@@ -385,20 +414,17 @@ export default function VideoEditor({
 
         for (const p of boundary) {
           let r = 0, g = 0, b = 0, count = 0;
-          // 17x17 neighbor sampling for maximum context (watermark removal mindset)
-          const radius = 8;
+          // 9x9 neighbor sampling for balanced performance and context
+          const radius = 4;
           for (let dy = -radius; dy <= radius; dy++) {
             for (let dx = -radius; dx <= radius; dx++) {
-              if (dx === 0 && dy === 0) continue;
               const nx = p.x + dx;
               const ny = p.y + dy;
               if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                 const nidx = ny * width + nx;
                 if (hole[nidx] === 0) {
                   const off = nidx * 4;
-                  // Stronger weighting for non-hole pixels
-                  const distSq = dx * dx + dy * dy;
-                  const weight = 1 / (distSq * distSq); // Inverse biquad distance weight
+                  const weight = 1 / (dx * dx + dy * dy + 0.5);
                   r += pixels[off] * weight;
                   g += pixels[off+1] * weight;
                   b += pixels[off+2] * weight;
@@ -461,11 +487,12 @@ export default function VideoEditor({
         
         for (let i = 0; i < maskPixels.length; i += 4) {
           const alpha = maskPixels[i + 3];
-          if (alpha > 50) {
-            // Full coverage for smudge area (no original pixels left)
-            pixels[i] = blurredData.data[i];
-            pixels[i+1] = blurredData.data[i+1];
-            pixels[i+2] = blurredData.data[i+2];
+          if (alpha > 20) {
+            // Smooth blending based on alpha
+            const blend = Math.min(1, alpha / 150); // Boost coverage in center
+            pixels[i] = pixels[i] * (1 - blend) + blurredData.data[i] * blend;
+            pixels[i+1] = pixels[i+1] * (1 - blend) + blurredData.data[i+1] * blend;
+            pixels[i+2] = pixels[i+2] * (1 - blend) + blurredData.data[i+2] * blend;
           }
         }
         context.putImageData(originalData, 0, 0);
