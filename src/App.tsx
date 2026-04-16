@@ -4,8 +4,9 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors } from 'lucide-react';
 import VideoEditor, { VideoTask } from './VideoEditor';
+import ImageEditor from './ImageEditor';
 
 interface Task {
   id: string;
@@ -186,6 +187,7 @@ export default function App() {
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
   const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
+  const [editingGalleryImage, setEditingGalleryImage] = useState<string | null>(null);
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
@@ -1116,13 +1118,22 @@ export default function App() {
                   </div>
                   <div className="mt-3 flex items-center justify-between px-1">
                     <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
-                    <button
-                      onClick={() => deleteGalleryImage(img)}
-                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                      title="彻底删除源文件"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => setEditingGalleryImage(img)}
+                        className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-md transition-colors"
+                        title="编辑图片"
+                      >
+                        <Scissors className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteGalleryImage(img)}
+                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                        title="彻底删除源文件"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1492,6 +1503,33 @@ export default function App() {
             </button>
           </div>
         </div>
+      )}
+      
+      {editingGalleryImage && (
+        <ImageEditor
+          image={`/downloads/${editingGalleryImage}`}
+          onSave={async (newImage) => {
+            try {
+              const uploadRes = await fetch('/api/gallery/update', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  filename: editingGalleryImage,
+                  image: newImage
+                })
+              });
+              
+              if (!uploadRes.ok) throw new Error('上传失败');
+              
+              setEditingGalleryImage(null);
+              fetchGallery(); // Refresh gallery
+            } catch (error) {
+              console.error('Save edited image failed:', error);
+              alert('保存失败，请重试');
+            }
+          }}
+          onCancel={() => setEditingGalleryImage(null)}
+        />
       )}
       
       {viewingImage && (

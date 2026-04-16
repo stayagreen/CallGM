@@ -488,6 +488,38 @@ async function startServer() {
     res.json({ success: true, files: savedFiles });
   });
 
+  // Update gallery image
+  app.post('/api/gallery/update', express.json({ limit: '50mb' }), (req, res) => {
+    const { filename, image } = req.body;
+    if (!filename || !image) return res.status(400).json({ error: 'Missing filename or image' });
+    
+    try {
+      const matches = image.match(/^data:image\/([a-zA-Z+]+);base64,(.+)$/);
+      if (!matches) return res.status(400).json({ error: 'Invalid image format' });
+      
+      const data = matches[2];
+      const buffer = Buffer.from(data, 'base64');
+      const filePath = path.join(downloadDir, filename);
+      
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'Original image not found' });
+      }
+      
+      fs.writeFileSync(filePath, buffer);
+      
+      // Also delete thumbnail so it gets regenerated
+      const thumbPath = path.join(thumbDownloadsDir, filename);
+      if (fs.existsSync(thumbPath)) {
+        fs.unlinkSync(thumbPath);
+      }
+      
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Failed to update gallery image:', e);
+      res.status(500).json({ error: 'Failed to update image' });
+    }
+  });
+
   // Copy gallery images to uploads for task reference
   app.post('/api/images/copy-to-uploads', (req, res) => {
     const { filenames } = req.body;

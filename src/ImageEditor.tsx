@@ -1,0 +1,650 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { X, Scissors, Target, Undo2 } from 'lucide-react';
+import ReactCrop, { type Crop } from 'react-image-crop';
+import 'react-image-crop/dist/ReactCrop.css';
+
+export interface ImageEditorProps {
+  image: string;
+  onSave: (newImage: string) => void;
+  onCancel: () => void;
+}
+
+export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProps) {
+  const [crop, setCrop] = useState<Crop>();
+  const [isSmudging, setIsSmudging] = useState(false);
+  const [smudgeMode, setSmudgeMode] = useState<'inpaint' | 'stamp'>('inpaint');
+  const [brushSize, setBrushSize] = useState(20);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [undoHistory, setUndoHistory] = useState<ImageData[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isSelectingSource, setIsSelectingSource] = useState(false);
+  const [stampSource, setStampSource] = useState<{x: number, y: number} | null>(null);
+  const [ctx, setCtx] = useState<CanvasRenderingContext2D | null>(null);
+
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const maskCanvasRef = useRef<HTMLCanvasElement>(null);
+  const lastPos = useRef<{x: number, y: number} | null>(null);
+  const startPos = useRef<{x: number, y: number} | null>(null);
+  const stampOffset = useRef<{dx: number, dy: number} | null>(null);
+
+  useEffect(() => {
+    if (!isSmudging || !canvasRef.current || !imageRef.current) return;
+
+    const canvas = canvasRef.current;
+    const img = imageRef.current;
+    
+    const updateCanvasSize = () => {
+      const context = canvas.getContext('2d');
+      if (!context) return;
+
+      const naturalRatio = img.naturalWidth / img.naturalHeight;
+      const clientRatio = img.clientWidth / img.clientHeight;
+      
+      let renderWidth, renderHeight;
+      if (naturalRatio > clientRatio) {
+        renderWidth = img.clientWidth;
+        renderHeight = img.clientWidth / naturalRatio;
+      } else {
+        renderHeight = img.clientHeight;
+        renderWidth = img.clientHeight * naturalRatio;
+      }
+
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      
+      if (maskCanvasRef.current) {
+        maskCanvasRef.current.width = img.naturalWidth;
+        maskCanvasRef.current.height = img.naturalHeight;
+        maskCanvasRef.current.style.width = `${renderWidth}px`;
+        maskCanvasRef.current.style.height = `${renderHeight}px`;
+      }
+      
+      canvas.style.width = `${renderWidth}px`;
+      canvas.style.height = `${renderHeight}px`;
+      
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+      setCtx(context);
+    };
+
+    updateCanvasSize();
+
+    const observer = new ResizeObserver(updateCanvasSize);
+    observer.observe(img);
+    if (img.parentElement) observer.observe(img.parentElement);
+
+    return () => observer.disconnect();
+  }, [isSmudging]);
+
+  useEffect(() => {
+    if (ctx && canvasRef.current) {
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      setUndoHistory([]);
+      setStampSource(null);
+    }
+  }, [smudgeMode, ctx]);
+
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isSmudging || !ctx || !canvasRef.current || !imageRef.current || !maskCanvasRef.current) return;
+    
+    const rect = canvasRef.current.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
+
+    if (isSelectingSource) {
+      setStampSource({ x, y });
+      setIsSelectingSource(false);
+      return;
+    }
+
+    if ('touches' in e) {
+      if (e.cancelable) e.preventDefault();
+    }
+    
+    setIsDrawing(true);
+
+    const currentState = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
+    setUndoHistory(prev => [...prev, currentState]);
+
+    lastPos.current = { x, y };
+    startPos.current = { x, y };
+
+    if (smudgeMode === 'stamp' && stampSource) {
+      stampOffset.current = {
+        dx: stampSource.x - x,
+        dy: stampSource.y - y
+      };
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y);
+    ctx.lineWidth = brushSize;
+    
+    if (smudgeMode === 'inpaint') {
+      ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+      ctx.stroke();
+    } else if (smudgeMode === 'stamp' && stampOffset.current) {
+      drawStamp(x, y);
+    }
+  };
+
+  const drawStamp = (x: number, y: number) => {
+    if (!ctx || !imageRef.current || !stampOffset.current) return;
+    
+    const sourceX = x + stampOffset.current.dx;
+    const sourceY = y + stampOffset.current.dy;
+    
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2, true);
+    ctx.clip();
+    
+    ctx.drawImage(
+      imageRef.current,
+      sourceX - brushSize / 2, sourceY - brushSize / 2, brushSize, brushSize,
+      x - brushSize / 2, y - brushSize / 2, brushSize, brushSize
+    );
+    
+    ctx.restore();
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawing || !ctx || !canvasRef.current || isSelectingSource) return;
+
+    if ('touches' in e) {
+      if (e.cancelable) e.preventDefault();
+    }
+
+    const rect = canvasRef.current.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+    
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+    const x = (clientX - rect.left) * scaleX;
+    const y = (clientY - rect.top) * scaleY;
+
+    if (smudgeMode === 'inpaint') {
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    } else if (smudgeMode === 'stamp' && stampOffset.current) {
+      if (lastPos.current) {
+        const dx = x - lastPos.current.x;
+        const dy = y - lastPos.current.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const steps = Math.max(1, Math.floor(distance / (brushSize / 4)));
+        
+        for (let i = 0; i < steps; i++) {
+          const interpX = lastPos.current.x + (dx * i) / steps;
+          const interpY = lastPos.current.y + (dy * i) / steps;
+          drawStamp(interpX, interpY);
+        }
+      }
+      drawStamp(x, y);
+    }
+    
+    lastPos.current = { x, y };
+  };
+
+  const stopDrawing = () => {
+    if (!isDrawing) return;
+    setIsDrawing(false);
+    if (ctx && smudgeMode === 'inpaint') {
+      ctx.closePath();
+    }
+    lastPos.current = null;
+    startPos.current = null;
+    stampOffset.current = null;
+  };
+
+  const undo = () => {
+    if (undoHistory.length === 0 || !ctx || !canvasRef.current) return;
+    const previousState = undoHistory[undoHistory.length - 1];
+    ctx.putImageData(previousState, 0, 0);
+    setUndoHistory(prev => prev.slice(0, -1));
+  };
+
+  const handleSave = async () => {
+    if (isSmudging && canvasRef.current && imageRef.current) {
+      if (smudgeMode === 'inpaint') {
+        setIsProcessing(true);
+        setTimeout(() => {
+          try {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            if (!context) {
+              setIsProcessing(false);
+              return;
+            }
+
+            canvas.width = imageRef.current!.naturalWidth;
+            canvas.height = imageRef.current!.naturalHeight;
+            const width = canvas.width;
+            const height = canvas.height;
+
+            // 1. Draw original image
+            context.drawImage(imageRef.current!, 0, 0);
+
+            // 1. Dual-Canvas Masking: Get mask data
+            const maskCanvas = maskCanvasRef.current!;
+            const maskCtx = maskCanvas.getContext('2d');
+            if (!maskCtx) {
+              setIsProcessing(false);
+              return;
+            }
+            
+            const maskData = maskCtx.getImageData(0, 0, width, height);
+            const maskPixels = maskData.data;
+            
+            // 2. Iterative Boundary Diffusion
+            const originalData = context.getImageData(0, 0, width, height);
+            const pixels = originalData.data;
+            
+            const hole = new Uint8Array(width * height);
+            let holeCount = 0;
+
+            // Hole Positioning (Threshold 50)
+            for (let i = 0; i < width * height; i++) {
+              if (maskPixels[i * 4 + 3] > 50) {
+                hole[i] = 1;
+              }
+            }
+
+            // Dilation: Expand hole to sample from a wider area
+            const dilatedHole = new Uint8Array(width * height);
+            const dilation = 4;
+            for (let y = 0; y < height; y++) {
+              for (let x = 0; x < width; x++) {
+                if (hole[y * width + x] === 1) {
+                  for (let dy = -dilation; dy <= dilation; dy++) {
+                    for (let dx = -dilation; dx <= dilation; dx++) {
+                      const nx = x + dx;
+                      const ny = y + dy;
+                      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                        dilatedHole[ny * width + nx] = 1;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            hole.set(dilatedHole);
+            for (let i = 0; i < width * height; i++) if (hole[i] === 1) holeCount++;
+
+            // Pre-fill: Fill the hole with the average color of the boundary pixels
+            let sumR = 0, sumG = 0, sumB = 0, boundaryCount = 0;
+            for (let i = 0; i < width * height; i++) {
+              if (hole[i] === 1) {
+                const x = i % width;
+                const y = Math.floor(i / width);
+                for (let dy = -1; dy <= 1; dy++) {
+                  for (let dx = -1; dx <= 1; dx++) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                      const nidx = ny * width + nx;
+                      if (hole[nidx] === 0) {
+                        const off = nidx * 4;
+                        sumR += pixels[off];
+                        sumG += pixels[off+1];
+                        sumB += pixels[off+2];
+                        boundaryCount++;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            
+            if (boundaryCount > 0) {
+              const avgR = sumR / boundaryCount;
+              const avgG = sumG / boundaryCount;
+              const avgB = sumB / boundaryCount;
+              for (let i = 0; i < width * height; i++) {
+                if (hole[i] === 1) {
+                  const off = i * 4;
+                  pixels[off] = avgR;
+                  pixels[off+1] = avgG;
+                  pixels[off+2] = avgB;
+                }
+              }
+            }
+
+            if (holeCount === 0) {
+              setIsProcessing(false);
+              return;
+            }
+
+            // Diffusion Loop (Max 500 iterations)
+            let iterations = 0;
+            const maxIterations = 500;
+            
+            // Find initial boundary
+            let boundary = [];
+            for (let y = 0; y < height; y++) {
+              for (let x = 0; x < width; x++) {
+                const idx = y * width + x;
+                if (hole[idx] === 1) {
+                  let isBoundary = false;
+                  for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                      if (dx === 0 && dy === 0) continue;
+                      const nx = x + dx;
+                      const ny = y + dy;
+                      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                        if (hole[ny * width + nx] === 0) {
+                          isBoundary = true;
+                          break;
+                        }
+                      }
+                    }
+                    if (isBoundary) break;
+                  }
+                  if (isBoundary) boundary.push({x, y, idx});
+                }
+              }
+            }
+
+            while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
+              const nextBoundary = new Set<number>();
+              const filledThisIteration = [];
+
+              for (const p of boundary) {
+                let r = 0, g = 0, b = 0, count = 0;
+                // 8-neighbor sampling (3x3 window)
+                for (let dy = -1; dy <= 1; dy++) {
+                  for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = p.x + dx;
+                    const ny = p.y + dy;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                      const nidx = ny * width + nx;
+                      if (hole[nidx] === 0) {
+                        const off = nidx * 4;
+                        r += pixels[off];
+                        g += pixels[off+1];
+                        b += pixels[off+2];
+                        count++;
+                      }
+                    }
+                  }
+                }
+
+                if (count > 0) {
+                  const off = p.idx * 4;
+                  pixels[off] = r / count;
+                  pixels[off+1] = g / count;
+                  pixels[off+2] = b / count;
+                  filledThisIteration.push(p.idx);
+                }
+              }
+
+              for (const idx of filledThisIteration) {
+                hole[idx] = 0;
+                holeCount--;
+                const x = idx % width;
+                const y = Math.floor(idx / width);
+                for (let dy = -1; dy <= 1; dy++) {
+                  for (let dx = -1; dx <= 1; dx++) {
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                      const nidx = ny * width + nx;
+                      if (hole[nidx] === 1) nextBoundary.add(nidx);
+                    }
+                  }
+                }
+              }
+
+              boundary = Array.from(nextBoundary).map(idx => ({
+                x: idx % width,
+                y: Math.floor(idx / width),
+                idx
+              }));
+              iterations++;
+            }
+
+            // 3. Post-processing: Smooth and Blend
+            const workCanvas = document.createElement('canvas');
+            workCanvas.width = width;
+            workCanvas.height = height;
+            const workCtx = workCanvas.getContext('2d');
+            if (!workCtx) {
+              setIsProcessing(false);
+              return;
+            }
+
+            // Put the filled data into work canvas
+            const filledData = new ImageData(new Uint8ClampedArray(pixels), width, height);
+            workCtx.putImageData(filledData, 0, 0);
+
+            // Apply 2px blur
+            const blurCanvas = document.createElement('canvas');
+            blurCanvas.width = width;
+            blurCanvas.height = height;
+            const blurCtx = blurCanvas.getContext('2d');
+            if (!blurCtx) {
+              setIsProcessing(false);
+              return;
+            }
+            blurCtx.filter = 'blur(2px)';
+            blurCtx.drawImage(workCanvas, 0, 0);
+
+            // Clip to mask shape using destination-in
+            const finalPatchCanvas = document.createElement('canvas');
+            finalPatchCanvas.width = width;
+            finalPatchCanvas.height = height;
+            const finalPatchCtx = finalPatchCanvas.getContext('2d');
+            if (!finalPatchCtx) {
+              setIsProcessing(false);
+              return;
+            }
+
+            finalPatchCtx.drawImage(blurCanvas, 0, 0);
+            finalPatchCtx.globalCompositeOperation = 'destination-in';
+            finalPatchCtx.drawImage(maskCanvas, 0, 0);
+
+            // Final Composite: Overlay on original
+            context.drawImage(finalPatchCanvas, 0, 0);
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            onSave(dataUrl);
+          } catch (error) {
+            console.error('Inpainting error:', error);
+            alert('处理失败，请重试');
+          } finally {
+            setIsProcessing(false);
+          }
+        }, 0);
+      } else {
+        const finalCanvas = document.createElement('canvas');
+        finalCanvas.width = canvasRef.current.width;
+        finalCanvas.height = canvasRef.current.height;
+        const finalCtx = finalCanvas.getContext('2d')!;
+        
+        finalCtx.drawImage(imageRef.current, 0, 0);
+        finalCtx.drawImage(canvasRef.current, 0, 0);
+        
+        const dataUrl = finalCanvas.toDataURL('image/png');
+        onSave(dataUrl);
+      }
+    } else if (!isSmudging && crop && imageRef.current) {
+      const canvas = document.createElement('canvas');
+      const scaleX = imageRef.current.naturalWidth / imageRef.current.width;
+      const scaleY = imageRef.current.naturalHeight / imageRef.current.height;
+      canvas.width = crop.width * scaleX;
+      canvas.height = crop.height * scaleY;
+      const ctx = canvas.getContext('2d');
+
+      if (ctx) {
+        ctx.drawImage(
+          imageRef.current,
+          crop.x * scaleX,
+          crop.y * scaleY,
+          crop.width * scaleX,
+          crop.height * scaleY,
+          0,
+          0,
+          crop.width * scaleX,
+          crop.height * scaleY
+        );
+        const dataUrl = canvas.toDataURL('image/png');
+        onSave(dataUrl);
+      }
+    } else {
+      onCancel();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center sm:p-4 z-[999]">
+      <div className="bg-white rounded-none sm:rounded-2xl shadow-2xl w-full h-full sm:h-auto sm:max-w-4xl sm:max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="p-3 sm:p-4 border-b border-gray-100 flex justify-between items-center bg-white">
+          <h3 className="font-bold text-base sm:text-lg flex items-center gap-2"><Scissors size={18} className="sm:w-5 sm:h-5"/> 图片编辑</h3>
+          <div className="flex gap-1.5 sm:gap-2">
+            <div className="flex bg-gray-100 p-1 rounded-xl">
+              <button 
+                onClick={() => { setIsSmudging(true); setSmudgeMode('inpaint'); }} 
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${isSmudging && smudgeMode === 'inpaint' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                智能填充
+              </button>
+              <button 
+                onClick={() => { setIsSmudging(true); setSmudgeMode('stamp'); }} 
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${isSmudging && smudgeMode === 'stamp' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                克隆图章
+              </button>
+            </div>
+            <button onClick={onCancel} className="p-1.5 sm:p-2 text-gray-400 hover:text-gray-600"><X size={20}/></button>
+          </div>
+        </div>
+        <div className="flex-grow min-h-0 overflow-hidden bg-gray-100 flex items-center justify-center relative touch-none p-4 sm:p-8">
+          {isSmudging ? (
+            <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center bg-white">
+              <img 
+                ref={imageRef} 
+                src={image} 
+                className="max-w-full max-h-full object-contain pointer-events-none block" 
+                style={{ maxHeight: 'calc(90vh - 200px)' }} 
+                onLoad={() => {
+                  if (isSmudging) setUndoHistory(prev => [...prev]); 
+                }}
+              />
+              <canvas 
+                ref={canvasRef}
+                onMouseDown={startDrawing}
+                onMouseMove={draw}
+                onMouseUp={stopDrawing}
+                onMouseLeave={stopDrawing}
+                onTouchStart={startDrawing}
+                onTouchMove={draw}
+                onTouchEnd={stopDrawing}
+                className={`absolute cursor-crosshair touch-none ${isSelectingSource ? 'cursor-copy' : ''}`}
+                style={{
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: 10
+                }}
+              />
+              <canvas 
+                ref={maskCanvasRef}
+                className="absolute pointer-events-none"
+                style={{
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: 5,
+                  opacity: 0
+                }}
+              />
+              {isSelectingSource && (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-blue-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg animate-bounce z-20">
+                  请点击图片选择采样点
+                </div>
+              )}
+              {stampSource && canvasRef.current && smudgeMode === 'stamp' && (
+                <div 
+                  className="absolute border-2 border-blue-600 rounded-full w-6 h-6 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-20 shadow-lg"
+                  style={{
+                    left: `calc(50% + ${(stampSource.x - canvasRef.current.width/2) / canvasRef.current.width * parseFloat(canvasRef.current.style.width)}px)`,
+                    top: `calc(50% + ${(stampSource.y - canvasRef.current.height/2) / canvasRef.current.height * parseFloat(canvasRef.current.style.height)}px)`
+                  }}
+                >
+                  <div className="absolute inset-0 border border-white rounded-full flex items-center justify-center">
+                    <div className="w-1 h-1 bg-blue-600 rounded-full"></div>
+                  </div>
+                </div>
+              )}
+              {isProcessing && (
+                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3 sm:mb-4"></div>
+                  <p className="text-blue-800 font-bold text-sm sm:text-base">后台智能处理中...</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="max-w-full max-h-full flex items-center justify-center overflow-hidden">
+              <ReactCrop crop={crop} onChange={c => setCrop(c)}>
+                <img ref={imageRef} src={image} className="max-w-full max-h-full object-contain shadow-lg block" style={{ maxHeight: 'calc(90vh - 200px)' }} />
+              </ReactCrop>
+            </div>
+          )}
+        </div>
+        <div className="p-3 sm:p-4 border-t border-gray-100 flex flex-col sm:flex-row justify-between items-center bg-white gap-3 sm:gap-4">
+          {isSmudging ? (
+            <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-center sm:justify-start w-full sm:w-auto">
+              {smudgeMode === 'stamp' && (
+                <button 
+                  onClick={() => setIsSelectingSource(true)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition ${isSelectingSource ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
+                >
+                  <Target size={14}/> {stampSource ? '重新采样' : '选择采样点'}
+                </button>
+              )}
+              <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                <span className="text-[10px] sm:text-sm text-gray-500 font-medium">画笔:</span>
+                <input 
+                  type="range" 
+                  min="5" max="100" 
+                  value={brushSize} 
+                  onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                  className="w-16 sm:w-24 accent-blue-600 h-1.5 sm:h-2"
+                />
+              </div>
+              <button 
+                onClick={undo}
+                disabled={undoHistory.length === 0}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition ${undoHistory.length === 0 ? 'text-gray-300 cursor-not-allowed' : 'text-gray-600 hover:bg-gray-100'}`}
+              >
+                <Undo2 size={16}/> 撤销
+              </button>
+            </div>
+          ) : (
+            <div className="text-xs sm:text-sm text-gray-500 font-medium">
+              拖动边缘调整裁剪区域
+            </div>
+          )}
+          <div className="flex gap-2 w-full sm:w-auto">
+            <button onClick={onCancel} className="flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-xl font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 transition text-sm sm:text-base">取消</button>
+            <button 
+              onClick={handleSave} 
+              disabled={isProcessing}
+              className="flex-1 sm:flex-none px-4 sm:px-6 py-2 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 transition shadow-md hover:shadow-lg disabled:opacity-50 text-sm sm:text-base"
+            >
+              {isProcessing ? '处理中...' : '确认修改'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
