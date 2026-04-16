@@ -276,7 +276,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
         } else if (sb.textEffect === 'blur') {
             // 毛玻璃淡入
-            const blur = `(1-min(t/0.8,1))*20`;
+            const blur = `'(1-min(t/0.8,1))*20'`;
             filterComplex += `;${lastLabel}split[v_pre_blur][v_blur_layer];[v_blur_layer]boxblur=${blur},fade=t=out:st=0:d=0.8:alpha=1[v_blurred];[v_pre_blur][v_blurred]overlay=format=auto[v2]`;
             // 重新应用文字绘制到 v2
             filterComplex += `;[v2]drawtext=${textParams}:alpha='min(t/0.8,1)'[v2_text]`;
