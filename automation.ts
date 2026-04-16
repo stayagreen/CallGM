@@ -579,15 +579,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
     }
     
     console.log('\n🎉 所有任务物理模拟执行完毕！');
-    console.log('关闭当前浏览器标签页...');
-    if (isMac) {
-        await keyboard.pressKey(Key.LeftSuper, Key.W);
-        await keyboard.releaseKey(Key.LeftSuper, Key.W);
-    } else {
-        await keyboard.pressKey(Key.LeftControl, Key.W);
-        await keyboard.releaseKey(Key.LeftControl, Key.W);
-    }
-    
     return tasks;
   } catch (error: any) {
     console.error('\n❌ 自动化执行过程中发生严重错误:');
@@ -607,6 +598,23 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
     }
     return tasks;
   } finally {
+    try {
+        // 只有当加载了 nutjs 且环境支持时才尝试关闭
+        const nutjs = await import('@nut-tree-fork/nut-js');
+        const { keyboard, Key } = nutjs;
+        const isMac = os.platform() === 'darwin';
+        
+        console.log('🏁 正在尝试关闭自动化任务使用的浏览器标签页...');
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.W);
+            await keyboard.releaseKey(Key.LeftSuper, Key.W);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.W);
+            await keyboard.releaseKey(Key.LeftControl, Key.W);
+        }
+    } catch (e) {
+        // 如果 nutjs 还没加载或者关闭失败，静默处理
+    }
     jobProgress.delete(filename);
   }
 }
