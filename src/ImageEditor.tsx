@@ -13,9 +13,10 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
   const [crop, setCrop] = useState<Crop>();
   const [isSmudging, setIsSmudging] = useState(false);
   const [smudgeMode, setSmudgeMode] = useState<'inpaint' | 'stamp'>('inpaint');
-  const [brushSize, setBrushSize] = useState(20);
+  const [brushSize, setBrushSize] = useState(40);
+  const [brushFeather, setBrushFeather] = useState(20);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [undoHistory, setUndoHistory] = useState<ImageData[]>([]);
+  const [undoHistory, setUndoHistory] = useState<{main: ImageData, mask: ImageData}[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSelectingSource, setIsSelectingSource] = useState(false);
   const [stampSource, setStampSource] = useState<{x: number, y: number} | null>(null);
@@ -80,6 +81,12 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
   useEffect(() => {
     if (ctx && canvasRef.current) {
       ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      if (maskCanvasRef.current) {
+        const maskCtx = maskCanvasRef.current.getContext('2d');
+        if (maskCtx) {
+          maskCtx.clearRect(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height);
+        }
+      }
       setUndoHistory([]);
       setStampSource(null);
     }
@@ -103,14 +110,18 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
       return;
     }
 
+    // Prevent scrolling on touch
     if ('touches' in e) {
       if (e.cancelable) e.preventDefault();
     }
     
     setIsDrawing(true);
 
+    // Save current state for undo
     const currentState = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
-    setUndoHistory(prev => [...prev, currentState]);
+    const maskCtx = maskCanvasRef.current.getContext('2d');
+    const currentMaskState = maskCtx ? maskCtx.getImageData(0, 0, maskCanvasRef.current.width, maskCanvasRef.current.height) : new ImageData(maskCanvasRef.current.width, maskCanvasRef.current.height);
+    setUndoHistory(prev => [...prev, { main: currentState, mask: currentMaskState }]);
 
     lastPos.current = { x, y };
     startPos.current = { x, y };
@@ -122,42 +133,24 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
       };
     }
 
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    ctx.lineTo(x, y);
-    ctx.lineWidth = brushSize;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     
     if (smudgeMode === 'inpaint') {
-      ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
-      ctx.stroke();
-    } else if (smudgeMode === 'stamp' && stampOffset.current) {
-      drawStamp(x, y);
+      ctx.strokeStyle = 'rgba(0, 100, 255, 0.3)'; // Blue overlay
+      ctx.shadowBlur = brushFeather;
+      ctx.shadowColor = 'rgba(0, 100, 255, 0.3)';
+    } else {
+      ctx.shadowBlur = brushFeather;
+      ctx.shadowColor = 'rgba(0,0,0,0.2)';
     }
-  };
-
-  const drawStamp = (x: number, y: number) => {
-    if (!ctx || !imageRef.current || !stampOffset.current) return;
-    
-    const sourceX = x + stampOffset.current.dx;
-    const sourceY = y + stampOffset.current.dy;
-    
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2, true);
-    ctx.clip();
-    
-    ctx.drawImage(
-      imageRef.current,
-      sourceX - brushSize / 2, sourceY - brushSize / 2, brushSize, brushSize,
-      x - brushSize / 2, y - brushSize / 2, brushSize, brushSize
-    );
-    
-    ctx.restore();
+    ctx.lineWidth = brushSize;
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !ctx || !canvasRef.current || isSelectingSource) return;
-
+    if (!isDrawing || !isSmudging || !ctx || !canvasRef.current || !lastPos.current || !imageRef.current || !maskCanvasRef.current) return;
+    
+    // Prevent scrolling on touch
     if ('touches' in e) {
       if (e.cancelable) e.preventDefault();
     }
@@ -172,42 +165,78 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
     const y = (clientY - rect.top) * scaleY;
 
     if (smudgeMode === 'inpaint') {
+      // Main Canvas: Blue overlay
+      ctx.beginPath();
+      ctx.moveTo(lastPos.current.x, lastPos.current.y);
       ctx.lineTo(x, y);
       ctx.stroke();
-    } else if (smudgeMode === 'stamp' && stampOffset.current) {
-      if (lastPos.current) {
-        const dx = x - lastPos.current.x;
-        const dy = y - lastPos.current.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        const steps = Math.max(1, Math.floor(distance / (brushSize / 4)));
-        
-        for (let i = 0; i < steps; i++) {
-          const interpX = lastPos.current.x + (dx * i) / steps;
-          const interpY = lastPos.current.y + (dy * i) / steps;
-          drawStamp(interpX, interpY);
-        }
+
+      // Mask Canvas: White mask
+      const maskCtx = maskCanvasRef.current.getContext('2d');
+      if (maskCtx) {
+        maskCtx.beginPath();
+        maskCtx.moveTo(lastPos.current.x, lastPos.current.y);
+        maskCtx.lineTo(x, y);
+        maskCtx.strokeStyle = 'white';
+        maskCtx.lineWidth = brushSize;
+        maskCtx.lineCap = 'round';
+        maskCtx.lineJoin = 'round';
+        maskCtx.stroke();
       }
-      drawStamp(x, y);
+    } else if (smudgeMode === 'stamp' && stampOffset.current) {
+      // Clone Stamp implementation with feathering
+      const brushCanvas = document.createElement('canvas');
+      brushCanvas.width = brushSize;
+      brushCanvas.height = brushSize;
+      const bCtx = brushCanvas.getContext('2d');
+      if (!bCtx) return;
+
+      // 1. Draw the source pixels
+      bCtx.drawImage(
+        imageRef.current,
+        x + stampOffset.current.dx - brushSize/2,
+        y + stampOffset.current.dy - brushSize/2,
+        brushSize, brushSize,
+        0, 0, brushSize, brushSize
+      );
+
+      // 2. Apply radial gradient for feathering
+      bCtx.globalCompositeOperation = 'destination-in';
+      const grad = bCtx.createRadialGradient(
+        brushSize / 2, brushSize / 2, (brushSize / 2) * (1 - brushFeather / 100),
+        brushSize / 2, brushSize / 2, brushSize / 2
+      );
+      grad.addColorStop(0, 'rgba(0,0,0,1)');
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      bCtx.fillStyle = grad;
+      bCtx.fillRect(0, 0, brushSize, brushSize);
+
+      // 3. Draw to main canvas
+      ctx.drawImage(brushCanvas, x - brushSize/2, y - brushSize/2);
     }
-    
+
     lastPos.current = { x, y };
   };
 
   const stopDrawing = () => {
     if (!isDrawing) return;
     setIsDrawing(false);
-    if (ctx && smudgeMode === 'inpaint') {
-      ctx.closePath();
-    }
     lastPos.current = null;
     startPos.current = null;
     stampOffset.current = null;
+    if (ctx) {
+      ctx.shadowBlur = 0; // Reset shadow
+    }
   };
 
   const undo = () => {
-    if (undoHistory.length === 0 || !ctx || !canvasRef.current) return;
+    if (undoHistory.length === 0 || !ctx || !canvasRef.current || !maskCanvasRef.current) return;
     const previousState = undoHistory[undoHistory.length - 1];
-    ctx.putImageData(previousState, 0, 0);
+    ctx.putImageData(previousState.main, 0, 0);
+    const maskCtx = maskCanvasRef.current.getContext('2d');
+    if (maskCtx) {
+      maskCtx.putImageData(previousState.mask, 0, 0);
+    }
     setUndoHistory(prev => prev.slice(0, -1));
   };
 
@@ -319,6 +348,7 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
 
             if (holeCount === 0) {
               setIsProcessing(false);
+              onSave(image);
               return;
             }
 
@@ -617,6 +647,16 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
                   min="5" max="100" 
                   value={brushSize} 
                   onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                  className="w-16 sm:w-24 accent-blue-600 h-1.5 sm:h-2"
+                />
+              </div>
+              <div className="flex items-center gap-2 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                <span className="text-[10px] sm:text-sm text-gray-500 font-medium">羽化:</span>
+                <input 
+                  type="range" 
+                  min="0" max="100" 
+                  value={brushFeather} 
+                  onChange={(e) => setBrushFeather(parseInt(e.target.value))}
                   className="w-16 sm:w-24 accent-blue-600 h-1.5 sm:h-2"
                 />
               </div>
