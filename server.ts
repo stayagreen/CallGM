@@ -12,7 +12,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  // AI Studio sets DISABLE_HMR=true. When running locally outside AI Studio, default to 4000.
+  const PORT = process.env.DISABLE_HMR === 'true' ? 3000 : 4000;
 
   app.use(express.json({ limit: "50mb" }));
 
@@ -411,12 +412,28 @@ async function startServer() {
 
   // Delete a downloaded video
   app.delete('/api/videos/:filename', (req, res) => {
-    const filePath = path.join(videoDownloadDir, req.params.filename);
-    const thumbPath = path.join(videoThumbDir, req.params.filename.replace(/\.[^/.]+$/, ".jpg"));
+    const filename = req.params.filename;
+    const filePath = path.join(videoDownloadDir, filename);
+    const thumbPath = path.join(videoThumbDir, filename.replace(/\.[^/.]+$/, ".jpg"));
     if (fs.existsSync(filePath)) {
       try {
         fs.unlinkSync(filePath);
         if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
+        
+        // Also try to find and delete the associated job history file
+        if (fs.existsSync(videoHistoryDir)) {
+          const historyFiles = fs.readdirSync(videoHistoryDir);
+          for (const file of historyFiles) {
+            try {
+              const jobPath = path.join(videoHistoryDir, file);
+              const taskData = JSON.parse(fs.readFileSync(jobPath, 'utf-8'));
+              if (taskData.outputVideo === filename) {
+                fs.unlinkSync(jobPath);
+              }
+            } catch (e) {}
+          }
+        }
+        
         res.json({ success: true });
       } catch (err) {
         res.status(500).json({ error: 'Failed to delete video' });
@@ -433,13 +450,34 @@ async function startServer() {
     const pendingPath = path.join(videoTaskDir, id);
     
     try {
+      let deleted = false;
+      let taskData = null;
+      
       if (fs.existsSync(historyPath)) {
+        taskData = JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
         fs.unlinkSync(historyPath);
-        return res.json({ success: true });
+        deleted = true;
       } else if (fs.existsSync(pendingPath)) {
+        taskData = JSON.parse(fs.readFileSync(pendingPath, 'utf-8'));
         fs.unlinkSync(pendingPath);
+        deleted = true;
+      }
+      
+      if (deleted) {
+        // Also delete the generated video file if it exists
+        if (taskData && taskData.outputVideo) {
+          const videoPath = path.join(videoDownloadDir, taskData.outputVideo);
+          const thumbPath = path.join(videoThumbDir, taskData.outputVideo.replace(/\.[^/.]+$/, ".jpg"));
+          if (fs.existsSync(videoPath)) {
+            try { fs.unlinkSync(videoPath); } catch (e) { console.error('Failed to delete video file:', e); }
+          }
+          if (fs.existsSync(thumbPath)) {
+            try { fs.unlinkSync(thumbPath); } catch (e) { console.error('Failed to delete video thumbnail:', e); }
+          }
+        }
         return res.json({ success: true });
       }
+      
       res.status(404).json({ error: 'Job not found' });
     } catch (err) {
       res.status(500).json({ error: 'Failed to delete job' });
