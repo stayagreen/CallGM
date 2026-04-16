@@ -5,7 +5,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import os from "os";
 import sharp from "sharp";
-import { startAutomationWatcher, jobProgress, handleBrowserDebug } from "./automation.js";
+import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages } from "./automation.js";
 import { startVideoAutomationWatcher, videoJobProgress } from "./video_automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -118,6 +118,11 @@ async function startServer() {
 
     jobs.sort((a, b) => b.timestamp - a.timestamp);
     res.json(jobs);
+  });
+
+  // Processing Status API (Watermark removal)
+  app.get("/api/processing-status", (req, res) => {
+    res.json(Array.from(processingImages));
   });
 
   // Thumbnail generation endpoint

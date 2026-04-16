@@ -7,9 +7,10 @@ export interface ImageEditorProps {
   image: string;
   onSave: (newImage: string) => void;
   onCancel: () => void;
+  onProcessStart?: () => void;
 }
 
-export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProps) {
+export default function ImageEditor({ image, onSave, onCancel, onProcessStart }: ImageEditorProps) {
   const [crop, setCrop] = useState<Crop>();
   const [isSmudging, setIsSmudging] = useState(false);
   const [smudgeMode, setSmudgeMode] = useState<'inpaint' | 'stamp'>('inpaint');
@@ -244,32 +245,33 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
     if (isSmudging && canvasRef.current && imageRef.current) {
       if (smudgeMode === 'inpaint') {
         setIsProcessing(true);
+        
+        // Capture all necessary data before timeout, allowing parent to unmount this safely
+        const naturalWidth = imageRef.current.naturalWidth;
+        const naturalHeight = imageRef.current.naturalHeight;
+        const sourceImg = imageRef.current;
+        
+        const maskCanvas = maskCanvasRef.current!;
+        const maskCtx = maskCanvas.getContext('2d');
+        if (!maskCtx) return;
+        const maskData = maskCtx.getImageData(0, 0, naturalWidth, naturalHeight);
+        
+        if (onProcessStart) onProcessStart();
+
         setTimeout(() => {
           try {
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
-            if (!context) {
-              setIsProcessing(false);
-              return;
-            }
+            if (!context) return;
 
-            canvas.width = imageRef.current!.naturalWidth;
-            canvas.height = imageRef.current!.naturalHeight;
+            canvas.width = naturalWidth;
+            canvas.height = naturalHeight;
             const width = canvas.width;
             const height = canvas.height;
 
             // 1. Draw original image
-            context.drawImage(imageRef.current!, 0, 0);
-
-            // 1. Dual-Canvas Masking: Get mask data
-            const maskCanvas = maskCanvasRef.current!;
-            const maskCtx = maskCanvas.getContext('2d');
-            if (!maskCtx) {
-              setIsProcessing(false);
-              return;
-            }
+            context.drawImage(sourceImg, 0, 0);
             
-            const maskData = maskCtx.getImageData(0, 0, width, height);
             const maskPixels = maskData.data;
             
             // 2. Iterative Boundary Diffusion
@@ -520,11 +522,11 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
             onSave(dataUrl);
           } catch (error) {
             console.error('Inpainting error:', error);
-            alert('处理失败，请重试');
+            // If we've already closed the modal (onProcessStart), we can't alert easily, but we should log it
           } finally {
             setIsProcessing(false);
           }
-        }, 0);
+        }, 30);
       } else {
         const finalCanvas = document.createElement('canvas');
         finalCanvas.width = canvasRef.current.width;

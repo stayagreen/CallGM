@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import { execSync } from 'child_process';
+import { autoInpaint } from './watermarkRemover.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const taskDir = path.join(__dirname, 'task');
@@ -35,6 +36,7 @@ let isRunning = false;
 let lastHeartbeat = Date.now();
 
 export const jobProgress = new Map<string, { completed: number, total: number, status: string }>();
+export const processingImages = new Set<string>();
 
 const getRandomTime = (min: number, max: number) => {
     return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
@@ -176,6 +178,21 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
                         }
                         console.log(`📦 成功移动文件: ${newestFile} -> 项目 download 目录`);
                         movedFiles.push(newestFile);
+                        
+                        // 异步启动自动去水印处理
+                        (async () => {
+                            processingImages.add(newestFile);
+                            console.log(`✨ [自动去水印] 正在处理: ${newestFile}...`);
+                            try {
+                                await autoInpaint(newPath);
+                                console.log(`✅ [自动去水印] 完成: ${newestFile}`);
+                            } catch (e) {
+                                console.error(`❌ [自动去水印] 失败: ${newestFile}`, e);
+                            } finally {
+                                processingImages.delete(newestFile);
+                            }
+                        })();
+
                         return movedFiles;
                     }
                 } catch (moveErr) {

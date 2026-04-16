@@ -199,6 +199,8 @@ export default function App() {
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
   const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
   const [editingGalleryImage, setEditingGalleryImage] = useState<string | null>(null);
+  const [processingGalleryImages, setProcessingGalleryImages] = useState<Set<string>>(new Set());
+  const manualProcessingImages = useRef<Set<string>>(new Set());
   const [galleryUpdateToken, setGalleryUpdateToken] = useState<number>(Date.now());
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
@@ -266,6 +268,24 @@ export default function App() {
     }
   };
 
+  const fetchProcessingStatus = async () => {
+    try {
+      const res = await fetch('/api/processing-status');
+      const backendProcessing = await res.json() as string[];
+      
+      setProcessingGalleryImages(prev => {
+        // Merge manual edits (client-side) and auto-removal (server-side)
+        const combined = new Set(backendProcessing);
+        manualProcessingImages.current.forEach(img => combined.add(img));
+        
+        // If the set hasn't changed its size or content significantly, we can just return or construct new
+        return combined;
+      });
+    } catch (error) {
+      console.error('Failed to fetch processing status:', error);
+    }
+  };
+
   useEffect(() => {
     let interval: any;
     if (activeTab === 'records') {
@@ -276,6 +296,13 @@ export default function App() {
       fetchVideoJobs();
       const hasActiveJobs = videoJobs.some(j => j.status === 'pending' || j.status === 'running');
       interval = setInterval(fetchVideoJobs, hasActiveJobs ? 2000 : 5000);
+    } else if (activeTab === 'gallery') {
+      fetchGallery();
+      fetchProcessingStatus();
+      interval = setInterval(() => {
+        fetchGallery();
+        fetchProcessingStatus();
+      }, 3000);
     }
     return () => clearInterval(interval);
   }, [activeTab, jobs, videoJobs]);
@@ -1129,25 +1156,33 @@ export default function App() {
               ))}
               {galleryImages.map(img => (
                 <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
-                  <div onClick={() => setViewingImage(`/downloads/${img}?t=${galleryUpdateToken}`)} className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
+                  <div onClick={() => !processingGalleryImages.has(img) && setViewingImage(`/downloads/${img}?t=${galleryUpdateToken}`)} className="block aspect-square overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
                     <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
                     <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
                       <ImageIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                     </div>
+                    {processingGalleryImages.has(img) && (
+                      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-2 z-10">
+                        <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2"></div>
+                        <span className="text-[10px] text-white font-bold">正在去水印...</span>
+                      </div>
+                    )}
                   </div>
                   <div className="mt-3 flex items-center justify-between px-1">
                     <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
                     <div className="flex gap-1">
                       <button
-                        onClick={() => setEditingGalleryImage(img)}
-                        className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-md transition-colors"
+                        onClick={() => !processingGalleryImages.has(img) && setEditingGalleryImage(img)}
+                        disabled={processingGalleryImages.has(img)}
+                        className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
                         title="编辑图片"
                       >
                         <Scissors className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => deleteGalleryImage(img)}
-                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                        onClick={() => !processingGalleryImages.has(img) && deleteGalleryImage(img)}
+                        disabled={processingGalleryImages.has(img)}
+                        className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-red-500 hover:bg-red-50'}`}
                         title="彻底删除源文件"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -1527,24 +1562,40 @@ export default function App() {
       {editingGalleryImage && (
         <ImageEditor
           image={`/downloads/${editingGalleryImage}?t=${galleryUpdateToken}`}
+          onProcessStart={() => {
+            const currentImg = editingGalleryImage;
+            if (currentImg) {
+              manualProcessingImages.current.add(currentImg);
+              setProcessingGalleryImages(prev => new Set(prev).add(currentImg));
+            }
+            setEditingGalleryImage(null);
+          }}
           onSave={async (newImage) => {
+            const targetFilename = editingGalleryImage || Array.from(manualProcessingImages.current).pop();
             try {
               const uploadRes = await fetch('/api/gallery/update', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  filename: editingGalleryImage,
+                  filename: targetFilename,
                   image: newImage
                 })
               });
               
               if (!uploadRes.ok) throw new Error('上传失败');
               
-              setEditingGalleryImage(null);
               fetchGallery(); // Refresh gallery
             } catch (error) {
               console.error('Save edited image failed:', error);
-              alert('保存失败，请重试');
+            } finally {
+              if (targetFilename) {
+                manualProcessingImages.current.delete(targetFilename);
+                setProcessingGalleryImages(prev => {
+                  const next = new Set(prev);
+                  next.delete(targetFilename);
+                  return next;
+                });
+              }
             }
           }}
           onCancel={() => setEditingGalleryImage(null)}
