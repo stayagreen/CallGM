@@ -372,16 +372,12 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
             const nextStream = `[v${i}]`;
             const outStream = `[xf${i}]`;
             
-            // The offset is the time when the transition starts.
-            // It should be the end of the previous clip minus the transition duration.
             const safeOffset = Math.max(0.1, offset - duration);
             filterComplex += `${currentStream}${nextStream}xfade=transition=${transition}:duration=${duration}:offset=${safeOffset}${outStream};`;
             currentStream = outStream;
-            
-            // The new offset for the next transition should be the current offset + next clip duration
             const sbDuration = storyboards[i].duration || 3;
-            offset += sbDuration;
-            totalDuration = offset;
+            offset += sbDuration - duration;
+            totalDuration += sbDuration - duration;
         }
         filterComplex += `${currentStream}format=yuv420p[outv]`;
     }
@@ -415,9 +411,7 @@ async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: 
         filters.push('fade=t=in:st=0:d=1');
     }
     if (outro === 'fade_out') {
-        const fadeOutStart = Math.max(0, totalDuration - 1);
-        console.log(`[FFmpeg] Finalize: totalDuration=${totalDuration}, fadeOutStart=${fadeOutStart}`);
-        filters.push(`fade=t=out:st=${fadeOutStart}:d=1`);
+        filters.push(`fade=t=out:st=${Math.max(0, totalDuration - 1)}:d=1`);
     }
     
     let filterComplex = '[0:v]';
