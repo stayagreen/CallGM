@@ -478,7 +478,7 @@ export default function VideoEditor({
 
           // Dilation: Expand hole to sample from a wider area
           const dilatedHole = new Uint8Array(width * height);
-          const dilation = 2;
+          const dilation = 4;
           for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
               if (hole[y * width + x] === 1) {
@@ -497,25 +497,15 @@ export default function VideoEditor({
           hole.set(dilatedHole);
           for (let i = 0; i < width * height; i++) if (hole[i] === 1) holeCount++;
 
-          // Clear the hole area in the original pixels to prevent watermark leakage
-          for (let i = 0; i < width * height; i++) {
-            if (hole[i] === 1) {
-              pixels[i * 4] = 0;
-              pixels[i * 4 + 1] = 0;
-              pixels[i * 4 + 2] = 0;
-              pixels[i * 4 + 3] = 0; // Transparent
-            }
-          }
-
           if (holeCount === 0) {
             setIsProcessing(false);
             setEditingImage(null);
             return;
           }
 
-          // Diffusion Loop (Max 300 iterations)
+          // Diffusion Loop (Max 500 iterations)
           let iterations = 0;
-          const maxIterations = 300;
+          const maxIterations = 500;
           
           // Find initial boundary
           let boundary = [];
