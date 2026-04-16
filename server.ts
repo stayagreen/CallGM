@@ -348,7 +348,19 @@ async function startServer() {
   });
 
   // API route for config
-  const configPath = path.join(__dirname, 'config.json');
+  const dataDir = path.join(__dirname, 'data');
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  
+  const configPath = path.join(dataDir, 'config.json');
+  const oldConfigPath = path.join(__dirname, 'config.json');
+  
+  // 迁移逻辑
+  if (!fs.existsSync(configPath) && fs.existsSync(oldConfigPath)) {
+    try {
+      fs.copyFileSync(oldConfigPath, configPath);
+    } catch (e) {}
+  }
+
   const defaultConfig = { 
     systemDownloadsDir: path.join(os.homedir(), 'Downloads'),
     pasteMin: 5,

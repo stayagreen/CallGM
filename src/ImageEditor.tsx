@@ -288,24 +288,43 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
 
             // Dilation: Expand hole to sample from a wider area
             const dilatedHole = new Uint8Array(width * height);
-            const dilation = 4;
-            for (let y = 0; y < height; y++) {
-              for (let x = 0; x < width; x++) {
-                if (hole[y * width + x] === 1) {
-                  for (let dy = -dilation; dy <= dilation; dy++) {
-                    for (let dx = -dilation; dx <= dilation; dx++) {
-                      const nx = x + dx;
-                      const ny = y + dy;
-                      if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                        dilatedHole[ny * width + nx] = 1;
+            const dilation = 2; // Reduced dilation for better precision
+            if (dilation > 0) {
+              for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                  if (hole[y * width + x] === 1) {
+                    for (let dy = -dilation; dy <= dilation; dy++) {
+                      for (let dx = -dilation; dx <= dilation; dx++) {
+                        const nx = x + dx;
+                        const ny = y + dy;
+                        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                          dilatedHole[ny * width + nx] = 1;
+                        }
                       }
                     }
                   }
                 }
               }
+              hole.set(dilatedHole);
             }
-            hole.set(dilatedHole);
+            
             for (let i = 0; i < width * height; i++) if (hole[i] === 1) holeCount++;
+
+            if (holeCount === 0) {
+              setIsProcessing(false);
+              // If no hole, just save the original image as data URL
+              const outCanvas = document.createElement('canvas');
+              outCanvas.width = width;
+              outCanvas.height = height;
+              const outCtx = outCanvas.getContext('2d');
+              if (outCtx) {
+                outCtx.drawImage(imageRef.current!, 0, 0);
+                onSave(outCanvas.toDataURL('image/jpeg', 0.9));
+              } else {
+                onCancel();
+              }
+              return;
+            }
 
             // Pre-fill: Fill the hole with the average color of the boundary pixels
             let sumR = 0, sumG = 0, sumB = 0, boundaryCount = 0;
@@ -313,18 +332,20 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
               if (hole[i] === 1) {
                 const x = i % width;
                 const y = Math.floor(i / width);
+                let isBoundary = false;
                 for (let dy = -1; dy <= 1; dy++) {
                   for (let dx = -1; dx <= 1; dx++) {
                     const nx = x + dx;
                     const ny = y + dy;
                     if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                      const nidx = ny * width + nx;
-                      if (hole[nidx] === 0) {
+                      if (hole[ny * width + nx] === 0) {
+                        const nidx = ny * width + nx;
                         const off = nidx * 4;
                         sumR += pixels[off];
                         sumG += pixels[off+1];
                         sumB += pixels[off+2];
                         boundaryCount++;
+                        isBoundary = true;
                       }
                     }
                   }
@@ -346,18 +367,12 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
               }
             }
 
-            if (holeCount === 0) {
-              setIsProcessing(false);
-              onSave(image);
-              return;
-            }
-
             // Diffusion Loop (Max 500 iterations)
             let iterations = 0;
-            const maxIterations = 500;
+            const maxIterations = 200; // Reduced iterations for performance
             
             // Find initial boundary
-            let boundary = [];
+            let boundary: number[] = [];
             for (let y = 0; y < height; y++) {
               for (let x = 0; x < width; x++) {
                 const idx = y * width + x;
@@ -377,7 +392,7 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
                     }
                     if (isBoundary) break;
                   }
-                  if (isBoundary) boundary.push({x, y, idx});
+                  if (isBoundary) boundary.push(idx);
                 }
               }
             }
@@ -386,14 +401,16 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
               const nextBoundary = new Set<number>();
               const filledThisIteration = [];
 
-              for (const p of boundary) {
+              for (const idx of boundary) {
+                const x = idx % width;
+                const y = Math.floor(idx / width);
                 let r = 0, g = 0, b = 0, count = 0;
-                // 8-neighbor sampling (3x3 window)
+                
                 for (let dy = -1; dy <= 1; dy++) {
                   for (let dx = -1; dx <= 1; dx++) {
                     if (dx === 0 && dy === 0) continue;
-                    const nx = p.x + dx;
-                    const ny = p.y + dy;
+                    const nx = x + dx;
+                    const ny = y + dy;
                     if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
                       const nidx = ny * width + nx;
                       if (hole[nidx] === 0) {
@@ -408,11 +425,11 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
                 }
 
                 if (count > 0) {
-                  const off = p.idx * 4;
+                  const off = idx * 4;
                   pixels[off] = r / count;
                   pixels[off+1] = g / count;
                   pixels[off+2] = b / count;
-                  filledThisIteration.push(p.idx);
+                  filledThisIteration.push(idx);
                 }
               }
 
@@ -433,11 +450,7 @@ export default function ImageEditor({ image, onSave, onCancel }: ImageEditorProp
                 }
               }
 
-              boundary = Array.from(nextBoundary).map(idx => ({
-                x: idx % width,
-                y: Math.floor(idx / width),
-                idx
-              }));
+              boundary = Array.from(nextBoundary);
               iterations++;
             }
 

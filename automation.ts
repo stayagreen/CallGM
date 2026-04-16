@@ -125,18 +125,21 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
             for (const file of currentFiles) {
                 if (file === '.DS_Store' || file === 'desktop.ini' || file.startsWith('.')) continue;
                 
-                // 【核心修复】只监控图片文件！彻底忽略 txt、html 等任何非图片文件，防止被干扰
+                // 检查是否正在下载 (浏览器临时文件)
+                if (file.endsWith('.crdownload') || file.endsWith('.part') || file.endsWith('.tmp') || file.includes('.com.google.Chrome')) {
+                    isDownloading = true;
+                    continue;
+                }
+
+                // 只监控图片文件
                 if (!file.match(/\.(jpg|jpeg|png|webp|gif)$/i)) {
-                    if (file.endsWith('.crdownload') || file.endsWith('.part') || file.endsWith('.tmp')) {
-                        isDownloading = true;
-                    }
                     continue;
                 }
                 
                 const filePath = path.join(systemDownloadsDir, file);
                 try {
                     const stat = fs.statSync(filePath);
-                    // 使用 ctime (change time) 或 mtime (modify time)
+                    // 综合考虑创建时间、修改时间、状态改变时间
                     const fileTime = Math.max(stat.ctimeMs, stat.mtimeMs, stat.birthtimeMs || 0);
                     
                     if (fileTime > newestTime) {
@@ -147,17 +150,18 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
             }
 
             if (isDownloading) {
-                if (attempts % 5 === 0) console.log(`   ...图片正在下载中，请稍候... (已等待 ${attempts} 秒)`);
+                if (attempts % 5 === 0) console.log(`   ...图片正在下载中 (检测到临时文件)，请稍候... (已等待 ${attempts} 秒)`);
                 continue;
             }
 
-            // 扩大时间窗口，允许注入脚本前 10 秒内创建的文件
-            if (newestFile && newestTime > clickTime - 10000) {
+            // 进一步扩大时间窗口到 30 秒，防止系统时钟微小差异
+            const timeDiff = newestTime - clickTime;
+            if (newestFile && newestTime > clickTime - 30000) {
                 console.log(`✅ [DEBUG] 成功监测到新下载的图片文件: ${newestFile}`);
-                console.log(`   详细信息: 创建时间: ${new Date(newestTime).toLocaleTimeString()}, 点击时间: ${new Date(clickTime).toLocaleTimeString()}`);
+                console.log(`   详细信息: 文件时间: ${new Date(newestTime).toLocaleTimeString()}, 点击时间: ${new Date(clickTime).toLocaleTimeString()}, 时间差: ${timeDiff}ms`);
                 
-                // 额外等待 5 秒，确保浏览器彻底释放文件占用锁
-                await new Promise(r => setTimeout(r, 5000));
+                // 额外等待 3 秒，确保浏览器彻底释放文件占用锁
+                await new Promise(r => setTimeout(r, 3000));
                 
                 const oldPath = path.join(systemDownloadsDir, newestFile);
                 const newPath = path.join(projectDownloadDir, newestFile);
@@ -210,14 +214,37 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
     downloadCheckDelay: 1,
     downloadRetries: 3
   };
-  const configPath = path.join(__dirname, 'config.json');
+  
+  // 优先从 data/config.json 读取，如果不存在则从根目录 config.json 读取并迁移
+  const dataDir = path.join(__dirname, 'data');
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  
+  const configPath = path.join(dataDir, 'config.json');
+  const oldConfigPath = path.join(__dirname, 'config.json');
+  
+  let targetConfigPath = configPath;
+  if (!fs.existsSync(configPath) && fs.existsSync(oldConfigPath)) {
+      console.log('📦 正在迁移配置文件到 data/config.json');
+      fs.copyFileSync(oldConfigPath, configPath);
+  }
+
   if (fs.existsSync(configPath)) {
       try {
-          config = { ...config, ...JSON.parse(fs.readFileSync(configPath, 'utf-8')) };
+          const configContent = fs.readFileSync(configPath, 'utf-8');
+          config = { ...config, ...JSON.parse(configContent) };
           if (config.systemDownloadsDir) {
-              systemDownloadsDir = config.systemDownloadsDir.replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '').trim();
+              // 增强路径清理：移除所有不可见字符、控制字符，并统一路径分隔符
+              systemDownloadsDir = config.systemDownloadsDir
+                .replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '')
+                .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
+                .trim();
+              
+              // 确保路径是绝对路径并符合当前操作系统规范
+              systemDownloadsDir = path.resolve(systemDownloadsDir);
           }
-      } catch (e) {}
+      } catch (e) {
+          console.error('读取配置文件失败:', e);
+      }
   }
 
   try {
