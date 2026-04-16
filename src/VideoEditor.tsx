@@ -377,7 +377,7 @@ export default function VideoEditor({
 
       // Iterative Diffusion Loop
       let iterations = 0;
-      const maxIterations = 200; // User requested 200
+      const maxIterations = 500; // Increased for better watermark removal
       
       while (iterations < maxIterations && holeCount > 0 && boundary.length > 0) {
         const nextBoundary = new Set<number>();
@@ -385,8 +385,8 @@ export default function VideoEditor({
 
         for (const p of boundary) {
           let r = 0, g = 0, b = 0, count = 0;
-          // 11x11 neighbor sampling for maximum context (watermark removal mindset)
-          const radius = 5;
+          // 17x17 neighbor sampling for maximum context (watermark removal mindset)
+          const radius = 8;
           for (let dy = -radius; dy <= radius; dy++) {
             for (let dx = -radius; dx <= radius; dx++) {
               if (dx === 0 && dy === 0) continue;

@@ -342,12 +342,12 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
     }
     
     if (!hasTransitions) {
-        clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS,fifo[v${i}];`; });
+        clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS[v${i}];`; });
         clipPaths.forEach((_, i) => { filterComplex += `[v${i}]`; });
         filterComplex += `concat=n=${clipPaths.length}:v=1:a=0,format=yuv420p[outv]`;
         totalDuration = storyboards.reduce((acc, sb) => acc + (sb.duration || 3), 0);
     } else {
-        clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS,fifo[v${i}];`; });
+        clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS[v${i}];`; });
         
         let currentStream = '[v0]';
         let offset = storyboards[0].duration || 3;
@@ -360,8 +360,7 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
             const outStream = `[xf${i}]`;
             
             const safeOffset = Math.max(0.1, offset - duration);
-            // Add fifo to prevent buffer issues and pauses
-            filterComplex += `${currentStream}fifo[f${i}a];${nextStream}fifo[f${i}b];[f${i}a][f${i}b]xfade=transition=${transition}:duration=${duration}:offset=${safeOffset}${outStream};`;
+            filterComplex += `${currentStream}${nextStream}xfade=transition=${transition}:duration=${duration}:offset=${safeOffset}${outStream};`;
             currentStream = outStream;
             const sbDuration = storyboards[i].duration || 3;
             offset += sbDuration - duration;
