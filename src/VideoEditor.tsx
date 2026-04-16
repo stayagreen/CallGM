@@ -459,9 +459,10 @@ export default function VideoEditor({
           const alpha = maskPixels[i + 3];
           if (alpha > 0) {
             const blend = alpha / 255;
-            pixels[i] = pixels[i] * (1 - blend * 0.5) + blurredData.data[i] * (blend * 0.5);
-            pixels[i+1] = pixels[i+1] * (1 - blend * 0.5) + blurredData.data[i+1] * (blend * 0.5);
-            pixels[i+2] = pixels[i+2] * (1 - blend * 0.5) + blurredData.data[i+2] * (blend * 0.5);
+            // Increased blend intensity for more obvious effect (0.8 instead of 0.5)
+            pixels[i] = pixels[i] * (1 - blend * 0.8) + blurredData.data[i] * (blend * 0.8);
+            pixels[i+1] = pixels[i+1] * (1 - blend * 0.8) + blurredData.data[i+1] * (blend * 0.8);
+            pixels[i+2] = pixels[i+2] * (1 - blend * 0.8) + blurredData.data[i+2] * (blend * 0.8);
           }
         }
         context.putImageData(originalData, 0, 0);
@@ -823,37 +824,33 @@ export default function VideoEditor({
                 <button onClick={() => setEditingImage(null)} className="p-1.5 sm:p-2 text-gray-400 hover:text-gray-600"><X size={20}/></button>
               </div>
             </div>
-            <div className="flex-grow min-h-0 overflow-hidden bg-gray-100 flex items-center justify-center relative touch-none">
+            <div className="flex-grow min-h-0 overflow-hidden bg-gray-100 flex items-center justify-center relative touch-none p-4 sm:p-8">
               {isSmudging ? (
-                <div className="w-full h-full flex items-center justify-center p-6 sm:p-16">
-                  <div className="relative max-w-[85%] max-h-[85%] shadow-lg rounded-lg overflow-hidden flex items-center justify-center bg-white">
-                    <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none" />
-                    <canvas 
-                      ref={canvasRef}
-                      onMouseDown={startDrawing}
-                      onMouseMove={draw}
-                      onMouseUp={stopDrawing}
-                      onMouseLeave={stopDrawing}
-                      onTouchStart={startDrawing}
-                      onTouchMove={draw}
-                      onTouchEnd={stopDrawing}
-                      className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
-                    />
-                    {isProcessing && (
-                      <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
-                        <div className="w-10 h-10 sm:w-12 sm:h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3 sm:mb-4"></div>
-                        <p className="text-blue-800 font-bold text-sm sm:text-base">后台智能处理中...</p>
-                      </div>
-                    )}
-                  </div>
+                <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center bg-white">
+                  <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none block" style={{ maxHeight: 'calc(100vh - 250px)' }} />
+                  <canvas 
+                    ref={canvasRef}
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onMouseLeave={stopDrawing}
+                    onTouchStart={startDrawing}
+                    onTouchMove={draw}
+                    onTouchEnd={stopDrawing}
+                    className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
+                  />
+                  {isProcessing && (
+                    <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center z-10">
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-3 sm:mb-4"></div>
+                      <p className="text-blue-800 font-bold text-sm sm:text-base">后台智能处理中...</p>
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div className="w-full h-full flex items-center justify-center p-6 sm:p-16">
-                  <div className="max-w-[85%] max-h-[85%] flex items-center justify-center overflow-hidden">
-                    <ReactCrop crop={crop} onChange={c => setCrop(c)}>
-                      <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg" />
-                    </ReactCrop>
-                  </div>
+                <div className="max-w-full max-h-full flex items-center justify-center overflow-hidden">
+                  <ReactCrop crop={crop} onChange={c => setCrop(c)}>
+                    <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg block" style={{ maxHeight: 'calc(100vh - 250px)' }} />
+                  </ReactCrop>
                 </div>
               )}
             </div>

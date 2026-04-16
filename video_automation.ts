@@ -7,7 +7,30 @@ import sharp from 'sharp';
 import { execa } from 'execa';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-const FFMPEG_PATH = ffmpegInstaller.path;
+let FFMPEG_PATH = 'ffmpeg'; // Default to system ffmpeg
+
+// Check if system ffmpeg is available and supports xfade
+async function checkXfadeSupport() {
+    try {
+        const { stdout } = await execa('ffmpeg', ['-filters']);
+        if (stdout.includes('xfade')) {
+            return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
+let xfadeSupported = false;
+checkXfadeSupport().then(supported => {
+    xfadeSupported = supported;
+    if (supported) {
+        FFMPEG_PATH = 'ffmpeg';
+        ffmpeg.setFfmpegPath('ffmpeg');
+    } else {
+        FFMPEG_PATH = ffmpegInstaller.path;
+        ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+    }
+});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const videoTaskDir = path.join(__dirname, 'task_video');
@@ -251,6 +274,12 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
 
     let totalDuration = 0;
     let hasTransitions = storyboards.some(sb => sb.transition === 'fade');
+    
+    // Fallback if xfade is not supported by the current ffmpeg version
+    if (hasTransitions && !xfadeSupported) {
+        console.log('⚠️ 当前 FFmpeg 版本不支持 xfade，将使用普通拼接');
+        hasTransitions = false;
+    }
     
     if (!hasTransitions) {
         clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS[v${i}];`; });
