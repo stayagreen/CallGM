@@ -243,8 +243,8 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         } else if (sb.textEffect === 'rotate') {
             textParams += `:rotation='t*PI/2'`; // Rotate 90deg/s
         } else if (sb.textEffect === 'typewriter') {
-            // Typewriter reveal: wipe from left to right
-            textParams += `:alpha='if(lt(x, (w-text_w)/2 + text_w * (t/min(${duration*0.8},2))), 1, 0)'`;
+            // Typewriter reveal: simple fast fade as fallback (x is not available in drawtext alpha)
+            textParams += `:alpha='min(t/0.5,1)'`; 
         }
         
         filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
@@ -252,8 +252,8 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
 
         // Special handling for Blur Fade In (requires post-processing the text layer)
         if (sb.textEffect === 'blur') {
-            // Apply a blur that clears up over 1.5 seconds
-            filterComplex += `;${lastLabel}split[vb1][vb2];[vb2]boxblur=luma_radius='if(lt(t,1.5), (1.5-t)*10, 0)':luma_power=1[vblurred];[vb1][vblurred]blend=all_expr='A*(min(t/1.5,1)) + B*(1-min(t/1.5,1))'[vblurout]`;
+            // Apply a static blur and blend it out over 1.5 seconds for better compatibility with older FFmpeg
+            filterComplex += `;${lastLabel}split[vb1][vb2];[vb2]boxblur=10:1[vblurred];[vb1][vblurred]blend=all_expr='A*(min(t/1.5,1)) + B*(1-min(t/1.5,1))'[vblurout]`;
             lastLabel = '[vblurout]';
         }
     }

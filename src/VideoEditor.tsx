@@ -827,7 +827,7 @@ export default function VideoEditor({
             <div className="flex-grow min-h-0 overflow-hidden bg-gray-100 flex items-center justify-center relative touch-none p-4 sm:p-8">
               {isSmudging ? (
                 <div className="relative max-w-full max-h-full shadow-lg rounded-lg overflow-hidden flex items-center justify-center bg-white">
-                  <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none block" style={{ maxHeight: 'calc(100vh - 250px)' }} />
+                  <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain pointer-events-none block" style={{ maxHeight: 'calc(90vh - 200px)' }} />
                   <canvas 
                     ref={canvasRef}
                     onMouseDown={startDrawing}
@@ -849,7 +849,7 @@ export default function VideoEditor({
               ) : (
                 <div className="max-w-full max-h-full flex items-center justify-center overflow-hidden">
                   <ReactCrop crop={crop} onChange={c => setCrop(c)}>
-                    <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg block" style={{ maxHeight: 'calc(100vh - 250px)' }} />
+                    <img ref={imageRef} src={editingImage.image} className="max-w-full max-h-full object-contain shadow-lg block" style={{ maxHeight: 'calc(90vh - 200px)' }} />
                   </ReactCrop>
                 </div>
               )}
