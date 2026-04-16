@@ -9,27 +9,30 @@ import { execa } from 'execa';
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 let FFMPEG_PATH = 'ffmpeg'; // Default to system ffmpeg
 
-// Check if system ffmpeg is available and supports xfade
-async function checkXfadeSupport() {
+// Check if system ffmpeg is available and supports required features
+async function checkFfmpegSupport() {
     try {
-        const { stdout } = await execa('ffmpeg', ['-filters']);
-        if (stdout.includes('xfade')) {
-            return true;
+        const { stdout: filters } = await execa('ffmpeg', ['-filters']);
+        const { stdout: encoders } = await execa('ffmpeg', ['-encoders']);
+        
+        const hasXfade = filters.includes('xfade');
+        const hasLibx264 = encoders.includes('libx264');
+        
+        if (hasLibx264) {
+            console.log(`✅ 使用系统 FFmpeg (支持 libx264${hasXfade ? ', 支持 xfade' : ''})`);
+            return { supported: true, xfade: hasXfade, path: 'ffmpeg' };
         }
     } catch (e) {}
-    return false;
+    
+    console.log('⚠️ 系统 FFmpeg 不可用或不支持 libx264，回退到内置版本');
+    return { supported: false, xfade: false, path: ffmpegInstaller.path };
 }
 
 let xfadeSupported = false;
-checkXfadeSupport().then(supported => {
-    xfadeSupported = supported;
-    if (supported) {
-        FFMPEG_PATH = 'ffmpeg';
-        ffmpeg.setFfmpegPath('ffmpeg');
-    } else {
-        FFMPEG_PATH = ffmpegInstaller.path;
-        ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-    }
+checkFfmpegSupport().then(res => {
+    xfadeSupported = res.xfade;
+    FFMPEG_PATH = res.path;
+    ffmpeg.setFfmpegPath(res.path);
 });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
