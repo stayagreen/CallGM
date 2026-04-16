@@ -239,6 +239,13 @@ export default function VideoEditor({
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
       
+      if (maskCanvasRef.current) {
+        maskCanvasRef.current.width = img.naturalWidth;
+        maskCanvasRef.current.height = img.naturalHeight;
+        maskCanvasRef.current.style.width = `${renderWidth}px`;
+        maskCanvasRef.current.style.height = `${renderHeight}px`;
+      }
+      
       // Match canvas display size to actual rendered image size
       canvas.style.width = `${renderWidth}px`;
       canvas.style.height = `${renderHeight}px`;
@@ -1015,7 +1022,7 @@ export default function VideoEditor({
                       left: '50%',
                       transform: 'translate(-50%, -50%)',
                       zIndex: 5,
-                      display: 'none'
+                      opacity: 0
                     }}
                   />
                   {isSelectingSource && (
