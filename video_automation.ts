@@ -333,69 +333,55 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
     }
 }
 
-function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string, intro: string, outro: string, outputPath: string, onProgress: (p: number) => void): Promise<void> {
-    return new Promise((resolve, reject) => {
-        let cmd = ffmpeg(videoPath);
-        
-        let filters = [];
-        if (intro === 'fade_in') {
-            filters.push('fade=t=in:st=0:d=1');
-        }
-        if (outro === 'fade_out') {
-            filters.push(`fade=t=out:st=${Math.max(0, totalDuration - 1)}:d=1`);
-        }
-        
-        let filterComplex = '[0:v]';
-        if (filters.length > 0) {
-            filterComplex += filters.join(',') + ',format=yuv420p[v]';
-        } else {
-            filterComplex += 'format=yuv420p[v]';
-        }
+async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string, intro: string, outro: string, outputPath: string, onProgress: (p: number) => void): Promise<void> {
+    const args = ['-i', videoPath];
+    
+    let filters = [];
+    if (intro === 'fade_in') {
+        filters.push('fade=t=in:st=0:d=1');
+    }
+    if (outro === 'fade_out') {
+        filters.push(`fade=t=out:st=${Math.max(0, totalDuration - 1)}:d=1`);
+    }
+    
+    let filterComplex = '[0:v]';
+    if (filters.length > 0) {
+        filterComplex += filters.join(',') + ',format=yuv420p[v]';
+    } else {
+        filterComplex += 'format=yuv420p[v]';
+    }
 
-        if (bgm) {
-            const bgmPath = path.join(bgmDir, bgm);
-            if (fs.existsSync(bgmPath)) {
-                cmd = cmd.input(bgmPath);
-                // Shorten audio to video length and fade out
-                cmd.outputOptions([
-                    '-map [v]',
-                    '-map 1:a',
-                    '-c:v libx264',
-                    '-profile:v main',
-                    '-level 3.1',
-                    '-pix_fmt yuv420p',
-                    '-c:a aac',
-                    '-b:a 192k',
-                    '-movflags +faststart',
-                    '-shortest'
-                ]);
-            } else {
-                cmd.outputOptions([
-                    '-map [v]', 
-                    '-c:v libx264',
-                    '-profile:v main',
-                    '-level 3.1',
-                    '-pix_fmt yuv420p',
-                    '-movflags +faststart'
-                ]);
-            }
-        } else {
-            cmd.outputOptions([
-                '-map [v]', 
-                '-c:v libx264',
-                '-profile:v main',
-                '-level 3.1',
-                '-pix_fmt yuv420p',
-                '-movflags +faststart'
-            ]);
-        }
+    const bgmPath = bgm ? path.join(bgmDir, bgm) : null;
+    const hasBgm = bgmPath && fs.existsSync(bgmPath);
 
-        cmd.complexFilter(filterComplex, 'v')
-            .save(outputPath)
-            .on('progress', (p) => onProgress(p.percent || 0))
-            .on('end', () => resolve())
-            .on('error', reject);
-    });
+    if (hasBgm) {
+        args.push('-i', bgmPath);
+        args.push('-filter_complex', filterComplex);
+        args.push('-map', '[v]', '-map', '1:a');
+        args.push('-c:a', 'aac', '-b:a', '192k', '-shortest');
+    } else {
+        args.push('-filter_complex', filterComplex);
+        args.push('-map', '[v]');
+    }
+
+    args.push(
+        '-c:v', 'libx264',
+        '-preset', 'medium',
+        '-crf', '23',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        '-y',
+        outputPath
+    );
+
+    console.log(`[FFmpeg] Executing Finalize: ${FFMPEG_PATH} ${args.join(' ')}`);
+
+    try {
+        await execa(FFMPEG_PATH, args);
+    } catch (err: any) {
+        console.error(`[FFmpeg] Error finalizing video: ${err.stderr || err.message}`);
+        throw err;
+    }
 }
 
 function generateThumbnail(videoPath: string, thumbPath: string): Promise<void> {
