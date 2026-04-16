@@ -243,12 +243,19 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         } else if (sb.textEffect === 'rotate') {
             textParams += `:rotation='t*PI/2'`; // Rotate 90deg/s
         } else if (sb.textEffect === 'typewriter') {
-            // Typewriter reveal: alpha 0 until time reaches index
-            textParams += `:alpha='if(lt(t,0.5),0,1)'`; // Simple delay for now
+            // Typewriter reveal: wipe from left to right
+            textParams += `:alpha='if(lt(x, (w-text_w)/2 + text_w * (t/min(${duration*0.8},2))), 1, 0)'`;
         }
         
         filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
         lastLabel = '[v2]';
+
+        // Special handling for Blur Fade In (requires post-processing the text layer)
+        if (sb.textEffect === 'blur') {
+            // Apply a blur that clears up over 1.5 seconds
+            filterComplex += `;${lastLabel}split[vb1][vb2];[vb2]boxblur=luma_radius='if(lt(t,1.5), (1.5-t)*10, 0)':luma_power=1[vblurred];[vb1][vblurred]blend=all_expr='A*(min(t/1.5,1)) + B*(1-min(t/1.5,1))'[vblurout]`;
+            lastLabel = '[vblurout]';
+        }
     }
 
     filterComplex += `;${lastLabel}format=yuv420p[outv]`;
@@ -302,12 +309,12 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
     }
     
     if (!hasTransitions) {
-        clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS[v${i}];`; });
+        clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS,fifo[v${i}];`; });
         clipPaths.forEach((_, i) => { filterComplex += `[v${i}]`; });
         filterComplex += `concat=n=${clipPaths.length}:v=1:a=0,format=yuv420p[outv]`;
         totalDuration = storyboards.reduce((acc, sb) => acc + (sb.duration || 3), 0);
     } else {
-        clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS[v${i}];`; });
+        clipPaths.forEach((_, i) => { filterComplex += `[${i}:v]settb=AVTB,setpts=PTS-STARTPTS,fifo[v${i}];`; });
         
         let currentStream = '[v0]';
         let offset = storyboards[0].duration || 3;
