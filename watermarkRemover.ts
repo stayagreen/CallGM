@@ -1,13 +1,11 @@
-import cv from '@u4/opencv-wasm';
+import cv from 'opencv-wasm';
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 
 /**
- * 使用 @u4/opencv-wasm 实现的高质量去水印方案 (对标 Python OpenCV 逻辑)
+ * 使用 opencv-wasm 实现的高质量去水印方案 (对标 Python OpenCV 逻辑)
  * 逻辑：ROI 提取 -> 二值化 -> 轮廓面积过滤 -> Telea 修复
- * 
- * 优势：WebAssembly 版本，免编译，跨平台兼容性极佳
  */
 export async function autoInpaint(filePath: string): Promise<boolean> {
   const fileName = path.basename(filePath);
@@ -15,10 +13,10 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
 
   try {
     // 0. 等待 OpenCV WASM 加载完成
-    // @ts-ignore - 兼容某些版本的初始化检查
+    // @ts-ignore
     if (!cv.Mat) {
       // @ts-ignore
-      await cv.ready;
+      await new Promise(resolve => cv.onRuntimeInitialized = resolve);
     }
 
     // 1. 读取图片并转换为 OpenCV 格式
@@ -27,11 +25,8 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     const { data: buffer, info } = await image.raw().toBuffer({ resolveWithObject: true });
     
     // 创建 OpenCV Mat (RGBA)
-    let src = cv.matFromImageData({
-      data: new Uint8ClampedArray(buffer),
-      width: info.width,
-      height: info.height
-    });
+    let src = new cv.Mat(info.height, info.width, cv.CV_8UC4);
+    src.data.set(new Uint8ClampedArray(buffer));
 
     const h = src.rows;
     const w = src.cols;
