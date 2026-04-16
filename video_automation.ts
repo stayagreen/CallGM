@@ -368,16 +368,21 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
         
         for (let i = 1; i < clipPaths.length; i++) {
             const transition = storyboards[i-1].transition === 'fade' ? 'fade' : 'dissolve';
-            const duration = storyboards[i-1].transition === 'fade' ? 0.5 : 0.1; // Reduced to 0.5s for snappier feel
+            const transitionDuration = storyboards[i-1].transition === 'fade' ? 0.5 : 0.1; // Fixed transition duration
             const nextStream = `[v${i}]`;
             const outStream = `[xf${i}]`;
             
-            const safeOffset = Math.max(0.1, offset - duration);
-            filterComplex += `${currentStream}${nextStream}xfade=transition=${transition}:duration=${duration}:offset=${safeOffset}${outStream};`;
+            // Offset is the start time of the transition.
+            // We want the transition to occur at the end of the previous storyboard.
+            // Previous storyboard duration is storyboards[i-1].duration
+            const previousStoryboardDuration = storyboards[i-1].duration || 3;
+            const offset = totalDuration - transitionDuration;
+            
+            filterComplex += `${currentStream}${nextStream}xfade=transition=${transition}:duration=${transitionDuration}:offset=${offset}${outStream};`;
             currentStream = outStream;
-            const sbDuration = storyboards[i].duration || 3;
-            offset += sbDuration - duration;
-            totalDuration += sbDuration - duration;
+            
+            const currentStoryboardDuration = storyboards[i].duration || 3;
+            totalDuration += currentStoryboardDuration - transitionDuration;
         }
         filterComplex += `${currentStream}format=yuv420p[outv]`;
     }
