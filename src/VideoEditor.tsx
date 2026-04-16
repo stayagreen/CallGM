@@ -497,6 +497,16 @@ export default function VideoEditor({
           hole.set(dilatedHole);
           for (let i = 0; i < width * height; i++) if (hole[i] === 1) holeCount++;
 
+          // Clear the hole area in the original pixels to prevent watermark leakage
+          for (let i = 0; i < width * height; i++) {
+            if (hole[i] === 1) {
+              pixels[i * 4] = 0;
+              pixels[i * 4 + 1] = 0;
+              pixels[i * 4 + 2] = 0;
+              pixels[i * 4 + 3] = 0; // Transparent
+            }
+          }
+
           if (holeCount === 0) {
             setIsProcessing(false);
             setEditingImage(null);
