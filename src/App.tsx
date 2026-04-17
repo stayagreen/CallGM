@@ -14,6 +14,8 @@ interface Task {
   count: number;
   download: boolean;
   downloadedFiles?: string[];
+  executor?: 'js' | 'cdp';
+  status?: 'pending' | 'running' | 'completed' | 'failed';
 }
 
 interface Job {
@@ -178,6 +180,8 @@ export default function App() {
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [systemConfig, setSystemConfig] = useState({ 
     systemDownloadsDir: '', 
+    chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    userDataDir: 'C:\\ChromeDebug',
     pasteMin: 5, 
     pasteMax: 5, 
     clickMin: 8, 
@@ -422,7 +426,7 @@ export default function App() {
   const galleryCameraInputRef = useRef<HTMLInputElement>(null);
 
   const addTask = () => {
-    const newTask = { id: Date.now().toString(), prompt: '', images: [], count: 1, download: true };
+    const newTask: Task = { id: Date.now().toString(), prompt: '', images: [], count: 1, download: true, executor: 'cdp' };
     setTasks([...tasks, newTask]);
     setActiveTaskId(newTask.id);
   };
@@ -600,7 +604,9 @@ export default function App() {
     // Clean up systemDownloadsDir to remove invisible characters (like LRM from Windows Explorer) and trim whitespace
     const cleanedConfig = {
       ...systemConfig,
-      systemDownloadsDir: systemConfig.systemDownloadsDir ? systemConfig.systemDownloadsDir.replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '').trim() : ''
+      systemDownloadsDir: systemConfig.systemDownloadsDir ? systemConfig.systemDownloadsDir.replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '').trim() : '',
+      chromePath: systemConfig.chromePath?.trim() || '',
+      userDataDir: systemConfig.userDataDir?.trim() || ''
     };
     
     await fetch('/api/config', {
@@ -847,7 +853,17 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex gap-6 mb-6 text-gray-700">
+        <div className="flex gap-6 mb-6 text-gray-700 items-center flex-wrap">
+          <label className="flex items-center gap-2">模式: 
+            <select 
+              value={activeTask?.executor || 'cdp'} 
+              onChange={(e) => updateTask({ executor: e.target.value as 'js' | 'cdp' })}
+              className="border border-gray-200 p-2 rounded-lg bg-gray-50 font-bold text-blue-600"
+            >
+              <option value="cdp">CDP (推荐)</option>
+              <option value="js">JS (旧版)</option>
+            </select>
+          </label>
           <label className="flex items-center gap-2">执行次数: <input type="number" value={activeTask?.count || 1} onChange={(e) => updateTask({ count: parseInt(e.target.value) })} className="w-20 border border-gray-200 p-2 rounded-lg" /></label>
         </div>
 
@@ -1442,7 +1458,29 @@ export default function App() {
               <h2 className="text-2xl font-bold text-gray-800">系统设置</h2>
               <button onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
             </div>
-            <div className="mb-6 space-y-4">
+            <div className="mb-6 space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+              <div className="grid grid-cols-1 gap-4">
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">Chrome 程序路径 (.exe)：</label>
+                  <input
+                    type="text"
+                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={systemConfig.chromePath}
+                    onChange={(e) => setSystemConfig({...systemConfig, chromePath: e.target.value})}
+                    placeholder="例如: C:\Program Files\Google\Chrome\Application\chrome.exe"
+                  />
+                </div>
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">浏览器用户数据目录 (UserData)：</label>
+                  <input
+                    type="text"
+                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                    value={systemConfig.userDataDir}
+                    onChange={(e) => setSystemConfig({...systemConfig, userDataDir: e.target.value})}
+                    placeholder="例如: C:\ChromeDebug"
+                  />
+                </div>
+              </div>
               <div>
                 <label className="block mb-1 font-semibold text-gray-700">浏览器默认下载目录 (绝对路径)：</label>
                 <input
@@ -1450,7 +1488,7 @@ export default function App() {
                   className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
                   value={systemConfig.systemDownloadsDir}
                   onChange={(e) => setSystemConfig({...systemConfig, systemDownloadsDir: e.target.value})}
-                  placeholder="例如: C:\Users\YourName\Downloads 或 /Users/YourName/Downloads"
+                  placeholder="例如: C:\Users\YourName\Downloads"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">

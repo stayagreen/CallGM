@@ -2,8 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
+import net from 'net';
 import { autoInpaint } from './watermarkRemover.js';
+import CDP from 'chrome-remote-interface';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const taskDir = path.join(__dirname, 'task');
@@ -42,6 +44,341 @@ const getRandomTime = (min: number, max: number) => {
     return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
 };
 
+async function getAutomationConfig() {
+    const dataDir = path.join(__dirname, 'data');
+    const configPath = path.join(dataDir, 'config.json');
+    if (fs.existsSync(configPath)) {
+        return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    }
+    return {};
+}
+
+// 检查端口是否占用
+function isPortOpen(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+        const server = net.createConnection({ port }, () => {
+            server.end();
+            resolve(true);
+        });
+        server.on('error', () => {
+            resolve(false);
+        });
+    });
+}
+
+// 自动启动浏览器
+async function ensureBrowserLaunched() {
+    const config = await getAutomationConfig();
+    const port = 9222;
+    const isOpen = await isPortOpen(port);
+
+    if (isOpen) {
+        console.log(`✅ 检测到端口 ${port} 已开放，浏览器正在运行中。`);
+        return true;
+    }
+
+    console.log(`🚀 未检测到运行中的浏览器，尝试自动启动...`);
+    const chromePath = config.chromePath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    const userDataDir = config.userDataDir || 'C:\\ChromeDebug';
+
+    if (!fs.existsSync(chromePath)) {
+        console.error(`❌ 找不到 Chrome 程序: ${chromePath}，请在设置中修改路径。`);
+        return false;
+    }
+
+    const args = [
+        `--remote-debugging-port=${port}`,
+        `--user-data-dir=${userDataDir}`,
+        '--no-first-run',
+        '--no-default-browser-check'
+    ];
+
+    console.log(`📂 执行启动命令: "${chromePath}" ${args.join(' ')}`);
+    
+    // 以分离模式启动，防止 Node 退出导致 Chrome 退出
+    const child = spawn(chromePath, args, {
+        detached: true,
+        stdio: 'ignore'
+    });
+    child.unref();
+
+    // 等待端口就绪
+    for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        if (await isPortOpen(port)) {
+            console.log(`✅ 浏览器已启动并准备就绪。`);
+            return true;
+        }
+    }
+    
+    console.error(`❌ 浏览器启动超时，请尝试手动运行命令。`);
+    return false;
+}
+
+// 贝塞尔曲线算法实现
+function getBezierPath(start: {x: number, y: number}, end: {x: number, y: number}, steps: number = 20) {
+    // 随机生成 1 或 2 个控制点来增加随机性
+    const cp1 = {
+        x: start.x + (end.x - start.x) * Math.random(),
+        y: start.y + (end.y - start.y) * Math.random() + (Math.random() > 0.5 ? 100 : -100)
+    };
+    
+    const path = [];
+    for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        // 二次贝塞尔曲线公式: (1-t)^2 * P0 + 2t(1-t) * P1 + t^2 * P2
+        const x = (1 - t) ** 2 * start.x + 2 * t * (1 - t) * cp1.x + t ** 2 * end.x;
+        const y = (1 - t) ** 2 * start.y + 2 * t * (1 - t) * cp1.y + t ** 2 * end.y;
+        path.push({ x: Math.floor(x), y: Math.floor(y) });
+    }
+    return path;
+}
+
+// 平滑移动鼠标并点击
+async function smoothMoveAndClick(Input: any, endX: number, endY: number, click: boolean = true) {
+    // 先获取当前位置 (伪模拟，如果没有上次记录则从随机点开始)
+    const startX = Math.floor(Math.random() * 200);
+    const startY = Math.floor(Math.random() * 200);
+    
+    const points = getBezierPath({ x: startX, y: startY }, { x: endX, y: endY }, 15 + Math.floor(Math.random() * 10));
+    
+    for (const p of points) {
+        await Input.dispatchMouseEvent({ type: 'mouseMoved', x: p.x, y: p.y });
+        await new Promise(r => setTimeout(r, 10 + Math.random() * 10));
+    }
+    
+    if (click) {
+        await new Promise(r => setTimeout(r, 100 + Math.random() * 200));
+        await Input.dispatchMouseEvent({ type: 'mousePressed', x: endX, y: endY, button: 'left', clickCount: 1 });
+        await new Promise(r => setTimeout(r, 50 + Math.random() * 50));
+        await Input.dispatchMouseEvent({ type: 'mouseReleased', x: endX, y: endY, button: 'left', clickCount: 1 });
+    }
+}
+
+async function executeWithCDP(tasks: any[], filename: string) {
+    const totalLoops = tasks.reduce((acc: number, t: any) => acc + (parseInt(t.count) || 1), 0);
+    let completedLoops = 0;
+    jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+
+    console.log('\n====================================================');
+    console.log('🚀 正在启动 CDP 原生引擎 (最高安全性模式)...');
+    
+    // 强制智能后台运行检测与启动
+    const launched = await ensureBrowserLaunched();
+    if (!launched) {
+         console.error('❌ 无法确保浏览器运行，退出任务。');
+         return tasks;
+    }
+
+    console.log('🔗 正在连接到浏览器 (端口 9222)...');
+    console.log('====================================================\n');
+
+    let client: any;
+    try {
+        const targets = await CDP.List({ port: 9222 });
+        let target = targets.find((t: any) => t.url.includes('gemini.google.com') && t.type === 'page');
+        
+        if (!target) {
+            console.log('🌐 未发现 Gemini 标签页，正在创建新标签页...');
+            target = await CDP.New({ url: 'https://gemini.google.com/', port: 9222 });
+        }
+
+        client = await CDP({ target: target.id, port: 9222 });
+        const { Page, Runtime, Input, Network, DOM } = client;
+
+        await Network.enable();
+        await Page.enable();
+        await Runtime.enable();
+        await DOM.enable();
+
+        console.log('✅ CDP 连接成功！已锁定受控浏览器。');
+
+        const simulateIdleMovement = async () => {
+             const x = Math.floor(Math.random() * 800) + 100;
+             const y = Math.floor(Math.random() * 600) + 100;
+             await smoothMoveAndClick(Input, x, y, false);
+        };
+
+        for (const task of tasks) {
+            task.download = true;
+            if (!task.downloadedFiles) task.downloadedFiles = [];
+            
+            for (let i = 0; i < (parseInt(task.count) || 1); i++) {
+                const stepPrefix = `[TASK-${filename}][Loop-${i + 1}]`;
+                console.log(`\n${stepPrefix} 🚀 正在执行任务: "${task.prompt}"`);
+                
+                await Page.bringToFront();
+                
+                const currentStatus = await Runtime.evaluate({ expression: 'window.location.href' });
+                if (!currentStatus.result.value.includes('gemini.google.com')) {
+                    console.log(`${stepPrefix} ⚠️ 检测到偏离 Gemini 页面，正在重新导航...`);
+                    await Page.navigate({ url: 'https://gemini.google.com/' });
+                    await new Promise(r => setTimeout(r, 5000));
+                }
+
+                console.log(`${stepPrefix} ⏳ 等待页面渲染与加载 (6秒)...`);
+                await new Promise(r => setTimeout(r, 6000));
+                await simulateIdleMovement();
+
+                console.log(`${stepPrefix} ⌨️ 正在定位输入框进行贝塞尔平滑移动并获取焦点...`);
+                const focusScript = `
+                    (() => {
+                        const el = document.querySelector('div[contenteditable="true"], textarea');
+                        if (el) {
+                            el.focus();
+                            const rect = el.getBoundingClientRect();
+                            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+                        }
+                        return null;
+                    })()
+                `;
+                const focusResult = await Runtime.evaluate({ expression: focusScript, returnByValue: true });
+                if (focusResult.result && focusResult.result.value) {
+                    const { x, y } = focusResult.result.value;
+                    console.log(`${stepPrefix} 🖱️ [Bezier] 曲线平滑移动至输入框: (${Math.floor(x)}, ${Math.floor(y)})`);
+                    await smoothMoveAndClick(Input, x, y, true);
+                } else {
+                    console.log(`${stepPrefix} ⚠️ 警告: 未能找到输入框中心点，直接执行操作。`);
+                }
+
+                await new Promise(r => setTimeout(r, 500));
+
+                // 1. 粘贴参考图 (如果存在)
+                const config = await getAutomationConfig();
+                const isMac = os.platform() === 'darwin';
+                
+                if (task.images && task.images.length > 0) {
+                    console.log(`${stepPrefix} 🖼️ 检测到参考图，准备执行粘贴流程...`);
+                    for (const imgUrl of task.images) {
+                        const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
+                        const localPath = path.resolve(__dirname, relativeUrl);
+                        
+                        if (fs.existsSync(localPath)) {
+                            console.log(`${stepPrefix} 📋 正在将图片放入系统剪贴板: ${path.basename(localPath)}`);
+                            const success = copyImageToClipboard(localPath, isMac);
+                            if (success) {
+                                console.log(`${stepPrefix} 📥 发送物理粘贴指令 (Ctrl+V)...`);
+                                if (isMac) {
+                                    await Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 8, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 }); 
+                                    await Input.dispatchKeyEvent({ type: 'keyUp', modifiers: 8, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 });
+                                } else {
+                                    await Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 }); 
+                                    await Input.dispatchKeyEvent({ type: 'keyUp', modifiers: 2, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 });
+                                }
+                                const pasteWait = (config.pasteMin || 5) * 1000;
+                                console.log(`${stepPrefix} ⏳ 等待图片上传解析 (${config.pasteMin || 5}s)...`);
+                                await new Promise(r => setTimeout(r, pasteWait));
+                            }
+                        } else {
+                            console.log(`${stepPrefix} ❌ 找不到图片文件: ${localPath}`);
+                        }
+                    }
+                }
+
+                console.log(`${stepPrefix} ✍️ 逐字模拟拟人化输入提示词: "${task.prompt}"`);
+                for (const char of task.prompt) {
+                    await Input.dispatchKeyEvent({ type: 'char', text: char });
+                    await new Promise(r => setTimeout(r, Math.random() * 160 + 40));
+                }
+                
+                await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
+                console.log(`${stepPrefix} ⏎ 发送 Enter 键触发生成...`);
+                await Input.dispatchKeyEvent({ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+                await Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+
+                console.log(`${stepPrefix} 🛡️ 静默监控结果生成 (4s 轮询)...`);
+                
+                let found = false;
+                let attempts = 0;
+                while (!found && attempts < 50) {
+                    await new Promise(r => setTimeout(r, 4000));
+                    attempts++;
+                    
+                    if (attempts % 5 === 0) {
+                         await simulateIdleMovement();
+                    }
+
+                    const checkScript = `
+                        (() => {
+                            const messages = document.querySelectorAll('message-content, [data-message-author="model"], model-message');
+                            if (messages.length === 0) return { status: 'no_messages' };
+                            const lastMsg = messages[messages.length - 1];
+                            const img = lastMsg.querySelector('img');
+                            const btns = Array.from(lastMsg.querySelectorAll('button, a[download]'));
+                            const downloadBtn = btns.find(b => {
+                                const txt = (b.innerText || b.getAttribute('aria-label') || b.outerHTML).toLowerCase();
+                                return txt.includes('下载') || txt.includes('download');
+                            });
+                            
+                            if (img && downloadBtn) {
+                                const rect = downloadBtn.getBoundingClientRect();
+                                return { 
+                                    status: 'found',
+                                    x: rect.left + rect.width / 2,
+                                    y: rect.top + rect.height / 2
+                                };
+                            }
+                            return { status: 'waiting' };
+                        })()
+                    `;
+                    const result = await Runtime.evaluate({ expression: checkScript, returnByValue: true });
+                    const resValue = result.result?.value;
+
+                    if (resValue && resValue.status === 'found') {
+                        console.log(`${stepPrefix} ✅ [SUCCESS] 第一时间捕捉到生成结果！`);
+                        const { x, y } = resValue;
+                        console.log(`${stepPrefix} 🖱️ [Bezier] 曲线平滑移动至下载按钮: (${Math.floor(x)}, ${Math.floor(y)})`);
+                        await smoothMoveAndClick(Input, x, y, true);
+                        found = true;
+                    }
+                }
+
+                if (found) {
+                     const config = await getAutomationConfig();
+                     const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
+                     const files = await waitForAndMoveDownloads(Date.now(), sysDir, downloadDir, 60);
+                     if (files && files.length > 0) {
+                         task.downloadedFiles.push(...files);
+                         task.status = 'completed';
+                     } else {
+                         task.status = 'failed';
+                     }
+                } else {
+                    task.status = 'failed';
+                }
+
+                completedLoops++;
+                jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+                
+                // 环节间隔，反爬：随机休息
+                const restTime = 5000 + Math.random() * 5000;
+                console.log(`${stepPrefix} 💤 循环结束，随机休息 ${Math.floor(restTime/1000)} 秒后继续...`);
+                await new Promise(r => setTimeout(r, restTime));
+            }
+        }
+    } catch (err: any) {
+        console.error('❌ CDP 引擎发生异常中断:', err.message || err);
+    } finally {
+        if (client) {
+            console.log(`📡 正在断开 CDP 调试连接...`);
+            await client.close();
+        }
+        jobProgress.delete(filename);
+    }
+    return tasks;
+}
+
+async function executeBatch(tasks: any[], filename: string) {
+    const firstExecutor = tasks[0]?.executor || 'cdp';
+    console.log(`📡 任务分发器: 正在使用 [${firstExecutor.toUpperCase()}] 引擎执行批次 ${filename}`);
+    
+    if (firstExecutor === 'cdp') {
+        return await executeWithCDP(tasks, filename);
+    } else {
+        return await executeWithPhysicalSimulation(tasks, filename);
+    }
+}
+
 export function startAutomationWatcher() {
   console.log('\n====================================================');
   console.log('🚀 CallGM 自动化引擎已成功启动！');
@@ -75,8 +412,8 @@ export function startAutomationWatcher() {
         // Read task
         const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         
-        // Execute task (Physical Simulation)
-        const updatedTaskData = await executeWithPhysicalSimulation(taskData, file);
+        // Execute task
+        const updatedTaskData = await executeBatch(taskData, file);
         
         // Update the file with downloadedFiles info before moving
         if (updatedTaskData) {
