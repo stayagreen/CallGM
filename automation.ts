@@ -426,22 +426,55 @@ async function executeWithCDP(tasks: any[], filename: string) {
                                 // --- 步骤 1：寻找“添加文件”/“Add files”以展开菜单 ---
                                 const step1Script = `
                                     (() => {
-                                        const els = Array.from(document.querySelectorAll('button, [role="button"], mat-icon, span, div, a'));
+                                        const els = Array.from(document.querySelectorAll('button, [role="button"], a'));
                                         const btn = els.find(el => {
                                             const aria = (el.getAttribute('aria-label') || '').toLowerCase();
                                             const tooltip = (el.getAttribute('data-tooltip') || el.getAttribute('mat-tooltip') || '').toLowerCase();
-                                            const text = el.innerText.toLowerCase();
-                                            return aria.includes('添加文件') || aria.includes('add files') ||
-                                                   tooltip.includes('添加文件') || tooltip.includes('add files') ||
-                                                   text === '添加文件' || text.includes('add files');
+                                            const title = (el.getAttribute('title') || '').toLowerCase();
+                                            const text = el.innerText.trim().toLowerCase();
+                                            
+                                            // 1. 根据悬浮提示的底层属性进行暴力全拼匹配
+                                            const matchStr = [aria, tooltip, title].join(' ');
+                                            const matchKeys = ['添加文件', 'add files', '上传图片', 'upload image', 'attach', '附件', 'upload files'];
+                                            if (matchKeys.some(k => matchStr.includes(k))) return true;
+                                            
+                                            // 2. 专门针对 Gemini 的 "+" 加号图标匹配
+                                            const icon = el.querySelector('mat-icon, .material-symbols-outlined, svg');
+                                            if (icon) {
+                                                const iconText = icon.textContent.trim().toLowerCase();
+                                                if (iconText === 'add' || iconText === 'add_circle' || iconText === 'attach_file') return true;
+                                            }
+                                            if (text === '+') return true;
+                                            
+                                            return false;
                                         });
+
                                         if (btn) {
-                                            const b = btn.closest('button, [role="button"], a') || btn;
-                                            const rect = b.getBoundingClientRect();
+                                            const rect = btn.getBoundingClientRect();
                                             if (rect.width > 0 && rect.height > 0) {
-                                                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true };
+                                                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true, method: 'attribute_or_icon' };
                                             }
                                         }
+
+                                        // 3. 终极回退：根据空间位置寻找。输入框左侧往往是加号按钮
+                                        const input = document.querySelector('div[contenteditable="true"], textarea, rich-textarea');
+                                        if (input) {
+                                            let container = input.parentElement;
+                                            // 往上找几层，把所有按钮拿出来
+                                            for(let i=0; i<3 && container; i++) {
+                                                const btns = container.querySelectorAll('button');
+                                                for (const b of btns) {
+                                                    const rect = b.getBoundingClientRect();
+                                                    const inputRect = input.getBoundingClientRect();
+                                                    // 如果这个按钮在输入框的左侧（相距不是很远），那大概率就是加号
+                                                    if (rect.width > 0 && rect.left < inputRect.left + 50) {
+                                                        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true, method: 'spatial_fallback' };
+                                                    }
+                                                }
+                                                container = container.parentElement;
+                                            }
+                                        }
+
                                         return { success: false };
                                     })()
                                 `;
@@ -449,7 +482,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                                 const step1Res = await Runtime.evaluate({ expression: step1Script, returnByValue: true });
                                 if (step1Res.result?.value?.success) {
                                     const { x, y } = step1Res.result.value;
-                                    console.log(`${stepPrefix} ✨ 定位到“添加文件”，正在点击以展开菜单...`);
+                                    console.log(`${stepPrefix} ✨ 定位到“添加文件” (${step1Res.result?.value?.method})，正在点击以展开菜单...`);
                                     await smoothMoveAndClick(Input, x, y, true);
                                     await new Promise(r => setTimeout(r, 1000)); // 等待菜单弹出的动画时间
                                 } else {
@@ -459,26 +492,34 @@ async function executeWithCDP(tasks: any[], filename: string) {
                                 // --- 步骤 2：寻找真实的上传入口 “上传文件”/“Upload files” ---
                                 const step2Script = `
                                     (() => {
-                                        const els = Array.from(document.querySelectorAll('button, [role="button"], mat-icon, span, div, a, menuitem, li'));
+                                        // 下拉菜单的项往往是特殊的 dom
+                                        const els = Array.from(document.querySelectorAll('button, [role="button"], a, menuitem, li, div.menu-item, span.menu-item, [role="menuitem"]'));
                                         const btn = els.find(el => {
                                             const aria = (el.getAttribute('aria-label') || '').toLowerCase();
                                             const tooltip = (el.getAttribute('data-tooltip') || el.getAttribute('mat-tooltip') || '').toLowerCase();
-                                            const text = el.innerText.toLowerCase();
-                                            // 必须绝对精准匹配上传文件选项
-                                            return aria.includes('上传文件') || aria.includes('upload files') ||
-                                                   tooltip.includes('上传文件') || tooltip.includes('upload files') ||
-                                                   text.includes('上传文件') || text.includes('upload files');
+                                            const title = (el.getAttribute('title') || '').toLowerCase();
+                                            const text = el.innerText.trim().toLowerCase();
+                                            
+                                            const matchStr = [aria, tooltip, title, text].join(' ');
+                                            const matchKeys = ['上传文件', 'upload files', '从计算机上传', 'upload from computer'];
+                                            
+                                            // 只要完整包含这些核心意图词汇即可
+                                            return matchKeys.some(k => matchStr.includes(k));
                                         });
+
                                         if (btn) {
-                                            const b = btn.closest('button, [role="button"], a, menuitem, li') || btn;
+                                            // 找触发范围尽量大的外层容器
+                                            const b = btn.closest('button, [role="button"], a, menuitem, li, [role="menuitem"]') || btn;
                                             const rect = b.getBoundingClientRect();
                                             if (rect.width > 0 && rect.height > 0) {
                                                 return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true };
                                             }
                                         }
-                                        // 回退：直接找 input
+                                        
+                                        // 回退：直接找页面里潜伏的隐藏文件上传框
                                         const input = document.querySelector('input[type="file"]:not([disabled])');
                                         if (input) return { inputFound: true };
+                                        
                                         return { success: false };
                                     })()
                                 `;
