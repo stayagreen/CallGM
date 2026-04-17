@@ -25,7 +25,14 @@ function copyImageToClipboard(imagePath: string, isMac: boolean) {
         } else if (os.platform() === 'win32') {
             execSync(`powershell -command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('${absPath}'))"`);
         } else {
-            execSync(`xclip -selection clipboard -t image/png -i "${absPath}"`);
+            // Linux 环境下，如果是在 headless 容器中，xclip 可能会因为没有 X11 DISPLAY 而失败
+            try {
+                execSync(`xclip -selection clipboard -t image/png -i "${absPath}"`, { stdio: 'ignore', env: { ...process.env, DISPLAY: ':99' } });
+            } catch (xe) {
+                // 如果失败且没有 display，尝试无视错误，让后续的文件直接注入逻辑生效
+                console.warn('⚠️ xclip 尝试失败，可能处于无显示器环境，将尝试 CDP 原生文件注入。');
+                return false; 
+            }
         }
         return true;
     } catch (e) {
@@ -395,12 +402,35 @@ async function executeWithCDP(tasks: any[], filename: string) {
                     const config = await getAutomationConfig();
                     const isMac = os.platform() === 'darwin';
                     if (task.images && task.images.length > 0) {
-                        console.log(`${stepPrefix} 🖼️ 处理图片粘贴...`);
+                        console.log(`${stepPrefix} 🖼️ 处理图片上传 (优先使用 CDP 原生注入)...`);
                         jobProgress.set(filename, { completed: completedLoops + 0.15, total: totalLoops, status: 'running', message: '🖼️ 正在上传参考图...' });
+                        
                         for (const imgUrl of task.images) {
                             const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
                             const localPath = path.resolve(__dirname, relativeUrl);
                             if (fs.existsSync(localPath)) {
+                                console.log(`${stepPrefix} 📂 准备处理本地文件: ${localPath}`);
+                                
+                                // 策略 A: 尝试 CDP 原生 setFileInputFiles (最高稳定性)
+                                try {
+                                    const { DOM } = client;
+                                    await DOM.enable();
+                                    const doc = await DOM.getDocument();
+                                    // 查找文件输入框 (通常是隐藏的)
+                                    const inputNode = await DOM.querySelector({ nodeId: doc.root.nodeId, selector: 'input[type="file"]' });
+                                    
+                                    if (inputNode && inputNode.nodeId) {
+                                        console.log(`${stepPrefix} ✨ 发现原生文件输入框，执行 CDP 路径注入...`);
+                                        await DOM.setFileInputFiles({ files: [localPath], nodeId: inputNode.nodeId });
+                                        console.log(`${stepPrefix} ✅ CDP 文件注入成功`);
+                                        await new Promise(r => setTimeout(r, (config.pasteMin || 5) * 1000));
+                                        continue; // 注入成功，跳过剪贴板尝试
+                                    }
+                                } catch (fileErr) {
+                                    console.log(`${stepPrefix} ⚠️ CDP 文件注入失败，切回剪贴板模拟:`, (fileErr as any).message);
+                                }
+
+                                // 策略 B: 剪贴板粘贴 (回退方案)
                                 if (copyImageToClipboard(localPath, isMac)) {
                                     // 在粘贴前强制点击一次输入框确保焦点
                                     const focusResult2 = await Runtime.evaluate({ expression: focusScript, returnByValue: true });
