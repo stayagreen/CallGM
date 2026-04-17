@@ -220,31 +220,31 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
 
     switch (sb.animation) {
         case 'zoom_in': 
-            panZoom = `zoompan=z='min(zoom+0.0015,1.5)':x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':d=${frames}:s=${w}x${h}:fps=30`; 
+            panZoom = `zoompan=z='min(zoom+0.0005,1.5)':x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':d=${frames}:s=${w}x${h}:fps=30`; 
             break;
         case 'pan_lr': 
-            panZoom = `zoompan=z=1.2:x='trunc(${progress}*${rangeX})':y='trunc(${centerY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            panZoom = `zoompan=z=1.1:x='trunc(${progress}*${rangeX})':y='trunc(${centerY})':d=${frames}:s=${w}x${h}:fps=30`; 
             break;
         case 'pan_rl': 
-            panZoom = `zoompan=z=1.2:x='trunc((1-${progress})*${rangeX})':y='trunc(${centerY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            panZoom = `zoompan=z=1.1:x='trunc((1-${progress})*${rangeX})':y='trunc(${centerY})':d=${frames}:s=${w}x${h}:fps=30`; 
             break;
         case 'pan_tb': 
-            panZoom = `zoompan=z=1.2:x='trunc(${centerX})':y='trunc(${progress}*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            panZoom = `zoompan=z=1.1:x='trunc(${centerX})':y='trunc(${progress}*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
             break;
         case 'pan_bt': 
-            panZoom = `zoompan=z=1.2:x='trunc(${centerX})':y='trunc((1-${progress})*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            panZoom = `zoompan=z=1.1:x='trunc(${centerX})':y='trunc((1-${progress})*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
             break;
         case 'pan_tl_br': 
-            panZoom = `zoompan=z=1.2:x='trunc(${progress}*${rangeX})':y='trunc(${progress}*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            panZoom = `zoompan=z=1.1:x='trunc(${progress}*${rangeX})':y='trunc(${progress}*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
             break;
         case 'pan_br_tl': 
-            panZoom = `zoompan=z=1.2:x='trunc((1-${progress})*${rangeX})':y='trunc((1-${progress})*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            panZoom = `zoompan=z=1.1:x='trunc((1-${progress})*${rangeX})':y='trunc((1-${progress})*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
             break;
         case 'pan_tr_bl': 
-            panZoom = `zoompan=z=1.2:x='trunc((1-${progress})*${rangeX})':y='trunc(${progress}*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            panZoom = `zoompan=z=1.1:x='trunc((1-${progress})*${rangeX})':y='trunc(${progress}*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
             break;
         case 'pan_bl_tr': 
-            panZoom = `zoompan=z=1.2:x='trunc(${progress}*${rangeX})':y='trunc((1-${progress})*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
+            panZoom = `zoompan=z=1.1:x='trunc(${progress}*${rangeX})':y='trunc((1-${progress})*${rangeY})':d=${frames}:s=${w}x${h}:fps=30`; 
             break;
         default: 
             panZoom = `zoompan=z=1:d=${frames}:s=${w}x${h}:fps=30`; 

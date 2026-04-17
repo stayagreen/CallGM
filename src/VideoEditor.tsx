@@ -10,6 +10,7 @@ export interface Storyboard {
   text: string;
   textSize: number;
   textColor: string;
+  textBold: boolean;
   textEffect: string;
   duration: number;
 }
@@ -136,6 +137,7 @@ export default function VideoEditor({
       text: '',
       textSize: 20,
       textColor: '#ffffff',
+      textBold: false,
       textEffect: 'none',
       duration: 3.5
     };
@@ -695,6 +697,7 @@ export default function VideoEditor({
                             text: '',
                             textSize: 20,
                             textColor: '#ffffff',
+                            textBold: false,
                             textEffect: 'none',
                             duration: 3.5
                           };
@@ -779,6 +782,7 @@ export default function VideoEditor({
                     text: '',
                     textSize: 20,
                     textColor: '#ffffff',
+                    textBold: false,
                     textEffect: 'none',
                     duration: 3.5
                   }));
