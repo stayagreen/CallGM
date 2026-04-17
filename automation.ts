@@ -402,205 +402,89 @@ async function executeWithCDP(tasks: any[], filename: string) {
                     const config = await getAutomationConfig();
                     const isMac = os.platform() === 'darwin';
                     if (task.images && task.images.length > 0) {
-                        console.log(`${stepPrefix} 🖼️ 处理图片上传 (优先使用 CDP 原生注入)...`);
+                        console.log(`${stepPrefix} 🖼️ 处理图片上传 (使用底层数据流协议模拟粘贴)...`);
                         jobProgress.set(filename, { completed: completedLoops + 0.15, total: totalLoops, status: 'running', message: '🖼️ 正在上传参考图...' });
                         
-                        // 1. 尝试 CDP 原生控件拦截和批量注入
-                        let injectedFiles = false;
-                        const { Page, DOM, Runtime } = client;
-                        const validPaths = task.images
-                            .map((url: string) => path.resolve(__dirname, url.startsWith('/') ? url.slice(1) : url))
-                            .filter((p: string) => fs.existsSync(p));
+                        const { Runtime } = client;
 
-                        if (validPaths.length > 0) {
-                            try {
-                                await Page.enable();
-                                await DOM.enable();
-                                // 开启弹窗拦截
-                                await Page.setInterceptFileChooserDialog({ enabled: true }).catch(() => {});
+                        for (const imgUrl of task.images) {
+                            const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
+                            const localPath = path.resolve(__dirname, relativeUrl);
+                            if (fs.existsSync(localPath)) {
+                                console.log(`${stepPrefix} 📂 准备处理本地文件: ${localPath}`);
+                                
+                                try {
+                                    // 1. 读取本地图片并转换为 Base64
+                                    const base64Data = fs.readFileSync(localPath, 'base64');
+                                    const imgName = path.basename(localPath);
+                                    let mimeType = 'image/png';
+                                    const ext = path.extname(localPath).toLowerCase();
+                                    if (ext === '.jpg' || ext === '.jpeg') mimeType = 'image/jpeg';
+                                    else if (ext === '.webp') mimeType = 'image/webp';
+                                    else if (ext === '.gif') mimeType = 'image/gif';
 
-                                const fileChooserPromise = new Promise<any>((resolve) => {
-                                    client.once('Page.fileChooserOpened', (params: any) => resolve(params));
-                                });
+                                    // 2. 将数据注入浏览器并派发原生 paste 事件
+                                    const injectPasteScript = `
+                                        (async () => {
+                                            try {
+                                                const el = document.querySelector('div[contenteditable="true"], textarea, rich-textarea, main [role="textbox"]') || document.activeElement;
+                                                if (!el) return { success: false, reason: '未找到输入框' };
 
-                                // --- 步骤 1：寻找“添加文件”/“Add files”以展开菜单 ---
-                                const step1Script = `
-                                    (() => {
-                                        const els = Array.from(document.querySelectorAll('button, [role="button"], a'));
-                                        const btn = els.find(el => {
-                                            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                                            const tooltip = (el.getAttribute('data-tooltip') || el.getAttribute('mat-tooltip') || '').toLowerCase();
-                                            const title = (el.getAttribute('title') || '').toLowerCase();
-                                            const text = el.innerText.trim().toLowerCase();
-                                            
-                                            // 1. 根据悬浮提示的底层属性进行暴力全拼匹配
-                                            const matchStr = [aria, tooltip, title].join(' ');
-                                            const matchKeys = ['添加文件', 'add files', '上传图片', 'upload image', 'attach', '附件', 'upload files'];
-                                            if (matchKeys.some(k => matchStr.includes(k))) return true;
-                                            
-                                            // 2. 专门针对 Gemini 的 "+" 加号图标匹配
-                                            const icon = el.querySelector('mat-icon, .material-symbols-outlined, svg');
-                                            if (icon) {
-                                                const iconText = icon.textContent.trim().toLowerCase();
-                                                if (iconText === 'add' || iconText === 'add_circle' || iconText === 'attach_file') return true;
-                                            }
-                                            if (text === '+') return true;
-                                            
-                                            return false;
-                                        });
+                                                // 确保目标获取焦点
+                                                el.focus();
 
-                                        if (btn) {
-                                            const rect = btn.getBoundingClientRect();
-                                            if (rect.width > 0 && rect.height > 0) {
-                                                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true, method: 'attribute_or_icon' };
-                                            }
-                                        }
+                                                // 将 Base64 转换为 Blob -> File
+                                                const res = await fetch('data:${mimeType};base64,${base64Data}');
+                                                const blob = await res.blob();
+                                                const file = new File([blob], "${imgName}", { type: "${mimeType}" });
 
-                                        // 3. 终极回退：根据空间位置寻找。输入框左侧往往是加号按钮
-                                        const input = document.querySelector('div[contenteditable="true"], textarea, rich-textarea');
-                                        if (input) {
-                                            let container = input.parentElement;
-                                            // 往上找几层，把所有按钮拿出来
-                                            for(let i=0; i<3 && container; i++) {
-                                                const btns = container.querySelectorAll('button');
-                                                for (const b of btns) {
-                                                    const rect = b.getBoundingClientRect();
-                                                    const inputRect = input.getBoundingClientRect();
-                                                    // 如果这个按钮在输入框的左侧（相距不是很远），那大概率就是加号
-                                                    if (rect.width > 0 && rect.left < inputRect.left + 50) {
-                                                        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true, method: 'spatial_fallback' };
-                                                    }
+                                                // 创建包含该文件的 DataTransfer 对象
+                                                const dt = new DataTransfer();
+                                                dt.items.add(file);
+
+                                                // 派发 paste 事件
+                                                const pasteEvent = new ClipboardEvent('paste', {
+                                                    bubbles: true,
+                                                    cancelable: true,
+                                                    clipboardData: dt
+                                                });
+                                                
+                                                // 某些框架兼容性处理: 如果构造函数不支持 clipboardData，使用 defineProperty 强行覆盖
+                                                if (!pasteEvent.clipboardData || pasteEvent.clipboardData.files.length === 0) {
+                                                    Object.defineProperty(pasteEvent, 'clipboardData', { value: dt });
                                                 }
-                                                container = container.parentElement;
+
+                                                el.dispatchEvent(pasteEvent);
+                                                
+                                                // 双重保险：同时触发一个 drop 事件（有些现代化编辑器监听的是 drop）
+                                                const dropEvent = new DragEvent('drop', {
+                                                    bubbles: true,
+                                                    cancelable: true,
+                                                    dataTransfer: dt
+                                                });
+                                                if (!dropEvent.dataTransfer || dropEvent.dataTransfer.files.length === 0) {
+                                                    Object.defineProperty(dropEvent, 'dataTransfer', { value: dt });
+                                                }
+                                                el.dispatchEvent(dropEvent);
+
+                                                return { success: true };
+                                            } catch (e) {
+                                                return { success: false, reason: e.toString() };
                                             }
-                                        }
+                                        })()
+                                    `;
 
-                                        return { success: false };
-                                    })()
-                                `;
-                                console.log(`${stepPrefix} 🔍 [两步上传法] 步骤1: 寻找“添加文件”/“Add files”...`);
-                                const step1Res = await Runtime.evaluate({ expression: step1Script, returnByValue: true });
-                                if (step1Res.result?.value?.success) {
-                                    const { x, y } = step1Res.result.value;
-                                    console.log(`${stepPrefix} ✨ 定位到“添加文件” (${step1Res.result?.value?.method})，正在点击以展开菜单...`);
-                                    await smoothMoveAndClick(Input, x, y, true);
-                                    await new Promise(r => setTimeout(r, 1000)); // 等待菜单弹出的动画时间
-                                } else {
-                                    console.log(`${stepPrefix} ℹ️ 未找到“添加文件”入口，尝试直接寻找第二步目标...`);
-                                }
-
-                                // --- 步骤 2：寻找真实的上传入口 “上传文件”/“Upload files” ---
-                                const step2Script = `
-                                    (() => {
-                                        // 下拉菜单的项往往是特殊的 dom
-                                        const els = Array.from(document.querySelectorAll('button, [role="button"], a, menuitem, li, div.menu-item, span.menu-item, [role="menuitem"]'));
-                                        const btn = els.find(el => {
-                                            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                                            const tooltip = (el.getAttribute('data-tooltip') || el.getAttribute('mat-tooltip') || '').toLowerCase();
-                                            const title = (el.getAttribute('title') || '').toLowerCase();
-                                            const text = el.innerText.trim().toLowerCase();
-                                            
-                                            const matchStr = [aria, tooltip, title, text].join(' ');
-                                            const matchKeys = ['上传文件', 'upload files', '从计算机上传', 'upload from computer'];
-                                            
-                                            // 只要完整包含这些核心意图词汇即可
-                                            return matchKeys.some(k => matchStr.includes(k));
-                                        });
-
-                                        if (btn) {
-                                            // 找触发范围尽量大的外层容器
-                                            const b = btn.closest('button, [role="button"], a, menuitem, li, [role="menuitem"]') || btn;
-                                            const rect = b.getBoundingClientRect();
-                                            if (rect.width > 0 && rect.height > 0) {
-                                                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true };
-                                            }
-                                        }
-                                        
-                                        // 回退：直接找页面里潜伏的隐藏文件上传框
-                                        const input = document.querySelector('input[type="file"]:not([disabled])');
-                                        if (input) return { inputFound: true };
-                                        
-                                        return { success: false };
-                                    })()
-                                `;
-                                
-                                console.log(`${stepPrefix} 🔍 [两步上传法] 步骤2: 寻找“上传文件”/“Upload files” 的控件...`);
-                                const step2Res = await Runtime.evaluate({ expression: step2Script, returnByValue: true });
-                                
-                                if (step2Res.result?.value?.success) {
-                                    const { x, y } = step2Res.result.value;
-                                    console.log(`${stepPrefix} ✨ 定位到上传控件，执行真实点击激发原生窗口...`);
-                                    await smoothMoveAndClick(Input, x, y, true);
+                                    const pasteRes = await Runtime.evaluate({ expression: injectPasteScript, awaitPromise: true, returnByValue: true });
                                     
-                                    // 等待弹窗拦截事件触发，增加等待时间至4秒，应对响应延迟
-                                    const chooserParams: any = await Promise.race([
-                                        fileChooserPromise,
-                                        new Promise(r => setTimeout(() => r(null), 4000))
-                                    ]);
-
-                                    if (chooserParams && chooserParams.backendNodeId) {
-                                        console.log(`${stepPrefix} 📥 成功拦截文件上传窗口！正在批量注入引用的本地大图...`);
-                                        await DOM.setFileInputFiles({ files: validPaths, backendNodeId: chooserParams.backendNodeId });
-                                        console.log(`${stepPrefix} ✅ 控件拦截批量上传成功 (${validPaths.length}张图)！`);
-                                        injectedFiles = true;
+                                    if (pasteRes.result?.value?.success) {
+                                        console.log(`${stepPrefix} ✅ 成功向输入框发送底层图片数据流 (绕过系统剪贴板)`);
                                         await new Promise(r => setTimeout(r, (config.pasteMin || 5) * 1000));
                                     } else {
-                                        console.log(`${stepPrefix} ⚠️ 点击了“上传文件”但未能拦住上传窗口可能失败。`);
+                                        console.log(`${stepPrefix} ⚠️ 数据流注入失败: ${pasteRes.result?.value?.reason}`);
                                     }
-                                } else if (step2Res.result?.value?.inputFound) {
-                                    console.log(`${stepPrefix} ⚠️ 未找到可视化上传按钮，但发现隐藏的直接上传通道 (input type="file")...`);
-                                    const evalInput = await Runtime.evaluate({ expression: 'document.querySelector(\'input[type="file"]\')', returnByValue: false });
-                                    if (evalInput.result && evalInput.result.objectId) {
-                                        const nodeRes = await DOM.requestNode({ objectId: evalInput.result.objectId });
-                                        if (nodeRes && nodeRes.nodeId) {
-                                            await DOM.setFileInputFiles({ files: validPaths, nodeId: nodeRes.nodeId });
-                                            console.log(`${stepPrefix} ✅ 原生 Input 批量注入成功！`);
-                                            injectedFiles = true;
-                                            await new Promise(r => setTimeout(r, (config.pasteMin || 5) * 1000));
-                                        }
-                                    }
-                                }
 
-                                // 取消拦截
-                                await Page.setInterceptFileChooserDialog({ enabled: false }).catch(() => {});
-                                
-                            } catch (err) {
-                                console.log(`${stepPrefix} ❌ 策略 A 异常:`, (err as any).message);
-                            }
-                        }
-
-                        // 2. 如果以上拦截注入和底层注入全部失败，最后使用剪贴板循环粘贴
-                        if (!injectedFiles) {
-                            console.log(`${stepPrefix} ⚠️ 策略 A 无法生效，开始执行回退方案：剪贴板模拟单张粘贴...`);
-                            for (const localPath of validPaths) {
-                                if (copyImageToClipboard(localPath, isMac)) {
-                                    // 在粘贴前强制点击一次输入框确保焦点
-                                    const focusResult2 = await Runtime.evaluate({ expression: focusScript, returnByValue: true });
-                                    if (focusResult2.result?.value) {
-                                        const { x, y } = focusResult2.result.value;
-                                        await smoothMoveAndClick(Input, x, y, true);
-                                    }
-                                    
-                                    const modKey = isMac ? 'Meta' : 'Control';
-                                    const modVKeyCode = isMac ? 91 : 17; // Meta or Control
-                                    const mod = isMac ? 8 : 2;
-
-                                    // 1. 按下修饰键 (Ctrl/Cmd)
-                                    await Input.dispatchKeyEvent({ type: 'keyDown', key: modKey, windowsVirtualKeyCode: modVKeyCode });
-                                    await new Promise(r => setTimeout(r, 50));
-
-                                    // 2. 按下并释放 V 键
-                                    await Input.dispatchKeyEvent({ type: 'keyDown', modifiers: mod, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 }); 
-                                    await new Promise(r => setTimeout(r, 50));
-                                    await Input.dispatchKeyEvent({ type: 'keyUp', modifiers: mod, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 });
-                                    
-                                    // 3. 释放修饰键
-                                    await new Promise(r => setTimeout(r, 50));
-                                    await Input.dispatchKeyEvent({ type: 'keyUp', key: modKey, windowsVirtualKeyCode: modVKeyCode });
-                                    
-                                    console.log(`${stepPrefix} ✅ 图片粘贴指令已发出，正在等待解析...`);
-                                    // 给图片解析一点时间
-                                    await new Promise(r => setTimeout(r, (config.pasteMin || 5) * 1000));
+                                } catch (err) {
+                                    console.log(`${stepPrefix} ❌ 读取或注入图片失败:`, (err as any).message);
                                 }
                             }
                         }
