@@ -405,32 +405,100 @@ async function executeWithCDP(tasks: any[], filename: string) {
                         console.log(`${stepPrefix} 🖼️ 处理图片上传 (优先使用 CDP 原生注入)...`);
                         jobProgress.set(filename, { completed: completedLoops + 0.15, total: totalLoops, status: 'running', message: '🖼️ 正在上传参考图...' });
                         
-                        for (const imgUrl of task.images) {
-                            const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
-                            const localPath = path.resolve(__dirname, relativeUrl);
-                            if (fs.existsSync(localPath)) {
-                                console.log(`${stepPrefix} 📂 准备处理本地文件: ${localPath}`);
+                        // 1. 尝试 CDP 原生控件拦截和批量注入
+                        let injectedFiles = false;
+                        const { Page, DOM, Runtime } = client;
+                        const validPaths = task.images
+                            .map((url: string) => path.resolve(__dirname, url.startsWith('/') ? url.slice(1) : url))
+                            .filter((p: string) => fs.existsSync(p));
+
+                        if (validPaths.length > 0) {
+                            try {
+                                await Page.enable();
+                                await DOM.enable();
+                                // 开启弹窗拦截
+                                await Page.setInterceptFileChooserDialog({ enabled: true }).catch(() => {});
+
+                                const fileChooserPromise = new Promise<any>((resolve) => {
+                                    client.once('Page.fileChooserOpened', (params: any) => resolve(params));
+                                });
+
+                                // 专门寻找用户提示的 "上传文件" / "upload files" 控件
+                                const clickUploadScript = `
+                                    (() => {
+                                        const els = Array.from(document.querySelectorAll('button, [role="button"], mat-icon, span, div, a'));
+                                        const btn = els.find(el => {
+                                            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                                            const tooltip = (el.getAttribute('data-tooltip') || el.getAttribute('mat-tooltip') || '').toLowerCase();
+                                            const text = el.innerText.toLowerCase();
+                                            return aria.includes('上传文件') || aria.includes('upload files') ||
+                                                   tooltip.includes('上传文件') || tooltip.includes('upload files') ||
+                                                   text.includes('上传文件') || text.includes('upload files') ||
+                                                   aria.includes('上传') || aria.includes('upload image');
+                                        });
+                                        if (btn) {
+                                            const b = btn.closest('button, [role="button"], a') || btn;
+                                            const rect = b.getBoundingClientRect();
+                                            if (rect.width > 0 && rect.height > 0) {
+                                                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true };
+                                            }
+                                        }
+                                        // 回退：直接找 input
+                                        const input = document.querySelector('input[type="file"]');
+                                        if (input) return { inputFound: true };
+                                        return { success: false };
+                                    })()
+                                `;
                                 
-                                // 策略 A: 尝试 CDP 原生 setFileInputFiles (最高稳定性)
-                                try {
-                                    const { DOM } = client;
-                                    await DOM.enable();
-                                    const doc = await DOM.getDocument();
-                                    // 查找文件输入框 (通常是隐藏的)
-                                    const inputNode = await DOM.querySelector({ nodeId: doc.root.nodeId, selector: 'input[type="file"]' });
+                                console.log(`${stepPrefix} 🔍 正在寻找名为 “上传文件”/“upload files” 的控件...`);
+                                const clickRes = await Runtime.evaluate({ expression: clickUploadScript, returnByValue: true });
+                                
+                                if (clickRes.result?.value?.success) {
+                                    const { x, y } = clickRes.result.value;
+                                    console.log(`${stepPrefix} ✨ 定位到上传控件，正在点击触发文件选择框...`);
+                                    await smoothMoveAndClick(Input, x, y, true);
                                     
-                                    if (inputNode && inputNode.nodeId) {
-                                        console.log(`${stepPrefix} ✨ 发现原生文件输入框，执行 CDP 路径注入...`);
-                                        await DOM.setFileInputFiles({ files: [localPath], nodeId: inputNode.nodeId });
-                                        console.log(`${stepPrefix} ✅ CDP 文件注入成功`);
+                                    // 等待弹窗拦截
+                                    const chooserParams: any = await Promise.race([
+                                        fileChooserPromise,
+                                        new Promise(r => setTimeout(() => r(null), 3000))
+                                    ]);
+
+                                    if (chooserParams && chooserParams.backendNodeId) {
+                                        console.log(`${stepPrefix} 📥 成功拦截文件上传窗口！正在批量注入引用的本地大图...`);
+                                        await DOM.setFileInputFiles({ files: validPaths, backendNodeId: chooserParams.backendNodeId });
+                                        console.log(`${stepPrefix} ✅ 控件拦截批量上传成功 (${validPaths.length}张图)！`);
+                                        injectedFiles = true;
                                         await new Promise(r => setTimeout(r, (config.pasteMin || 5) * 1000));
-                                        continue; // 注入成功，跳过剪贴板尝试
+                                    } else {
+                                        console.log(`${stepPrefix} ⚠️ 点击了控件但未能拦截到窗口，切回备用方案。`);
                                     }
-                                } catch (fileErr) {
-                                    console.log(`${stepPrefix} ⚠️ CDP 文件注入失败，切回剪贴板模拟:`, (fileErr as any).message);
+                                } else if (clickRes.result?.value?.inputFound) {
+                                    console.log(`${stepPrefix} ⚠️ 未找到可视化上传按钮，但发现隐藏的直接上传通道 (input type="file")...`);
+                                    const evalInput = await Runtime.evaluate({ expression: 'document.querySelector(\'input[type="file"]\')', returnByValue: false });
+                                    if (evalInput.result && evalInput.result.objectId) {
+                                        const nodeRes = await DOM.requestNode({ objectId: evalInput.result.objectId });
+                                        if (nodeRes && nodeRes.nodeId) {
+                                            await DOM.setFileInputFiles({ files: validPaths, nodeId: nodeRes.nodeId });
+                                            console.log(`${stepPrefix} ✅ 原生 Input 批量注入成功！`);
+                                            injectedFiles = true;
+                                            await new Promise(r => setTimeout(r, (config.pasteMin || 5) * 1000));
+                                        }
+                                    }
                                 }
 
-                                // 策略 B: 剪贴板粘贴 (回退方案)
+                                // 取消拦截
+                                await Page.setInterceptFileChooserDialog({ enabled: false }).catch(() => {});
+                                
+                            } catch (err) {
+                                console.log(`${stepPrefix} ❌ 策略 A 异常:`, (err as any).message);
+                            }
+                        }
+
+                        // 2. 如果以上拦截注入和底层注入全部失败，最后使用剪贴板循环粘贴
+                        if (!injectedFiles) {
+                            console.log(`${stepPrefix} ⚠️ 策略 A 无法生效，开始执行回退方案：剪贴板模拟单张粘贴...`);
+                            for (const localPath of validPaths) {
                                 if (copyImageToClipboard(localPath, isMac)) {
                                     // 在粘贴前强制点击一次输入框确保焦点
                                     const focusResult2 = await Runtime.evaluate({ expression: focusScript, returnByValue: true });
