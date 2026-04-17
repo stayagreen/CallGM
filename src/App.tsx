@@ -188,7 +188,8 @@ export default function App() {
     taskMax: 5,
     downloadCheckDelay: 1,
     downloadRetries: 3,
-    videoConcurrency: 3
+    videoConcurrency: 3,
+    imageQuality: 'performance'
   });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
@@ -212,7 +213,7 @@ export default function App() {
         const res = await fetch('/api/gallery/auto-watermark', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename })
+          body: JSON.stringify({ filename, imageQuality: systemConfig.imageQuality })
         });
         
         const data = await res.json();
@@ -1492,6 +1493,18 @@ export default function App() {
                 <div>
                   <label className="block mb-1 font-semibold text-gray-700">视频渲染并发数:</label>
                   <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.videoConcurrency || 3} onChange={(e) => setSystemConfig({...systemConfig, videoConcurrency: parseInt(e.target.value)})} />
+                </div>
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">图片质量模式:</label>
+                  <select 
+                    className="w-full p-2 border border-gray-200 rounded-lg bg-white" 
+                    value={systemConfig.imageQuality || 'performance'} 
+                    onChange={(e) => setSystemConfig({...systemConfig, imageQuality: e.target.value as any})}
+                  >
+                    <option value="fastSpeed">极速模式 (JPG方案 - 300KB-500KB)</option>
+                    <option value="performance">平衡模式 (500KB-800KB)</option>
+                    <option value="highQuality">高保真模式 (~2MB)</option>
+                  </select>
                 </div>
               </div>
             </div>

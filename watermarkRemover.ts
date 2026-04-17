@@ -9,7 +9,7 @@ import sharp from 'sharp';
  */
 export async function autoInpaint(
   filePath: string, 
-  mode: 'performance' | 'highQuality' = 'performance'
+  mode: 'performance' | 'highQuality' | 'fastSpeed' = 'performance'
 ): Promise<boolean> {
   const fileName = path.basename(filePath);
   console.log(`🔍 [去水印-WASM] 开始处理文件: ${fileName}`);
@@ -207,7 +207,17 @@ export async function autoInpaint(
     });
     
     let outBuffer: Buffer;
-    if (mode === 'performance') {
+    if (mode === 'fastSpeed') {
+      console.log(`⚡ [去水印-WASM] 采用极速模式 (强制转换 JPG 极小体积)`);
+      // 极速模式：统一强制转为 JPEG，配合 75 质量。
+      // 对于原本 6-7MB 的文件，不论原来是 PNG 还是什么，这能直接降压到 300-500KB。
+      outBuffer = await sharpInstance.jpeg({ 
+        quality: 75, 
+        mozjpeg: true, 
+        chromaSubsampling: '4:2:0',
+        progressive: true
+      }).toBuffer();
+    } else if (mode === 'performance') {
       console.log(`🚀 [去水印-WASM] 采用极致性能模式 (视觉无损压缩)`);
       if (ext === '.jpg' || ext === '.jpeg') {
         // 82 质量 + 4:2:0 采样 + MozJPEG，体积通常能减小 60-70%，肉眼几乎无感

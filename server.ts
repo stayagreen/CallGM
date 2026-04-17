@@ -378,7 +378,9 @@ async function startServer() {
     taskMin: 5,
     taskMax: 5,
     downloadCheckDelay: 1,
-    downloadRetries: 3
+    downloadRetries: 3,
+    imageQuality: 'performance',
+    videoConcurrency: 3
   };
 
   app.get('/api/config', (req, res) => {
@@ -602,7 +604,7 @@ async function startServer() {
 
   // API to trigger one-click watermark removal
   app.post("/api/gallery/auto-watermark", async (req, res) => {
-    const { filename } = req.body;
+    const { filename, imageQuality } = req.body;
     if (!filename) return res.status(400).json({ error: "Filename is required" });
 
     const filePath = path.join(downloadDir, filename);
@@ -611,10 +613,10 @@ async function startServer() {
     }
 
     try {
-      console.log(`✨ [One-Click Watermark] Processing: ${filename}...`);
+      console.log(`✨ [One-Click Watermark] Processing: ${filename} (Mode: ${imageQuality || 'performance'})...`);
       const { autoInpaint } = await import("./watermarkRemover.js");
       
-      const success = await autoInpaint(filePath, 'performance');
+      const success = await autoInpaint(filePath, imageQuality || 'performance');
       
       if (success) {
         // Delete thumbnail so it gets regenerated
