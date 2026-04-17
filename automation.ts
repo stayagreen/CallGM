@@ -267,12 +267,19 @@ async function executeWithCDP(tasks: any[], filename: string) {
 
     const checkResultScript = `
         (() => {
-            // 1. 获取模型回复容器
-            const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
-            if (messages.length === 0) return { status: 'no_messages' };
+            // 1. 获取模型回复容器 (严格过滤掉用户消息，防止把上传的参考图当成生成图)
+            const allMessages = Array.from(document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message'));
+            const modelMessages = allMessages.filter(m => {
+                // 如果它的祖先节点是 user-message 或者明确标注了 author="user"，则排除掉
+                if (m.closest('user-message, [data-message-author="user"]')) return false;
+                // 如果它内部包含了 "You uploaded an image" 的标志性结构也排除 (备用)
+                return true;
+            });
+            
+            if (modelMessages.length === 0) return { status: 'no_messages' };
             
             // 2. 聚焦最后一条回复
-            const lastMessage = messages[messages.length - 1];
+            const lastMessage = modelMessages[modelMessages.length - 1];
 
             // 3. 只要最后一条回复里有图片 (不分类型，只要有 img 即可)
             const images = lastMessage.querySelectorAll('img');
@@ -560,10 +567,11 @@ async function executeWithCDP(tasks: any[], filename: string) {
                             await Runtime.evaluate({ 
                                 expression: `
                                     (() => {
-                                        const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
-                                        if (messages.length === 0) return "NO_MSG";
+                                        const allMessages = Array.from(document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message'));
+                                        const modelMessages = allMessages.filter(m => !m.closest('user-message, [data-message-author="user"]'));
+                                        if (modelMessages.length === 0) return "NO_MSG";
                                         
-                                        const lastMessage = messages[messages.length - 1];
+                                        const lastMessage = modelMessages[modelMessages.length - 1];
                                         const allElements = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id], mat-icon'));
                                         
                                         const downloadBtn = allElements.find(el => {
