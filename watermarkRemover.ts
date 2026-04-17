@@ -112,53 +112,65 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     // 归一化增强对比度
     cvInst.normalize(gray, gray, 0, 255, cvInst.NORM_MINMAX);
 
-    // 关键：使用 OTSU 自动寻找该区域的最佳二值化分割点
     let binary = new cvInst.Mat();
-    cvInst.threshold(gray, binary, 0, 255, cvInst.THRESH_BINARY + cvInst.THRESH_OTSU);
-
-    // 形态学膨胀：让纤细的星角变粗，防止被面积过滤掉
-    let kSize = new cvInst.Size(3, 3);
-    let kernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, kSize);
-    cvInst.dilate(binary, binary, kernel);
-
-    // 5. 轮廓提取
     let contours = new cvInst.MatVector();
     let hierarchy = new cvInst.Mat();
-    cvInst.findContours(binary, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
-    
-    console.log(`🔍 [星型探测] 区域内候选轮廓数: ${contours.size()}`);
-    
     let mask = cvInst.Mat.zeros(h, w, cvInst.CV_8UC1);
     let watermarkFound = false;
-
     const whiteScalar = new cvInst.Scalar(255, 255, 255, 255);
     const offsetPoint = new cvInst.Point(roiX, roiY);
 
-    for (let i = 0; i < contours.size(); ++i) {
-      const cnt = contours.get(i);
-      const area = cvInst.contourArea(cnt);
-      const rect = cvInst.boundingRect(cnt);
-      const aspect = rect.width / rect.height;
+    /**
+     * 第一阶段：OTSU 自动阈值探测 (原始方案)
+     * 适合水印与背景有一定区分度的情况
+     */
+    console.log(`📡 [第一阶段] 尝试 OTSU 自动阈值识别...`);
+    cvInst.threshold(gray, binary, 0, 255, cvInst.THRESH_BINARY + cvInst.THRESH_OTSU);
+    
+    // 形态学膨胀：让纤细的星角变粗
+    let kernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(3, 3));
+    cvInst.dilate(binary, binary, kernel);
+    cvInst.findContours(binary, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
 
-      // 诊断：记录所有中等大小的轮廓以便分析为何失败
-      if (area > 20 && area < 5000) {
-        console.log(`📎 [星型探测] 候选 [${i}]: 面积=${Math.round(area)}, 比例=${aspect.toFixed(2)}, 坐标=(${rect.x}, ${rect.y})`);
-      }
-
-      // 星型水印指纹 (放宽准入标准):
-      // 1. 面积从 40 开启 (适配小水印)
-      // 2. 长宽比在 0.4 - 2.5 之间
-      if (area >= 40 && area < 4000) {
-        if (aspect > 0.4 && aspect < 2.5) {
-          console.log(`✨ [星型探测] 匹配成功！目标 [${i}] 正在生成蒙版...`);
-          cvInst.drawContours(mask, contours, i, whiteScalar, -1, cvInst.LINE_8, hierarchy, 0, offsetPoint);
-          watermarkFound = true;
+    const checkContours = (stage: string) => {
+      for (let i = 0; i < contours.size(); ++i) {
+        const cnt = contours.get(i);
+        const area = cvInst.contourArea(cnt);
+        const rect = cvInst.boundingRect(cnt);
+        const aspect = rect.width / rect.height;
+  
+        if (area >= 35 && area < 4000) {
+          if (aspect > 0.4 && aspect < 2.5) {
+            console.log(`✨ [${stage}] 匹配成功！目标 [${i}]: 面积=${Math.round(area)}, 比例=${aspect.toFixed(2)}`);
+            cvInst.drawContours(mask, contours, i, whiteScalar, -1, cvInst.LINE_8, hierarchy, 0, offsetPoint);
+            watermarkFound = true;
+          }
         }
       }
+    };
+
+    checkContours("第一阶段");
+
+    /**
+     * 第二阶段：高光隔离探测 (后备方案)
+     * 针对白色水印在浅色复杂背景下的情况，通过强制提取极高亮度像素来隔离水印
+     */
+    if (!watermarkFound) {
+      console.log(`📡 [第二阶段] 激活后备方案：高光隔离探测...`);
+      // 这里的 240 是针对近乎纯白的水印，过滤掉对比度较低的背景浮雕
+      cvInst.threshold(gray, binary, 240, 255, cvInst.THRESH_BINARY);
+      
+      // 更积极的膨胀，合并断裂的白色像素
+      let fallbackKernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(5, 5));
+      cvInst.dilate(binary, binary, fallbackKernel);
+      
+      cvInst.findContours(binary, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
+      checkContours("第二阶段");
+      fallbackKernel.delete();
     }
 
     if (!watermarkFound) {
-      console.log(`⚠️ [星型探测] 无法定位符合几何指纹的形状，跳过。`);
+      console.log(`⚠️ [星型探测] 经过两个阶段探测均无法定位特征水印。`);
       src.delete(); roi.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete(); mask.delete(); kernel.delete();
       return false;
     }
@@ -205,7 +217,7 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     // 8. 严格内存释放
     src.delete(); roi.delete(); gray.delete(); binary.delete(); 
     contours.delete(); hierarchy.delete(); mask.delete(); 
-    dilatedMask.delete(); kernel.delete();
+    dilatedMask.delete(); kernel.delete(); dKernel.delete();
     srcRGB.delete(); dst.delete();
     
     return true;
