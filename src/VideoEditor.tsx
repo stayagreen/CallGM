@@ -99,6 +99,7 @@ export default function VideoEditor({
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
   const [galleryMode, setGalleryMode] = useState<'normal' | '4grid'>('normal');
+  const [selectedGalleryGrids, setSelectedGalleryGrids] = useState<string[]>([]);
   const [activeStoryboardId, setActiveStoryboardId] = useState<string | null>(null);
   const [activeStoryboardIndex, setActiveStoryboardIndex] = useState(0);
   const [editingImage, setEditingImage] = useState<{ id: string, image: string } | null>(null);
@@ -151,6 +152,59 @@ export default function VideoEditor({
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const processMultipleGallery4Grids = async () => {
+    if (selectedGalleryGrids.length === 0) return;
+    setIsProcessingGrid(true);
+
+    const allQuadrants: string[] = [];
+
+    for (const img of selectedGalleryGrids) {
+      const imgUrl = getBustedUrl(`/downloads/${img}`);
+      
+      const newImages = await new Promise<string[]>((resolve) => {
+        const image = new Image();
+        image.crossOrigin = 'anonymous';
+        image.onload = () => {
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          if (!context) return resolve([]);
+          
+          const w = image.width / 2;
+          const h = image.height / 2;
+          canvas.width = w;
+          canvas.height = h;
+
+          const quadrants = [
+            { x: 0, y: 0 },
+            { x: w, y: 0 },
+            { x: 0, y: h },
+            { x: w, y: h }
+          ];
+
+          const res = quadrants.map((q) => {
+            context.clearRect(0, 0, w, h);
+            context.drawImage(image, q.x, q.y, w, h, 0, 0, w, h);
+            return canvas.toDataURL('image/jpeg', 0.9);
+          });
+          resolve(res);
+        };
+        image.onerror = () => {
+          showToast(`图片加载失败: ${img}`, 'error');
+          resolve([]);
+        };
+        image.src = imgUrl;
+      });
+
+      allQuadrants.push(...newImages);
+    }
+
+    setSplitImages(allQuadrants);
+    setSelectedSplitIndices([]);
+    setIsProcessingGrid(false);
+    setShowGallery(false);
+    setSelectedGalleryGrids([]);
   };
 
   const handle4GridSplit = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -624,47 +678,9 @@ export default function VideoEditor({
                       if (isProcessingGrid) return;
                       
                       if (galleryMode === '4grid') {
-                        setIsProcessingGrid(true);
-                        // Process 4-grid from gallery image
-                        const imgUrl = getBustedUrl(`/downloads/${img}`);
-                        const image = new Image();
-                        image.crossOrigin = 'anonymous'; // Important for canvas export
-                        image.onload = () => {
-                          const canvas = document.createElement('canvas');
-                          const context = canvas.getContext('2d');
-                          if (!context) {
-                            setIsProcessingGrid(false);
-                            return;
-                          }
-                          
-                          const w = image.width / 2;
-                          const h = image.height / 2;
-                          canvas.width = w;
-                          canvas.height = h;
-
-                          const quadrants = [
-                            { x: 0, y: 0 },
-                            { x: w, y: 0 },
-                            { x: 0, y: h },
-                            { x: w, y: h }
-                          ];
-
-                          const newImages = quadrants.map((q) => {
-                            context.clearRect(0, 0, w, h);
-                            context.drawImage(image, q.x, q.y, w, h, 0, 0, w, h);
-                            return canvas.toDataURL('image/jpeg', 0.9);
-                          });
-                          
-                          setSplitImages(newImages);
-                          setSelectedSplitIndices([]);
-                          setIsProcessingGrid(false);
-                          setShowGallery(false);
-                        };
-                        image.onerror = () => {
-                          setIsProcessingGrid(false);
-                          showToast('图片加载失败，请重试', 'error');
-                        };
-                        image.src = imgUrl;
+                        setSelectedGalleryGrids(prev => 
+                          prev.includes(img) ? prev.filter(p => p !== img) : [...prev, img]
+                        );
                       } else {
                         // Find first empty storyboard or append
                         const emptyIndex = task.storyboards.findIndex(sb => !sb.image);
@@ -687,14 +703,30 @@ export default function VideoEditor({
                         setShowGallery(false);
                       }
                     }}
-                    className="relative aspect-square rounded-lg overflow-hidden border-2 border-gray-200 hover:border-blue-500 cursor-pointer transition-all"
+                    className={`relative aspect-square rounded-lg overflow-hidden border-4 cursor-pointer transition-all ${galleryMode === '4grid' && selectedGalleryGrids.includes(img) ? 'border-blue-500 shadow-md' : 'border-gray-200 hover:border-blue-300'}`}
                   >
                     <img src={`/api/thumbnails/downloads/${img}${galleryUpdateToken ? `?t=${galleryUpdateToken}` : ''}`} className="w-full h-full object-cover" loading="lazy" />
+                    {galleryMode === '4grid' && selectedGalleryGrids.includes(img) && (
+                      <div className="absolute top-2 right-2 w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold shadow-sm border-2 border-white">
+                        <CheckCircle2 size={14} />
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
               )}
             </div>
+            {galleryMode === '4grid' && selectedGalleryGrids.length > 0 && (
+              <div className="pt-4 border-t border-gray-100 flex justify-end">
+                <button
+                  onClick={processMultipleGallery4Grids}
+                  disabled={isProcessingGrid}
+                  className="px-6 py-2.5 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  确认选择并切割 ({selectedGalleryGrids.length})
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
