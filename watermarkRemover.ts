@@ -196,25 +196,26 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     // 增加修复半径 (5 -> 7) 以获得更平滑的融合效果
     cvInst.inpaint(srcRGB, dilatedMask, dst, 7, cvInst.INPAINT_TELEA);
 
-    // 7. 保存结果
-    const processedBuffer = Buffer.from(dst.data);
+    // 7. 保存结果 (使用 Buffer 方式避免 Windows 下 renameSync 可能产生的并发锁定问题)
     const ext = path.extname(filePath).toLowerCase();
-    const tempPath = filePath.replace(ext, `.tmp${ext}`);
     
-    const sharpInstance = sharp(processedBuffer, {
-      raw: { width: dst.cols, height: dst.rows, channels: 3 }
+    // 显式计算 stride 确保内存对齐正确
+    const stride = dst.cols * dst.channels();
+    const sharpInstance = sharp(Buffer.from(dst.data), {
+      raw: { width: dst.cols, height: dst.rows, channels: dst.channels() }
     });
-
+    
+    let outBuffer: Buffer;
     if (ext === '.jpg' || ext === '.jpeg') {
-      await sharpInstance.jpeg({ quality: 95, mozjpeg: true }).toFile(tempPath);
+      outBuffer = await sharpInstance.jpeg({ quality: 95, mozjpeg: true }).toBuffer();
     } else if (ext === '.png') {
-      await sharpInstance.png({ compressionLevel: 9, effort: 10 }).toFile(tempPath);
+      outBuffer = await sharpInstance.png({ compressionLevel: 6 }).toBuffer();
     } else {
-      await sharpInstance.toFormat(ext.replace('.', '') as any).toFile(tempPath);
+      outBuffer = await sharpInstance.toFormat(ext.replace('.', '') as any).toBuffer();
     }
 
-    fs.renameSync(tempPath, filePath);
-    console.log(`✅ [去水印-WASM] 任务处理完成，画质已同步。`);
+    fs.writeFileSync(filePath, outBuffer);
+    console.log(`✅ [去水印-WASM] 任务处理完成，文件已安全写回。`);
 
     // 8. 严格内存释放
     src.delete(); roi.delete(); gray.delete(); binary.delete(); 
