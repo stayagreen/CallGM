@@ -91,15 +91,15 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     const h = src.rows;
     const w = src.cols;
 
-    // 3. ROI 区域锁定 (针对星形水印，通常在右下角极小区域 12%x8%)
-    const roiW = Math.floor(w * 0.12); 
-    const roiH = Math.floor(h * 0.08); 
-    const roiX = w - roiW - Math.floor(w * 0.02);
-    const roiY = h - roiH - Math.floor(h * 0.02);
+    // 3. ROI 区域锁定 (稍微放宽一点点，确保不同比例下的水印都在范围内)
+    const roiW = Math.floor(w * 0.15); 
+    const roiH = Math.floor(h * 0.10); 
+    const roiX = w - roiW - Math.floor(w * 0.01);
+    const roiY = h - roiH - Math.floor(h * 0.01);
     
     const roiRect = new cvInst.Rect(roiX, roiY, roiW, roiH);
     let roi = src.roi(roiRect);
-    console.log(`📍 [星型探测] 锁定范围: ${roiW}x${roiH} @ (${roiX}, ${roiY})`);
+    console.log(`📍 [星型探测] ROI 区域: ${roiW}x${roiH} @ (${roiX}, ${roiY})`);
 
     // 4. 预处理
     let gray = new cvInst.Mat();
@@ -109,22 +109,24 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       cvInst.cvtColor(roi, gray, cvInst.COLOR_RGB2GRAY);
     }
     
-    // 增加对比度以增强边缘
+    // 归一化增强对比度
     cvInst.normalize(gray, gray, 0, 255, cvInst.NORM_MINMAX);
 
-    // 关键：Canny 边缘提取 (不看亮度看对比度)
-    let edges = new cvInst.Mat();
-    cvInst.Canny(gray, edges, 50, 150);
+    // 关键：使用 OTSU 自动寻找该区域的最佳二值化分割点
+    let binary = new cvInst.Mat();
+    cvInst.threshold(gray, binary, 0, 255, cvInst.THRESH_BINARY + cvInst.THRESH_OTSU);
 
-    // 闭运算：把星型的四个角连起来
+    // 形态学膨胀：让纤细的星角变粗，防止被面积过滤掉
     let kSize = new cvInst.Size(3, 3);
     let kernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, kSize);
-    cvInst.morphologyEx(edges, edges, cvInst.MORPH_CLOSE, kernel);
+    cvInst.dilate(binary, binary, kernel);
 
     // 5. 轮廓提取
     let contours = new cvInst.MatVector();
     let hierarchy = new cvInst.Mat();
-    cvInst.findContours(edges, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
+    cvInst.findContours(binary, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
+    
+    console.log(`🔍 [星型探测] 区域内候选轮廓数: ${contours.size()}`);
     
     let mask = cvInst.Mat.zeros(h, w, cvInst.CV_8UC1);
     let watermarkFound = false;
@@ -136,39 +138,40 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       const cnt = contours.get(i);
       const area = cvInst.contourArea(cnt);
       const rect = cvInst.boundingRect(cnt);
-      
       const aspect = rect.width / rect.height;
-      const extent = area / (rect.width * rect.height); // 紧凑度 (星形通常在 0.4 - 0.7 之间)
 
-      // 针对星型水印的过滤指纹：
-      // 1. 面积在 100 - 3000 之间 (高分辨率图)
-      // 2. 长宽比接近 1 (0.7 - 1.4)
-      // 3. 紧凑度不是实心方块 (0.3 < extent < 0.8)
-      if (area > 100 && area < 3000) {
-        if (aspect > 0.6 && aspect < 1.6 && extent > 0.2 && extent < 0.85) {
-          console.log(`✨ [星型探测] 匹配成功 [${i}]: 面积=${Math.round(area)}, 比例=${aspect.toFixed(2)}, 紧凑度=${extent.toFixed(2)}`);
+      // 诊断：记录所有中等大小的轮廓以便分析为何失败
+      if (area > 20 && area < 5000) {
+        console.log(`📎 [星型探测] 候选 [${i}]: 面积=${Math.round(area)}, 比例=${aspect.toFixed(2)}, 坐标=(${rect.x}, ${rect.y})`);
+      }
+
+      // 星型水印指纹 (放宽准入标准):
+      // 1. 面积从 40 开启 (适配小水印)
+      // 2. 长宽比在 0.4 - 2.5 之间
+      if (area >= 40 && area < 4000) {
+        if (aspect > 0.4 && aspect < 2.5) {
+          console.log(`✨ [星型探测] 匹配成功！目标 [${i}] 正在生成蒙版...`);
           cvInst.drawContours(mask, contours, i, whiteScalar, -1, cvInst.LINE_8, hierarchy, 0, offsetPoint);
           watermarkFound = true;
-          // 一旦锁定代表性形状即停止
         }
       }
     }
 
     if (!watermarkFound) {
-      console.log(`⚠️ [星型探测] 几何特征未匹配，跳过修复`);
-      src.delete(); roi.delete(); gray.delete(); edges.delete(); contours.delete(); hierarchy.delete(); mask.delete(); kernel.delete();
+      console.log(`⚠️ [星型探测] 无法定位符合几何指纹的形状，跳过。`);
+      src.delete(); roi.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete(); mask.delete(); kernel.delete();
       return false;
     }
 
-    // --- 智能膨胀 ---
+    // --- 极速膨胀 ---
     let dilatedMask = new cvInst.Mat();
-    let dKernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(5, 5));
+    let dKernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(7, 7)); // 覆盖尖角阴影
     cvInst.dilate(mask, dilatedMask, dKernel);
     
-    console.log(`🎭 [星型探测] 修复覆盖: ${cvInst.countNonZero(dilatedMask)} 像素`);
+    console.log(`🎭 [星型探测] 修复蒙版大小: ${cvInst.countNonZero(dilatedMask)} 像素`);
 
     // 6. 核心：Telea 修复
-    console.log(`🛠️ [星型探测] 执行 Telea 纹理填充 (Radius: 3)...`);
+    console.log(`🛠️ [星型探测] 正在执行智能填充算法...`);
     let srcRGB = new cvInst.Mat();
     if (info.channels === 4) {
       cvInst.cvtColor(src, srcRGB, cvInst.COLOR_RGBA2RGB);
@@ -177,25 +180,19 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     }
 
     let dst = new cvInst.Mat();
-    cvInst.inpaint(srcRGB, dilatedMask, dst, 3, cvInst.INPAINT_TELEA);
+    cvInst.inpaint(srcRGB, dilatedMask, dst, 5, cvInst.INPAINT_TELEA);
 
     // 7. 保存结果
-    console.log(`💾 [星型探测] 输出结果...`);
     const processedBuffer = Buffer.from(dst.data);
     const ext = path.extname(filePath).toLowerCase();
     const tempPath = filePath.replace(ext, `.tmp${ext}`);
     
-    const sharpInstance = sharp(processedBuffer, {
-      raw: { width: dst.cols, height: dst.rows, channels: 3 }
-    });
+    await sharp(processedBuffer, { raw: { width: dst.cols, height: dst.rows, channels: 3 } })
+      .jpeg({ quality: 95, mozjpeg: true })
+      .toFile(tempPath);
 
-    if (ext === '.jpg' || ext === '.jpeg') {
-      await sharpInstance.jpeg({ quality: 95, mozjpeg: true }).toFile(tempPath);
-    } else if (ext === '.png') {
-      await sharpInstance.png({ compressionLevel: 9, effort: 10 }).toFile(tempPath);
-    } else {
-      await sharpInstance.toFormat(ext.replace('.', '') as any).toFile(tempPath);
-    }
+    fs.renameSync(tempPath, filePath);
+    console.log(`✅ [星型探测] 任务处理完成。`);
 
     fs.renameSync(tempPath, filePath);
     console.log(`✅ [去水印-WASM] 全流程执行完毕！文件已更新。`);
