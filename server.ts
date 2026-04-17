@@ -600,6 +600,38 @@ async function startServer() {
     res.json({ success: true, urls: copiedUrls });
   });
 
+  // API to trigger one-click watermark removal
+  app.post("/api/gallery/auto-watermark", async (req, res) => {
+    const { filename } = req.body;
+    if (!filename) return res.status(400).json({ error: "Filename is required" });
+
+    const filePath = path.join(downloadDir, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    try {
+      console.log(`✨ [One-Click Watermark] Processing: ${filename}...`);
+      const { autoInpaint } = await import("./watermarkRemover.js");
+      
+      const success = await autoInpaint(filePath);
+      
+      if (success) {
+        // Delete thumbnail so it gets regenerated
+        const thumbPath = path.join(thumbDownloadsDir, filename);
+        if (fs.existsSync(thumbPath)) {
+          fs.unlinkSync(thumbPath);
+        }
+        res.json({ status: "ok", message: "Watermark removed successfully" });
+      } else {
+        res.json({ status: "ignored", message: "No watermark detected or processing skipped" });
+      }
+    } catch (error) {
+      console.error(`❌ [One-Click Watermark] Failed: ${filename}`, error);
+      res.status(500).json({ error: "Failed to process image" });
+    }
+  });
+
   // Start the automation watcher
   startAutomationWatcher();
   

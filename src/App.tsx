@@ -6,7 +6,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors } from 'lucide-react';
 import VideoEditor, { VideoTask } from './VideoEditor';
-import ImageEditor from './ImageEditor';
 
 interface Task {
   id: string;
@@ -200,10 +199,44 @@ export default function App() {
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
   const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
-  const [editingGalleryImage, setEditingGalleryImage] = useState<string | null>(null);
   const [processingGalleryImages, setProcessingGalleryImages] = useState<Set<string>>(new Set());
   const manualProcessingImages = useRef<Set<string>>(new Set());
   const [galleryUpdateToken, setGalleryUpdateToken] = useState<number>(Date.now());
+
+  const handleOneClickWatermark = async (filename: string) => {
+    if (window.confirm('确认要对该图片进行一键去水印吗？\n系统将尝试自动识别并移除右下角的星型水印。')) {
+      // 记录处理中状态
+      setProcessingGalleryImages(prev => new Set(prev).add(filename));
+      
+      try {
+        const res = await fetch('/api/gallery/auto-watermark', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+        
+        const data = await res.json();
+        if (data.status === 'ok') {
+          // 成功处理，强制刷新缩略图
+          setGalleryUpdateToken(Date.now());
+        } else if (data.status === 'ignored') {
+          alert('未检测到明显的水印特征，已跳过。');
+        } else {
+          alert('处理失败：' + (data.error || '未知错误'));
+        }
+      } catch (err) {
+        console.error('One-click watermark failed:', err);
+        alert('网络请求失败，请稍后再试。');
+      } finally {
+        // 移除处理中状态
+        setProcessingGalleryImages(prev => {
+          const next = new Set(prev);
+          next.delete(filename);
+          return next;
+        });
+      }
+    }
+  };
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
@@ -1176,10 +1209,10 @@ export default function App() {
                     <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
                     <div className="flex gap-1">
                       <button
-                        onClick={() => !processingGalleryImages.has(img) && setEditingGalleryImage(img)}
+                        onClick={() => !processingGalleryImages.has(img) && handleOneClickWatermark(img)}
                         disabled={processingGalleryImages.has(img)}
                         className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
-                        title="编辑图片"
+                        title="一键去水印"
                       >
                         <Scissors className="w-4 h-4" />
                       </button>
@@ -1561,61 +1594,6 @@ export default function App() {
             </button>
           </div>
         </div>
-      )}
-      
-      {editingGalleryImage && (
-        <ImageEditor
-          image={`/downloads/${editingGalleryImage}?t=${galleryUpdateToken}`}
-          onProcessStart={() => {
-            const currentImg = editingGalleryImage;
-            if (currentImg) {
-              manualProcessingImages.current.add(currentImg);
-              setProcessingGalleryImages(prev => new Set(prev).add(currentImg));
-            }
-            setEditingGalleryImage(null);
-          }}
-          onSave={async (newImage) => {
-            const targetFilename = editingGalleryImage || Array.from(manualProcessingImages.current).pop();
-            
-            // Close modal immediately to avoid "stuck" feeling
-            setEditingGalleryImage(null);
-
-            if (targetFilename) {
-              // Ensure it's in processing state if it wasn't already by onProcessStart
-              if (!manualProcessingImages.current.has(targetFilename)) {
-                manualProcessingImages.current.add(targetFilename);
-                setProcessingGalleryImages(prev => new Set(prev).add(targetFilename));
-              }
-            }
-
-            try {
-              const uploadRes = await fetch('/api/gallery/update', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  filename: targetFilename,
-                  image: newImage
-                })
-              });
-              
-              if (!uploadRes.ok) throw new Error('上传失败');
-              
-              fetchGallery(); // Refresh gallery
-            } catch (error) {
-              console.error('Save edited image failed:', error);
-            } finally {
-              if (targetFilename) {
-                manualProcessingImages.current.delete(targetFilename);
-                setProcessingGalleryImages(prev => {
-                  const next = new Set(prev);
-                  next.delete(targetFilename);
-                  return next;
-                });
-              }
-            }
-          }}
-          onCancel={() => setEditingGalleryImage(null)}
-        />
       )}
       
       {viewingImage && (
