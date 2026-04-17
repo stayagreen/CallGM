@@ -423,18 +423,17 @@ async function executeWithCDP(tasks: any[], filename: string) {
                                     client.once('Page.fileChooserOpened', (params: any) => resolve(params));
                                 });
 
-                                // 专门寻找用户提示的 "上传文件" / "upload files" 控件
-                                const clickUploadScript = `
+                                // --- 步骤 1：寻找“添加文件”/“Add files”以展开菜单 ---
+                                const step1Script = `
                                     (() => {
                                         const els = Array.from(document.querySelectorAll('button, [role="button"], mat-icon, span, div, a'));
                                         const btn = els.find(el => {
                                             const aria = (el.getAttribute('aria-label') || '').toLowerCase();
                                             const tooltip = (el.getAttribute('data-tooltip') || el.getAttribute('mat-tooltip') || '').toLowerCase();
                                             const text = el.innerText.toLowerCase();
-                                            return aria.includes('上传文件') || aria.includes('upload files') ||
-                                                   tooltip.includes('上传文件') || tooltip.includes('upload files') ||
-                                                   text.includes('上传文件') || text.includes('upload files') ||
-                                                   aria.includes('上传') || aria.includes('upload image');
+                                            return aria.includes('添加文件') || aria.includes('add files') ||
+                                                   tooltip.includes('添加文件') || tooltip.includes('add files') ||
+                                                   text === '添加文件' || text.includes('add files');
                                         });
                                         if (btn) {
                                             const b = btn.closest('button, [role="button"], a') || btn;
@@ -443,25 +442,59 @@ async function executeWithCDP(tasks: any[], filename: string) {
                                                 return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true };
                                             }
                                         }
+                                        return { success: false };
+                                    })()
+                                `;
+                                console.log(`${stepPrefix} 🔍 [两步上传法] 步骤1: 寻找“添加文件”/“Add files”...`);
+                                const step1Res = await Runtime.evaluate({ expression: step1Script, returnByValue: true });
+                                if (step1Res.result?.value?.success) {
+                                    const { x, y } = step1Res.result.value;
+                                    console.log(`${stepPrefix} ✨ 定位到“添加文件”，正在点击以展开菜单...`);
+                                    await smoothMoveAndClick(Input, x, y, true);
+                                    await new Promise(r => setTimeout(r, 1000)); // 等待菜单弹出的动画时间
+                                } else {
+                                    console.log(`${stepPrefix} ℹ️ 未找到“添加文件”入口，尝试直接寻找第二步目标...`);
+                                }
+
+                                // --- 步骤 2：寻找真实的上传入口 “上传文件”/“Upload files” ---
+                                const step2Script = `
+                                    (() => {
+                                        const els = Array.from(document.querySelectorAll('button, [role="button"], mat-icon, span, div, a, menuitem, li'));
+                                        const btn = els.find(el => {
+                                            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                                            const tooltip = (el.getAttribute('data-tooltip') || el.getAttribute('mat-tooltip') || '').toLowerCase();
+                                            const text = el.innerText.toLowerCase();
+                                            // 必须绝对精准匹配上传文件选项
+                                            return aria.includes('上传文件') || aria.includes('upload files') ||
+                                                   tooltip.includes('上传文件') || tooltip.includes('upload files') ||
+                                                   text.includes('上传文件') || text.includes('upload files');
+                                        });
+                                        if (btn) {
+                                            const b = btn.closest('button, [role="button"], a, menuitem, li') || btn;
+                                            const rect = b.getBoundingClientRect();
+                                            if (rect.width > 0 && rect.height > 0) {
+                                                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, success: true };
+                                            }
+                                        }
                                         // 回退：直接找 input
-                                        const input = document.querySelector('input[type="file"]');
+                                        const input = document.querySelector('input[type="file"]:not([disabled])');
                                         if (input) return { inputFound: true };
                                         return { success: false };
                                     })()
                                 `;
                                 
-                                console.log(`${stepPrefix} 🔍 正在寻找名为 “上传文件”/“upload files” 的控件...`);
-                                const clickRes = await Runtime.evaluate({ expression: clickUploadScript, returnByValue: true });
+                                console.log(`${stepPrefix} 🔍 [两步上传法] 步骤2: 寻找“上传文件”/“Upload files” 的控件...`);
+                                const step2Res = await Runtime.evaluate({ expression: step2Script, returnByValue: true });
                                 
-                                if (clickRes.result?.value?.success) {
-                                    const { x, y } = clickRes.result.value;
-                                    console.log(`${stepPrefix} ✨ 定位到上传控件，正在点击触发文件选择框...`);
+                                if (step2Res.result?.value?.success) {
+                                    const { x, y } = step2Res.result.value;
+                                    console.log(`${stepPrefix} ✨ 定位到上传控件，执行真实点击激发原生窗口...`);
                                     await smoothMoveAndClick(Input, x, y, true);
                                     
-                                    // 等待弹窗拦截
+                                    // 等待弹窗拦截事件触发，增加等待时间至4秒，应对响应延迟
                                     const chooserParams: any = await Promise.race([
                                         fileChooserPromise,
-                                        new Promise(r => setTimeout(() => r(null), 3000))
+                                        new Promise(r => setTimeout(() => r(null), 4000))
                                     ]);
 
                                     if (chooserParams && chooserParams.backendNodeId) {
@@ -471,9 +504,9 @@ async function executeWithCDP(tasks: any[], filename: string) {
                                         injectedFiles = true;
                                         await new Promise(r => setTimeout(r, (config.pasteMin || 5) * 1000));
                                     } else {
-                                        console.log(`${stepPrefix} ⚠️ 点击了控件但未能拦截到窗口，切回备用方案。`);
+                                        console.log(`${stepPrefix} ⚠️ 点击了“上传文件”但未能拦住上传窗口可能失败。`);
                                     }
-                                } else if (clickRes.result?.value?.inputFound) {
+                                } else if (step2Res.result?.value?.inputFound) {
                                     console.log(`${stepPrefix} ⚠️ 未找到可视化上传按钮，但发现隐藏的直接上传通道 (input type="file")...`);
                                     const evalInput = await Runtime.evaluate({ expression: 'document.querySelector(\'input[type="file"]\')', returnByValue: false });
                                     if (evalInput.result && evalInput.result.objectId) {
