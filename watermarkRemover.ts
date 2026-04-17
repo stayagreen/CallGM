@@ -126,14 +126,7 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       const cnt = contours.get(i);
       const area = cvInst.contourArea(cnt);
       
-      // 调试：记录所有面积大于 10 的轮廓
-      if (area > 10) {
-        console.log(`📎 [去水印-WASM] 潜在轮廓 [${i}], 面积: ${Math.round(area)}`);
-      }
-
-      // 稍微放宽面积过滤条件
       if (area > 15 && area < 4000) {
-        console.log(`✨ [去水印-WASM] 锁定目标轮廓 [${i}], 面积: ${Math.round(area)}`);
         cvInst.drawContours(mask, contours, i, whiteScalar, -1, cvInst.LINE_8, hierarchy, 0, offsetPoint);
         watermarkFound = true;
       }
@@ -145,8 +138,17 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       return false;
     }
 
+    // --- 关键优化：膨胀蒙版以处理文字边缘虚影 ---
+    console.log(`🧪 [去水印-WASM] 正在对蒙版执行膨胀操作 (处理文字阴影)...`);
+    let kernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(3, 3));
+    let dilatedMask = new cvInst.Mat();
+    cvInst.dilate(mask, dilatedMask, kernel);
+    
+    const maskPixels = cvInst.countNonZero(dilatedMask);
+    console.log(`🎭 [去水印-WASM] 最终蒙版覆盖像素点: ${maskPixels}`);
+
     // 6. 核心：Telea 修复
-    console.log(`🛠️ [去水印-WASM] 应用 Telea 修复算法...`);
+    console.log(`🛠️ [去水印-WASM] 正在执行纹理填充 (Radius: 5)...`);
     let srcRGB = new cvInst.Mat();
     if (info.channels === 4) {
       cvInst.cvtColor(src, srcRGB, cvInst.COLOR_RGBA2RGB);
@@ -155,10 +157,11 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     }
 
     let dst = new cvInst.Mat();
-    cvInst.inpaint(srcRGB, mask, dst, 3, cvInst.INPAINT_TELEA);
+    // 使用膨胀后的蒙版，修复半径增加到 5
+    cvInst.inpaint(srcRGB, dilatedMask, dst, 5, cvInst.INPAINT_TELEA);
 
     // 7. 保存结果
-    console.log(`💾 [去水印-WASM] 正在回写图片数据...`);
+    console.log(`💾 [去水印-WASM] 正在将修复后的数据回写...`);
     const processedBuffer = Buffer.from(dst.data);
     const ext = path.extname(filePath);
     const tempPath = filePath.replace(ext, `.tmp${ext}`);
@@ -166,14 +169,16 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     await sharp(processedBuffer, {
       raw: { width: dst.cols, height: dst.rows, channels: 3 }
     })
+    .toFormat(ext.replace('.', '') as any) // 显式转换为原始格式
     .toFile(tempPath);
 
     fs.renameSync(tempPath, filePath);
-    console.log(`✅ [去水印-WASM] 修复成功！`);
+    console.log(`✅ [去水印-WASM] 全流程执行完毕！`);
 
-    // 8. 严格内存释放 (4.3.0 JS 极易 OOM)
+    // 8. 严格内存释放
     src.delete(); roi.delete(); gray.delete(); binary.delete(); 
     contours.delete(); hierarchy.delete(); mask.delete(); 
+    dilatedMask.delete(); kernel.delete();
     srcRGB.delete(); dst.delete();
     
     return true;
