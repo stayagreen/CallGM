@@ -300,9 +300,12 @@ async function startServer() {
           
           let progress = 0;
           let status = 'pending';
+          let statusMessage = '';
           if (progressInfo) {
-            status = progressInfo.status;
+            status = progressInfo.status.startsWith('❌') ? 'failed' : 
+                     (progressInfo.status.startsWith('✅') && progressInfo.completed === progressInfo.total ? 'completed' : 'running');
             progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
+            statusMessage = progressInfo.status;
           }
 
           jobs.push({
@@ -310,7 +313,8 @@ async function startServer() {
             timestamp: stat.mtimeMs,
             tasks: data,
             status: status,
-            progress: progress
+            progress: progress,
+            statusMessage: statusMessage
           });
         } catch (e) {}
       }

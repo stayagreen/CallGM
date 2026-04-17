@@ -24,6 +24,7 @@ interface Job {
   tasks: Task[];
   status: 'pending' | 'running' | 'completed' | 'failed';
   progress: number;
+  statusMessage?: string;
 }
 
 interface Template {
@@ -103,9 +104,18 @@ const JobItem = React.memo(({
               </div>
             )}
             
-            <div className="text-sm text-gray-600 flex items-center gap-4">
+            <div className="text-sm text-gray-600 flex flex-wrap items-center gap-x-4 gap-y-1">
               <span>包含 {job.tasks.length} 个任务项</span>
-              {job.status === 'running' && <span className="font-bold text-blue-600">总进度: {job.progress}%</span>}
+              {job.status === 'running' && (
+                <>
+                  <span className="font-bold text-blue-600">总进度: {job.progress}%</span>
+                  {job.statusMessage && (
+                    <span className="text-blue-500 animate-pulse bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                      {job.statusMessage}
+                    </span>
+                  )}
+                </>
+              )}
             </div>
           </div>
           
