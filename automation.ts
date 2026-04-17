@@ -130,7 +130,7 @@ async function ensureBrowserLaunched() {
         `--user-data-dir=${userDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
-        '--headless=new',
+        // '--headless=new', // 临时禁用，以便用户显式观察执行过程
         '--window-size=1280,1024',
         '--disable-gpu',
         '--disable-dev-shm-usage',
@@ -396,6 +396,11 @@ async function executeWithCDP(tasks: any[], filename: string) {
                     await smoothMoveAndClick(Input, x, y, true);
                 }
 
+                // 截图诊断：发送后立即截图
+                const screenshotPostSend = await Page.captureScreenshot({ format: 'png' });
+                fs.writeFileSync(path.join(__dirname, 'debug_post_send.png'), Buffer.from(screenshotPostSend.data, 'base64'));
+                console.log(`${stepPrefix} 📸 已保存发送后诊断截图: debug_post_send.png`);
+
                 console.log(`${stepPrefix} 🛡️ 进入静默监控期 (获取结果中)...`);
                 
                 let found = false;
@@ -410,6 +415,10 @@ async function executeWithCDP(tasks: any[], filename: string) {
                     
                     if (attempts % 5 === 0) {
                          console.log(`${stepPrefix} 🔦 [当前状态] 网页标题: "${diag.title}" | 进度: ${attempts}/60`);
+                         // 持续截图诊断
+                         const loopSnap = await Page.captureScreenshot({ format: 'png' });
+                         fs.writeFileSync(path.join(__dirname, `debug_loop_${attempts}.png`), Buffer.from(loopSnap.data, 'base64'));
+                         console.log(`${stepPrefix} 📸 已更新循环诊断截图: debug_loop_${attempts}.png`);
                          await simulateIdleMovement();
                     }
 
