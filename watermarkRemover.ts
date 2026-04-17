@@ -187,23 +187,26 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     const ext = path.extname(filePath).toLowerCase();
     const tempPath = filePath.replace(ext, `.tmp${ext}`);
     
-    await sharp(processedBuffer, { raw: { width: dst.cols, height: dst.rows, channels: 3 } })
-      .jpeg({ quality: 95, mozjpeg: true })
-      .toFile(tempPath);
+    const sharpInstance = sharp(processedBuffer, {
+      raw: { width: dst.cols, height: dst.rows, channels: 3 }
+    });
+
+    if (ext === '.jpg' || ext === '.jpeg') {
+      await sharpInstance.jpeg({ quality: 95, mozjpeg: true }).toFile(tempPath);
+    } else if (ext === '.png') {
+      await sharpInstance.png({ compressionLevel: 9, effort: 10 }).toFile(tempPath);
+    } else {
+      await sharpInstance.toFormat(ext.replace('.', '') as any).toFile(tempPath);
+    }
 
     fs.renameSync(tempPath, filePath);
-    console.log(`✅ [星型探测] 任务处理完成。`);
-
-    fs.renameSync(tempPath, filePath);
-    console.log(`✅ [去水印-WASM] 全流程执行完毕！文件已更新。`);
+    console.log(`✅ [去水印-WASM] 任务处理完成，画质已同步。`);
 
     // 8. 严格内存释放
     src.delete(); roi.delete(); gray.delete(); binary.delete(); 
     contours.delete(); hierarchy.delete(); mask.delete(); 
     dilatedMask.delete(); kernel.delete();
     srcRGB.delete(); dst.delete();
-    
-    return true;
     
     return true;
   } catch (error) {
