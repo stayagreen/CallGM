@@ -550,19 +550,52 @@ async function executeWithCDP(tasks: any[], filename: string) {
                             const clickX = Math.floor(resValue.x);
                             const clickY = Math.floor(resValue.y);
                             
-                            // 物理模拟点击
+                            // 物理模拟点击 (移动鼠标触发 Hover 显示真实按钮)
                             await smoothMoveAndClick(Input, clickX, clickY, true);
                             
-                            // JS 强制点击补位 (防止物理模拟未能触碰正确元素)
+                            // 延时等待 hover 态动画、弹出气泡、和事件绑定生效
+                            await new Promise(r => setTimeout(r, 800));
+
+                            // JS 强制点击补位: 直接通过特征查找并点击，彻底杜绝元素被遮挡导致坐标寻址 elementFromPoint 失败
                             await Runtime.evaluate({ 
                                 expression: `
                                     (() => {
+                                        const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
+                                        if (messages.length === 0) return "NO_MSG";
+                                        
+                                        const lastMessage = messages[messages.length - 1];
+                                        const allElements = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id], mat-icon'));
+                                        
+                                        const downloadBtn = allElements.find(el => {
+                                            const b = el.closest('button, a, [role="button"]') || el;
+                                            const html = b.outerHTML.toLowerCase();
+                                            const text = b.innerText.toLowerCase();
+                                            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                                            const title = (b.getAttribute('title') || '').toLowerCase();
+                                            const tooltip = (b.getAttribute('mat-tooltip') || b.getAttribute('data-tooltip') || '').toLowerCase();
+                                            
+                                            // 极度精准的固定标识匹配
+                                            return html.includes('下载完整尺寸的图片') || html.includes('download full size') || 
+                                                text.includes('下载完整尺寸的图片') || text.includes('download full size') ||
+                                                aria.includes('下载完整尺寸的图片') || aria.includes('download full size') ||
+                                                title.includes('下载完整尺寸的图片') || title.includes('download full size') ||
+                                                tooltip.includes('下载完整尺寸的图片') || tooltip.includes('download full size');
+                                        });
+
+                                        if (downloadBtn) {
+                                            const btn = downloadBtn.closest('button, a[download], [role="button"]') || downloadBtn;
+                                            if (typeof btn.click === 'function') {
+                                                btn.click();
+                                                return "JS_CLICKED_BY_SELECTOR";
+                                            }
+                                        }
+                                        // 极其特殊情况下的底层备选坐标点击
                                         const el = document.elementFromPoint(${clickX}, ${clickY});
                                         if (el) {
                                             const btn = el.closest('button, a[download], [role="button"]') || el;
                                             if (typeof btn.click === 'function') {
                                                 btn.click();
-                                                return "JS_CLICKED";
+                                                return "JS_CLICKED_BY_POINT";
                                             }
                                         }
                                         return "JS_NOT_CLICKED";
