@@ -218,8 +218,14 @@ export async function autoInpaint(
           progressive: true 
         }).toBuffer();
       } else if (ext === '.png') {
-        // PNG 压缩级别调至最高并开启调色板优化
-        outBuffer = await sharpInstance.png({ compressionLevel: 9, palette: true }).toBuffer();
+        // PNG 性能模式：开启有损压缩 (palette + quality 75)
+        // 这是将 2MB PNG 压到 800KB 以下的关键
+        outBuffer = await sharpInstance.png({ 
+          compressionLevel: 9, 
+          palette: true, 
+          quality: 75,
+          effort: 6
+        }).toBuffer();
       } else {
         outBuffer = await sharpInstance.webp({ quality: 80 }).toBuffer();
       }

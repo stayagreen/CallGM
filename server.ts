@@ -614,7 +614,7 @@ async function startServer() {
       console.log(`✨ [One-Click Watermark] Processing: ${filename}...`);
       const { autoInpaint } = await import("./watermarkRemover.js");
       
-      const success = await autoInpaint(filePath);
+      const success = await autoInpaint(filePath, 'performance');
       
       if (success) {
         // Delete thumbnail so it gets regenerated
