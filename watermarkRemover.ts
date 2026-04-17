@@ -97,7 +97,7 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     const roiRect = new cvInst.Rect(roiX, roiY, w - roiX, h - roiY);
     let roi = src.roi(roiRect);
 
-    // 4. 颜色空间转换与二值化 (放宽阈值至 200)
+    // 4. 颜色空间转换
     let gray = new cvInst.Mat();
     if (info.channels === 4) {
       cvInst.cvtColor(roi, gray, cvInst.COLOR_RGBA2GRAY);
@@ -105,16 +105,43 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       cvInst.cvtColor(roi, gray, cvInst.COLOR_RGB2GRAY);
     }
     
+    // 诊断日志：计算区域亮度范围
+    let minMax = cvInst.minMaxLoc(gray);
+    console.log(`📊 [去水印-WASM] ROI 亮度范围: ${Math.round(minMax.minVal)} - ${Math.round(minMax.maxVal)}`);
+
     let binary = new cvInst.Mat();
-    const thresholdVal = 200; // 从 240 降到 200，适应更淡的水印
+    let thresholdVal = 170; // 进一步下探默认阈值
+    
+    // 如果整体偏暗，自动下调阈值以尝试捕捉更淡的水印
+    if (minMax.maxVal < 200) {
+      thresholdVal = Math.max(70, Math.floor(minMax.maxVal - 30));
+      console.log(`🔦 [去水印-WASM] 检测到暗色环境，动态调整阈值至: ${thresholdVal}`);
+    }
+
+    // 第一重探测：亮度二值化
     cvInst.threshold(gray, binary, thresholdVal, 255, cvInst.THRESH_BINARY);
+
+    // 形态学操作准备
+    let ksize = new cvInst.Size(2, 2);
+    let kernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, ksize);
+    
+    // 闭运算：连接断裂的字母和笔画
+    cvInst.morphologyEx(binary, binary, cvInst.MORPH_CLOSE, kernel);
 
     // 5. 轮廓提取
     let contours = new cvInst.MatVector();
     let hierarchy = new cvInst.Mat();
     cvInst.findContours(binary, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
     
-    console.log(`🔍 [去水印-WASM] 区域内检测到轮廓数量: ${contours.size()}`);
+    // 第二重：如果二值化没结果，尝试 Canny 边缘检测 (捕捉轮廓感强但亮度不高的文字)
+    if (contours.size() === 0) {
+      console.log(`🛡️ [去水印-WASM] 亮度探测失败，启动 Canny 边缘探测...`);
+      cvInst.Canny(gray, binary, 50, 150);
+      cvInst.dilate(binary, binary, kernel); // 膨胀边缘使其成块
+      cvInst.findContours(binary, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
+    }
+
+    console.log(`🔍 [去水印-WASM] 最终锁定轮廓数量: ${contours.size()}`);
     
     let mask = cvInst.Mat.zeros(h, w, cvInst.CV_8UC1);
     let watermarkFound = false;
@@ -126,29 +153,33 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       const cnt = contours.get(i);
       const area = cvInst.contourArea(cnt);
       
-      if (area > 15 && area < 4000) {
+      // 只要有一定面积且不是超大背景块
+      if (area > 10 && area < (roiRect.width * roiRect.height * 0.4)) {
+        if (area > 30) {
+          console.log(`✨ [去水印-WASM] 命中水印特征轮廓 [${i}], 面积: ${Math.round(area)}`);
+        }
         cvInst.drawContours(mask, contours, i, whiteScalar, -1, cvInst.LINE_8, hierarchy, 0, offsetPoint);
         watermarkFound = true;
       }
     }
 
     if (!watermarkFound) {
-      console.log(`⚠️ [去水印-WASM] 未发现符合形状的水印 (阈值: ${thresholdVal})，跳过修复`);
-      src.delete(); roi.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete(); mask.delete();
+      console.log(`⚠️ [去水印-WASM] 深度探测后仍未发现水印，跳过修复`);
+      src.delete(); roi.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete(); mask.delete(); kernel.delete();
       return false;
     }
 
-    // --- 关键优化：膨胀蒙版以处理文字边缘虚影 ---
-    console.log(`🧪 [去水印-WASM] 正在对蒙版执行膨胀操作 (处理文字阴影)...`);
-    let kernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(3, 3));
+    // --- 关键优化：大幅度膨胀蒙版保护边缘 ---
+    console.log(`🧪 [去水印-WASM] 正在对蒙版执行膨胀扩张 (5x5)...`);
+    let finalKernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(5, 5));
     let dilatedMask = new cvInst.Mat();
-    cvInst.dilate(mask, dilatedMask, kernel);
+    cvInst.dilate(mask, dilatedMask, finalKernel);
     
     const maskPixels = cvInst.countNonZero(dilatedMask);
-    console.log(`🎭 [去水印-WASM] 最终蒙版覆盖像素点: ${maskPixels}`);
+    console.log(`🎭 [去水印-WASM] 蒙版像素覆盖深度: ${maskPixels}`);
 
     // 6. 核心：Telea 修复
-    console.log(`🛠️ [去水印-WASM] 正在执行纹理填充 (Radius: 5)...`);
+    console.log(`🛠️ [去水印-WASM] 正在执行无损修复 (Radius: 7)...`);
     let srcRGB = new cvInst.Mat();
     if (info.channels === 4) {
       cvInst.cvtColor(src, srcRGB, cvInst.COLOR_RGBA2RGB);
@@ -157,8 +188,7 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     }
 
     let dst = new cvInst.Mat();
-    // 使用膨胀后的蒙版，修复半径增加到 5
-    cvInst.inpaint(srcRGB, dilatedMask, dst, 5, cvInst.INPAINT_TELEA);
+    cvInst.inpaint(srcRGB, dilatedMask, dst, 7, cvInst.INPAINT_TELEA);
 
     // 7. 保存结果
     console.log(`💾 [去水印-WASM] 正在将修复后的数据回写 (保持高质量)...`);
