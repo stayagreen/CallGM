@@ -322,7 +322,7 @@ export default function ImageEditor({ image, onSave, onCancel, onProcessStart }:
               const outCtx = outCanvas.getContext('2d');
               if (outCtx) {
                 outCtx.drawImage(imageRef.current!, 0, 0);
-                onSave(outCanvas.toDataURL('image/jpeg', 0.9));
+                onSave(outCanvas.toDataURL('image/png'));
               } else {
                 onCancel();
               }
@@ -518,7 +518,8 @@ export default function ImageEditor({ image, onSave, onCancel, onProcessStart }:
             // Final Composite: Overlay on original
             context.drawImage(finalPatchCanvas, 0, 0);
 
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            // Use high quality PNG by default to preserve file size/detail
+            const dataUrl = canvas.toDataURL('image/png');
             onSave(dataUrl);
           } catch (error) {
             console.error('Inpainting error:', error);

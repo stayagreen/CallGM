@@ -161,19 +161,25 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     cvInst.inpaint(srcRGB, dilatedMask, dst, 5, cvInst.INPAINT_TELEA);
 
     // 7. 保存结果
-    console.log(`💾 [去水印-WASM] 正在将修复后的数据回写...`);
+    console.log(`💾 [去水印-WASM] 正在将修复后的数据回写 (保持高质量)...`);
     const processedBuffer = Buffer.from(dst.data);
-    const ext = path.extname(filePath);
+    const ext = path.extname(filePath).toLowerCase();
     const tempPath = filePath.replace(ext, `.tmp${ext}`);
     
-    await sharp(processedBuffer, {
+    const sharpInstance = sharp(processedBuffer, {
       raw: { width: dst.cols, height: dst.rows, channels: 3 }
-    })
-    .toFormat(ext.replace('.', '') as any) // 显式转换为原始格式
-    .toFile(tempPath);
+    });
+
+    if (ext === '.jpg' || ext === '.jpeg') {
+      await sharpInstance.jpeg({ quality: 95, mozjpeg: true }).toFile(tempPath);
+    } else if (ext === '.png') {
+      await sharpInstance.png({ compressionLevel: 9, effort: 10 }).toFile(tempPath);
+    } else {
+      await sharpInstance.toFormat(ext.replace('.', '') as any).toFile(tempPath);
+    }
 
     fs.renameSync(tempPath, filePath);
-    console.log(`✅ [去水印-WASM] 全流程执行完毕！`);
+    console.log(`✅ [去水印-WASM] 全流程执行完毕！文件已更新。`);
 
     // 8. 严格内存释放
     src.delete(); roi.delete(); gray.delete(); binary.delete(); 
