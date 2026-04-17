@@ -263,21 +263,26 @@ export default function App() {
     }
   }, [activeTaskId]);
 
-  const toggleRecording = () => {
+  const startRecording = (e?: React.MouseEvent | React.TouchEvent) => {
+    e?.preventDefault();
+    if (isRecording) return;
+    if (!recognitionRef.current) {
+      alert('您的浏览器不支持语音输入 (请尝试使用 Chrome 浏览器)');
+      return;
+    }
+    try {
+      recognitionRef.current.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const stopRecording = (e?: React.MouseEvent | React.TouchEvent) => {
+    e?.preventDefault();
     if (isRecording) {
       recognitionRef.current?.stop();
       setIsRecording(false);
-    } else {
-      if (!recognitionRef.current) {
-        alert('您的浏览器不支持语音输入 (请尝试使用 Chrome 浏览器)');
-        return;
-      }
-      try {
-        recognitionRef.current.start();
-        setIsRecording(true);
-      } catch (err) {
-        console.error(err);
-      }
     }
   };
 
@@ -853,9 +858,15 @@ export default function App() {
             onChange={(e) => updateTask({ prompt: e.target.value })}
           />
           <button 
-            onClick={toggleRecording}
-            className={`absolute right-3 bottom-3 p-2 rounded-full transition shadow-sm ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-blue-500'}`}
-            title="语音输入"
+            onMouseDown={startRecording}
+            onMouseUp={stopRecording}
+            onMouseLeave={stopRecording}
+            onTouchStart={startRecording}
+            onTouchEnd={stopRecording}
+            onTouchCancel={stopRecording}
+            onContextMenu={(e) => e.preventDefault()}
+            className={`absolute right-3 bottom-3 p-2 rounded-full transition shadow-sm select-none touch-none ${isRecording ? 'bg-red-500 text-white animate-pulse scale-110' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-blue-500'}`}
+            title="按压即说"
           >
             {isRecording ? <Mic /> : <MicOff />}
           </button>

@@ -15,7 +15,7 @@ async function startServer() {
   // AI Studio sets DISABLE_HMR=true. When running locally outside AI Studio, default to 4000.
   const PORT = process.env.DISABLE_HMR === 'true' ? 3000 : 4000;
 
-  app.use(express.json({ limit: "50mb" }));
+  app.use(express.json({ limit: "500mb" }));
 
   const taskDir = path.join(__dirname, "task");
   const historyDir = path.join(taskDir, "history");
@@ -523,7 +523,7 @@ async function startServer() {
   });
 
   // Upload images to gallery
-  app.post('/api/images/upload', express.json({ limit: '50mb' }), (req, res) => {
+  app.post('/api/images/upload', express.json({ limit: '500mb' }), (req, res) => {
     const { images } = req.body;
     if (!images || !Array.isArray(images)) return res.status(400).json({ error: 'Invalid images' });
     
@@ -550,7 +550,7 @@ async function startServer() {
   });
 
   // Update gallery image
-  app.post('/api/gallery/update', express.json({ limit: '50mb' }), (req, res) => {
+  app.post('/api/gallery/update', express.json({ limit: '500mb' }), (req, res) => {
     const { filename, image } = req.body;
     if (!filename || !image) return res.status(400).json({ error: 'Missing filename or image' });
     
