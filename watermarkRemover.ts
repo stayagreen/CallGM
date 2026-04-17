@@ -4,10 +4,13 @@ import path from 'path';
 import sharp from 'sharp';
 
 /**
- * 使用 opencv-wasm 实现的高质量去水印方案 (对标 Python OpenCV 逻辑)
- * 逻辑：ROI 提取 -> 二值化 -> 轮廓面积过滤 -> Telea 修复
+ * 使用 opencv-wasm 实现的高质量去水印方案
+ * mode: 'performance' (500-800KB 视觉无损) | 'highQuality' (~2MB 高保真)
  */
-export async function autoInpaint(filePath: string): Promise<boolean> {
+export async function autoInpaint(
+  filePath: string, 
+  mode: 'performance' | 'highQuality' = 'performance'
+): Promise<boolean> {
   const fileName = path.basename(filePath);
   console.log(`🔍 [去水印-WASM] 开始处理文件: ${fileName}`);
 
@@ -196,26 +199,43 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     // 增加修复半径 (5 -> 7) 以获得更平滑的融合效果
     cvInst.inpaint(srcRGB, dilatedMask, dst, 7, cvInst.INPAINT_TELEA);
 
-    // 7. 保存结果 (使用 Buffer 方式避免 Windows 下 renameSync 可能产生的并发锁定问题)
+    // 7. 保存结果 (提供两种模式：极致性能 vs 高保真)
     const ext = path.extname(filePath).toLowerCase();
     
-    // 显式计算 stride 确保内存对齐正确
-    const stride = dst.cols * dst.channels();
     const sharpInstance = sharp(Buffer.from(dst.data), {
       raw: { width: dst.cols, height: dst.rows, channels: dst.channels() }
     });
     
     let outBuffer: Buffer;
-    if (ext === '.jpg' || ext === '.jpeg') {
-      outBuffer = await sharpInstance.jpeg({ quality: 95, mozjpeg: true }).toBuffer();
-    } else if (ext === '.png') {
-      outBuffer = await sharpInstance.png({ compressionLevel: 6 }).toBuffer();
+    if (mode === 'performance') {
+      console.log(`🚀 [去水印-WASM] 采用极致性能模式 (视觉无损压缩)`);
+      if (ext === '.jpg' || ext === '.jpeg') {
+        // 82 质量 + 4:2:0 采样 + MozJPEG，体积通常能减小 60-70%，肉眼几乎无感
+        outBuffer = await sharpInstance.jpeg({ 
+          quality: 82, 
+          mozjpeg: true, 
+          chromaSubsampling: '4:2:0',
+          progressive: true 
+        }).toBuffer();
+      } else if (ext === '.png') {
+        // PNG 压缩级别调至最高并开启调色板优化
+        outBuffer = await sharpInstance.png({ compressionLevel: 9, palette: true }).toBuffer();
+      } else {
+        outBuffer = await sharpInstance.webp({ quality: 80 }).toBuffer();
+      }
     } else {
-      outBuffer = await sharpInstance.toFormat(ext.replace('.', '') as any).toBuffer();
+      console.log(`🎨 [去水印-WASM] 采用高保真模式 (保持原始体感体积)`);
+      if (ext === '.jpg' || ext === '.jpeg') {
+        outBuffer = await sharpInstance.jpeg({ quality: 95, mozjpeg: true }).toBuffer();
+      } else if (ext === '.png') {
+        outBuffer = await sharpInstance.png({ compressionLevel: 6 }).toBuffer();
+      } else {
+        outBuffer = await sharpInstance.toFormat(ext.replace('.', '') as any).toBuffer();
+      }
     }
 
     fs.writeFileSync(filePath, outBuffer);
-    console.log(`✅ [去水印-WASM] 任务处理完成，文件已安全写回。`);
+    console.log(`✅ [去水印-WASM] 任务处理完成，文件已按 [${mode}] 模式写回。`);
 
     // 8. 严格内存释放
     src.delete(); roi.delete(); gray.delete(); binary.delete(); 
