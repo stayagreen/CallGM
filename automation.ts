@@ -70,29 +70,55 @@ function isPortOpen(port: number): Promise<boolean> {
 async function ensureBrowserLaunched() {
     const config = await getAutomationConfig();
     const port = 9222;
+    const chromePath = config.chromePath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    const userDataDir = config.userDataDir || 'C:\\ChromeDebug';
+    const logPath = path.join(__dirname, 'chrome_debug.log');
+
     const isOpen = await isPortOpen(port);
 
-    // 检查浏览器是否真的有响应 (而不仅仅是端口开了)
+    // 1. 如果端口开了，先做健康检查
     if (isOpen) {
         try {
             const response = await fetch(`http://localhost:${port}/json/version`).catch(() => null);
             if (response && response.ok) {
                 console.log(`✅ 检测到端口 ${port} 且浏览器响应正常。`);
                 return true;
-            } else {
-                console.warn(`⚠️ 检测到端口 ${port} 已占用但浏览器无响应 (可能是僵尸进程)。`);
-                console.log(`💡 建议：请手动关闭所有 Chrome 进程后再试。`);
-                // 继续尝试启动，看是否能覆盖
             }
-        } catch (e) {
-            console.warn(`⚠️ 无法验证浏览器健康状态: ${e}`);
-        }
+            console.warn(`⚠️ 检测到端口 ${port} 响应异常，准备执行强制清理...`);
+        } catch (e) {}
     }
 
-    console.log(`🚀 正在尝试启动浏览器...`);
-    const chromePath = config.chromePath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
-    const userDataDir = config.userDataDir || 'C:\\ChromeDebug';
-    const logPath = path.join(__dirname, 'chrome_debug.log');
+    // 2. 强制清理现有的 Chrome 进程 (避免占用冲突)
+    console.log(`🧹 正在执行强制进程清理，确保启动环境纯净...`);
+    try {
+        const isWin = process.platform === 'win32';
+        const killCmd = isWin ? 'taskkill /F /IM chrome.exe /T' : 'pkill -f chrome';
+        const { execSync } = require('child_process');
+        try {
+            execSync(killCmd, { stdio: 'ignore' });
+            console.log(`   👉 已尝试清理 Chrome 相关线程。`);
+        } catch (e) {
+            // 如果本来就没进程，taskkill 会报错，这里忽略
+        }
+
+        // 3. 额外清理 UserData 锁文件 (防止锁死崩溃)
+        const lockFile = path.join(userDataDir, 'SingletonLock');
+        if (fs.existsSync(lockFile)) {
+            try {
+                fs.unlinkSync(lockFile);
+                console.log(`   👉 已清除 SingletonLock 锁定文件。`);
+            } catch (e) {
+                console.warn(`   ⚠️ 无法删除锁定文件 (可能仍被占用): ${e}`);
+            }
+        }
+        
+        await new Promise(r => setTimeout(r, 1000)); // 歇一秒让系统回收资源
+    } catch (err) {
+        console.warn(`⚠️ 清理过程发生非致命错误: ${err}`);
+    }
+
+    // 4. 正式启动浏览器
+    console.log(`🚀 重新启动 Chrome 后台实例...`);
 
     if (!fs.existsSync(chromePath)) {
         console.error(`❌ 找不到 Chrome 程序: ${chromePath}`);
@@ -225,7 +251,8 @@ async function executeWithCDP(tasks: any[], filename: string) {
         let target = targets.find((t: any) => (t.url.includes('gemini.google.com') || t.url === 'about:blank') && t.type === 'page');
         
         if (!target) {
-            console.log('🌐 未发现可用标签页，正在创建新标签页...');
+            console.log('🌐 未发现可用标签页，正在等待浏览器稳定后创建新标签页...');
+            await new Promise(r => setTimeout(r, 2000));
             target = await CDP.New({ url: 'https://gemini.google.com/', port: 9222 });
         } else if (target.url === 'about:blank') {
             console.log('🌐 发现空标签页，正在导航到 Gemini...');
@@ -417,15 +444,30 @@ async function executeWithCDP(tasks: any[], filename: string) {
             }
         }
     } catch (err: any) {
-        console.error('❌ CDP 引擎发生异常中断:', err.message || err);
+        const errorMsg = err.message || String(err);
+        console.error('❌ CDP 引擎发生异常中断:', errorMsg);
         
         // 尝试诊断
-        if (err.message && err.message.includes('Target crashed')) {
-            console.log('🧐 诊断提示: 目标页面崩溃，通常是因为内存不足或 UserData 冲突。');
+        if (errorMsg.includes('Target crashed')) {
+            console.log('🧐 诊断提示: 检测到目标页面崩溃。');
+            console.log('👉 可能原因: 1. 内存不足; 2. UserData 目录被其它 Chrome 占用; 3. 显卡驱动冲突。');
+            console.log('💡 建议: 在设置中尝试更换一个新的 UserData 目录路径。');
+            
             try {
-                const logTail = fs.readFileSync(path.join(__dirname, 'chrome_debug.log'), 'utf-8').split('\n').slice(-10).join('\n');
-                console.log('📋 浏览器最后 10 行日志反馈:\n' + logTail);
-            } catch(e) {}
+                const logFile = path.join(__dirname, 'chrome_debug.log');
+                if (fs.existsSync(logFile)) {
+                    const content = fs.readFileSync(logFile, 'utf-8');
+                    const lines = content.trim().split('\n');
+                    const logTail = lines.slice(-15).join('\n');
+                    console.log('\n📋 --- 浏览器最后 15 行日志内容 ---');
+                    console.log(logTail || '(日志文件为空)');
+                    console.log('-----------------------------------\n');
+                } else {
+                    console.log('⚠️ 诊断失败: 找不到浏览器日志文件 ' + logFile);
+                }
+            } catch(diagErr: any) {
+                console.error('⚠️ 诊断组件自身故障:', diagErr.message);
+            }
         }
 
         // 关键修复：发生崩溃或异常时，确保内存中的任务对象被标记为失败，以便写入文件

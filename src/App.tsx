@@ -1479,6 +1479,7 @@ export default function App() {
                     onChange={(e) => setSystemConfig({...systemConfig, userDataDir: e.target.value})}
                     placeholder="例如: C:\ChromeDebug"
                   />
+                  <p className="text-xs text-gray-400 mt-1">※ 重要：请确保此目录未被其它浏览器窗口占用。若出现崩溃，请尝试更换此路径。</p>
                 </div>
               </div>
               <div>
