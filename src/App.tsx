@@ -1501,9 +1501,9 @@ export default function App() {
                     value={systemConfig.imageQuality || 'performance'} 
                     onChange={(e) => setSystemConfig({...systemConfig, imageQuality: e.target.value as any})}
                   >
-                    <option value="fastSpeed">极速模式 (JPG方案 - 300KB-500KB)</option>
-                    <option value="performance">平衡模式 (500KB-800KB)</option>
-                    <option value="highQuality">高保真模式 (~2MB)</option>
+                    <option value="fastSpeed">极速</option>
+                    <option value="performance">平衡</option>
+                    <option value="highQuality">保真</option>
                   </select>
                 </div>
               </div>
