@@ -96,7 +96,17 @@ async function ensureBrowserLaunched() {
         '--disable-gpu',
         '--disable-dev-shm-usage',
         '--no-sandbox',
-        '--disable-setuid-sandbox'
+        '--disable-setuid-sandbox',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-breakpad',
+        '--disable-component-update',
+        '--disable-domain-reliability',
+        '--disable-sync',
+        '--mute-audio',
+        '--remote-allow-origins=*'
     ];
 
     console.log(`📂 执行启动命令: "${chromePath}" ${args.join(' ')}`);
@@ -181,9 +191,18 @@ async function executeWithCDP(tasks: any[], filename: string) {
     console.log('🔗 正在连接到浏览器 (端口 9222)...');
     console.log('====================================================\n');
 
-    let client: any;
+    let client: any = null;
     try {
-        const targets = await CDP.List({ port: 9222 });
+        // 增加重试机制连接核心服务
+        let targets;
+        try {
+            targets = await CDP.List({ port: 9222 });
+        } catch (e) {
+            console.log('⚠️ 连接失败，等待 2 秒重试...');
+            await new Promise(r => setTimeout(r, 2000));
+            targets = await CDP.List({ port: 9222 });
+        }
+
         let target = targets.find((t: any) => (t.url.includes('gemini.google.com') || t.url === 'about:blank') && t.type === 'page');
         
         if (!target) {
@@ -193,6 +212,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
             console.log('🌐 发现空标签页，正在导航到 Gemini...');
             const tempClient = await CDP({ target: target.id, port: 9222 });
             await tempClient.Page.navigate({ url: 'https://gemini.google.com/' });
+            await new Promise(r => setTimeout(r, 2000));
             await tempClient.close();
         }
 
@@ -371,10 +391,14 @@ async function executeWithCDP(tasks: any[], filename: string) {
         }
     } catch (err: any) {
         console.error('❌ CDP 引擎发生异常中断:', err.message || err);
+        // 关键修复：发生崩溃或异常时，确保内存中的任务对象被标记为失败，以便写入文件
+        tasks.forEach(t => {
+            if (t.status !== 'completed') t.status = 'failed';
+        });
     } finally {
         if (client) {
             console.log(`📡 正在断开 CDP 调试连接...`);
-            await client.close();
+            try { await client.close(); } catch(e) {}
         }
         jobProgress.delete(filename);
     }
