@@ -236,268 +236,206 @@ async function executeWithCDP(tasks: any[], filename: string) {
     console.log('🔗 正在连接到浏览器 (端口 9222)...');
     console.log('====================================================\n');
 
-    let client: any = null;
+    const simulateIdleMovement = async (Input: any) => {
+         const x = Math.floor(Math.random() * 800) + 100;
+         const y = Math.floor(Math.random() * 600) + 100;
+         await smoothMoveAndClick(Input, x, y, false);
+    };
+
+    // 常用的检测脚本定义在外部
+    const sendBtnScript = `
+        (() => {
+            const btns = Array.from(document.querySelectorAll('button'));
+            const sendBtn = btns.find(b => {
+                const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
+                return lbl.includes('send') || lbl.includes('发送');
+            });
+            if (sendBtn) {
+                const rect = sendBtn.getBoundingClientRect();
+                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            }
+            return null;
+        })()
+    `;
+
+    const checkResultScript = `
+        (() => {
+            const messages = document.querySelectorAll('message-content, [data-message-author="model"], model-message, .model-response-text');
+            if (messages.length === 0) return { status: 'no_messages' };
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const msg = messages[i];
+                const img = msg.querySelector('img');
+                if (img) {
+                    const btns = Array.from(msg.querySelectorAll('button, a[download], [role="button"]'));
+                    const downloadBtn = btns.find(b => {
+                        const txt = (b.innerText || b.getAttribute('aria-label') || b.textContent || '').toLowerCase();
+                        return txt.includes('下载') || txt.includes('download') || b.querySelector('mat-icon')?.textContent?.includes('download');
+                    });
+                    if (downloadBtn) {
+                        const rect = downloadBtn.getBoundingClientRect();
+                        return { status: 'found', x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+                    }
+                    return { status: 'img_no_btn' };
+                }
+            }
+            return { status: 'waiting' };
+        })()
+    `;
+
     try {
-        // 增加重试机制连接核心服务
-        let targets;
-        try {
-            targets = await CDP.List({ port: 9222 });
-        } catch (e) {
-            console.log('⚠️ 连接失败，等待 2 秒重试...');
-            await new Promise(r => setTimeout(r, 2000));
-            targets = await CDP.List({ port: 9222 });
-        }
-
-        let target = targets.find((t: any) => (t.url.includes('gemini.google.com') || t.url === 'about:blank') && t.type === 'page');
-        
-        if (!target) {
-            console.log('🌐 未发现可用标签页，正在等待浏览器稳定后创建新标签页...');
-            await new Promise(r => setTimeout(r, 2000));
-            target = await CDP.New({ url: 'https://gemini.google.com/', port: 9222 });
-        } else if (target.url === 'about:blank') {
-            console.log('🌐 发现空标签页，正在导航到 Gemini...');
-            const tempClient = await CDP({ target: target.id, port: 9222 });
-            await tempClient.Page.navigate({ url: 'https://gemini.google.com/' });
-            await new Promise(r => setTimeout(r, 2000));
-            await tempClient.close();
-        }
-
-        client = await CDP({ target: target.id, port: 9222 });
-        const { Page, Runtime, Input, Network, DOM } = client;
-
-        // 监听崩溃事件
-        client.on('error', (err: any) => {
-            console.error('🚫 [CDP 实时监听] 捕获到底层错误:', err);
-        });
-        client.on('disconnect', () => {
-            console.warn('🔌 [CDP 实时监听] 浏览器连接已断开');
-        });
-
-        await Network.enable();
-        await Page.enable();
-        await Runtime.enable();
-        await DOM.enable();
-
-        console.log('✅ CDP 连接成功！已锁定受控浏览器。');
-
-        const simulateIdleMovement = async () => {
-             const x = Math.floor(Math.random() * 800) + 100;
-             const y = Math.floor(Math.random() * 600) + 100;
-             await smoothMoveAndClick(Input, x, y, false);
-        };
-
         for (const task of tasks) {
             task.download = true;
             if (!task.downloadedFiles) task.downloadedFiles = [];
             
             for (let i = 0; i < (parseInt(task.count) || 1); i++) {
                 const stepPrefix = `[TASK-${filename}][Loop-${i + 1}]`;
-                console.log(`\n${stepPrefix} 🚀 正在执行任务: "${task.prompt}"`);
+                console.log(`\n${stepPrefix} 🚀 准备开启新标签页执行任务: "${task.prompt}"`);
                 
-                await Page.bringToFront();
-                
-                const currentStatus = await Runtime.evaluate({ expression: 'window.location.href' });
-                if (!currentStatus.result.value.includes('gemini.google.com')) {
-                    console.log(`${stepPrefix} ⚠️ 检测到偏离 Gemini 页面，正在重新导航...`);
-                    await Page.navigate({ url: 'https://gemini.google.com/' });
-                    await new Promise(r => setTimeout(r, 5000));
-                }
+                let currentTarget: any = null;
+                let client: any = null;
 
-                console.log(`${stepPrefix} ⏳ 等待页面渲染与加载 (6秒)...`);
-                await new Promise(r => setTimeout(r, 6000));
-                await simulateIdleMovement();
+                try {
+                    // 1. 创建并连接新标签页
+                    currentTarget = await CDP.New({ url: 'https://gemini.google.com/', port: 9222 });
+                    client = await CDP({ target: currentTarget.id, port: 9222 });
+                    const { Page, Runtime, Input, Network, DOM } = client;
 
-                console.log(`${stepPrefix} ⌨️ 正在定位输入框进行贝塞尔平滑移动并获取焦点...`);
-                const focusScript = `
-                    (() => {
-                        const el = document.querySelector('div[contenteditable="true"], textarea');
-                        if (el) {
-                            el.focus();
-                            const rect = el.getBoundingClientRect();
-                            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-                        }
-                        return null;
-                    })()
-                `;
-                const focusResult = await Runtime.evaluate({ expression: focusScript, returnByValue: true });
-                if (focusResult.result && focusResult.result.value) {
-                    const { x, y } = focusResult.result.value;
-                    console.log(`${stepPrefix} 🖱️ [Bezier] 曲线平滑移动至输入框: (${Math.floor(x)}, ${Math.floor(y)})`);
-                    await smoothMoveAndClick(Input, x, y, true);
-                } else {
-                    console.log(`${stepPrefix} ⚠️ 警告: 未能找到输入框中心点，直接执行操作。`);
-                }
+                    await Network.enable();
+                    await Page.enable();
+                    await Runtime.enable();
+                    await DOM.enable();
 
-                await new Promise(r => setTimeout(r, 500));
+                    console.log(`${stepPrefix} 🌐 新标签页已就绪，正在等待页面加载 (8秒)...`);
+                    await new Promise(r => setTimeout(r, 8000));
+                    await simulateIdleMovement(Input);
 
-                // 1. 粘贴参考图 (如果存在)
-                const config = await getAutomationConfig();
-                const isMac = os.platform() === 'darwin';
-                
-                if (task.images && task.images.length > 0) {
-                    console.log(`${stepPrefix} 🖼️ 检测到参考图，准备执行粘贴流程...`);
-                    for (const imgUrl of task.images) {
-                        const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
-                        const localPath = path.resolve(__dirname, relativeUrl);
-                        
-                        if (fs.existsSync(localPath)) {
-                            console.log(`${stepPrefix} 📋 正在将图片放入系统剪贴板: ${path.basename(localPath)}`);
-                            const success = copyImageToClipboard(localPath, isMac);
-                            if (success) {
-                                console.log(`${stepPrefix} 📥 发送物理粘贴指令 (Ctrl+V)...`);
-                                if (isMac) {
-                                    await Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 8, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 }); 
-                                    await Input.dispatchKeyEvent({ type: 'keyUp', modifiers: 8, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 });
-                                } else {
-                                    await Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 }); 
-                                    await Input.dispatchKeyEvent({ type: 'keyUp', modifiers: 2, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 });
-                                }
-                                const pasteWait = (config.pasteMin || 5) * 1000;
-                                console.log(`${stepPrefix} ⏳ 等待图片上传解析 (${config.pasteMin || 5}s)...`);
-                                await new Promise(r => setTimeout(r, pasteWait));
-                            }
-                        } else {
-                            console.log(`${stepPrefix} ❌ 找不到图片文件: ${localPath}`);
-                        }
-                    }
-                }
-
-                console.log(`${stepPrefix} ✍️ 逐字模拟拟人化输入提示词: "${task.prompt}"`);
-                for (const char of task.prompt) {
-                    await Input.dispatchKeyEvent({ type: 'char', text: char });
-                    await new Promise(r => setTimeout(r, Math.random() * 160 + 40));
-                }
-                
-                await new Promise(r => setTimeout(r, 1000 + Math.random() * 1000));
-                console.log(`${stepPrefix} ⏎ 发送 Enter 键触发生成...`);
-                await Input.dispatchKeyEvent({ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-                await Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-
-                // 增加：检查发送按钮点击作为兜底
-                await new Promise(r => setTimeout(r, 2000));
-                const sendBtnScript = `
-                    (() => {
-                        const btns = Array.from(document.querySelectorAll('button'));
-                        const sendBtn = btns.find(b => {
-                            const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
-                            return lbl.includes('send') || lbl.includes('发送');
-                        });
-                        if (sendBtn) {
-                            const rect = sendBtn.getBoundingClientRect();
-                            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-                        }
-                        return null;
-                    })()
-                `;
-                const sendBtnRes = await Runtime.evaluate({ expression: sendBtnScript, returnByValue: true });
-                if (sendBtnRes.result?.value) {
-                    const { x, y } = sendBtnRes.result.value;
-                    console.log(`${stepPrefix} 🖱️ [CDP 兜底] 物理点击发送按钮: (${Math.floor(x)}, ${Math.floor(y)})`);
-                    await smoothMoveAndClick(Input, x, y, true);
-                }
-
-                // 截图诊断：发送后立即截图
-                const screenshotPostSend = await Page.captureScreenshot({ format: 'png' });
-                fs.writeFileSync(path.join(__dirname, 'debug_post_send.png'), Buffer.from(screenshotPostSend.data, 'base64'));
-                console.log(`${stepPrefix} 📸 已保存发送后诊断截图: debug_post_send.png`);
-
-                console.log(`${stepPrefix} 🛡️ 进入静默监控期 (获取结果中)...`);
-                
-                let found = false;
-                let attempts = 0;
-                while (!found && attempts < 60) { // 增加到 4 分钟超时
-                    await new Promise(r => setTimeout(r, 4000));
-                    attempts++;
-                    
-                    // 诊断打印
+                    // 2. 诊断登录状态
                     const diagRes = await Runtime.evaluate({ expression: '({ title: document.title, url: window.location.href })', returnByValue: true });
                     const diag = diagRes.result?.value || { title: '未知', url: '未知' };
-                    
-                    if (attempts % 5 === 0) {
-                         console.log(`${stepPrefix} 🔦 [当前状态] 网页标题: "${diag.title}" | 进度: ${attempts}/60`);
-                         
-                         // 强制滚动到底部，确保最新内容被渲染
-                         await Runtime.evaluate({ expression: 'window.scrollTo(0, document.body.scrollHeight)' });
-                         
-                         // 持续截图诊断
-                         const loopSnap = await Page.captureScreenshot({ format: 'png' });
-                         fs.writeFileSync(path.join(__dirname, `debug_loop_${attempts}.png`), Buffer.from(loopSnap.data, 'base64'));
-                         console.log(`${stepPrefix} 📸 已更新循环诊断截图: debug_loop_${attempts}.png`);
-                         await simulateIdleMovement();
-                    }
-
                     if (diag.title.includes('登录') || diag.title.includes('Sign in')) {
-                         console.error(`${stepPrefix} ❌ [CRITICAL] 检测到页面处于登录状态。请先在 UserData 目录中手动登录。`);
-                         break;
+                         console.error(`${stepPrefix} ❌ [CRITICAL] 检测到页面处于登录状态。请确保在 UserData 中已登录 Google。`);
+                         task.status = 'failed';
+                         continue; 
                     }
 
-                    const checkScript = `
+                    console.log(`${stepPrefix} ⌨️ 正在定位输入框执行平滑移动...`);
+                    const focusScript = `
                         (() => {
-                            const messages = document.querySelectorAll('message-content, [data-message-author="model"], model-message, .model-response-text');
-                            if (messages.length === 0) return { status: 'no_messages' };
-                            
-                            // 从后往前找第一个包含图片的模型消息
-                            for (let i = messages.length - 1; i >= 0; i--) {
-                                const msg = messages[i];
-                                const img = msg.querySelector('img');
-                                if (img) {
-                                    const btns = Array.from(msg.querySelectorAll('button, a[download], [role="button"]'));
-                                    const downloadBtn = btns.find(b => {
-                                        const txt = (b.innerText || b.getAttribute('aria-label') || b.textContent || '').toLowerCase();
-                                        return txt.includes('下载') || txt.includes('download') || b.querySelector('mat-icon')?.textContent?.includes('download');
-                                    });
-                                    
-                                    if (downloadBtn) {
-                                        const rect = downloadBtn.getBoundingClientRect();
-                                        if (rect.width > 0 && rect.height > 0) {
-                                            return { 
-                                                status: 'found',
-                                                x: rect.left + rect.width / 2,
-                                                y: rect.top + rect.height / 2
-                                            };
-                                        }
-                                    }
-                                    return { status: 'img_no_btn', msgIndex: i };
-                                }
+                            const el = document.querySelector('div[contenteditable="true"], textarea');
+                            if (el) {
+                                el.focus();
+                                const rect = el.getBoundingClientRect();
+                                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
                             }
-                            return { status: 'waiting' };
+                            return null;
                         })()
                     `;
-                    const result = await Runtime.evaluate({ expression: checkScript, returnByValue: true });
-                    const resValue = result.result?.value;
-
-                    if (resValue && resValue.status === 'found') {
-                        console.log(`${stepPrefix} ✅ [SUCCESS] 第一时间捕捉到生成结果！`);
-                        const { x, y } = resValue;
-                        console.log(`${stepPrefix} 🖱️ [Bezier] 曲线平滑移动至下载按钮: (${Math.floor(x)}, ${Math.floor(y)})`);
+                    const focusResult = await Runtime.evaluate({ expression: focusScript, returnByValue: true });
+                    if (focusResult.result && focusResult.result.value) {
+                        const { x, y } = focusResult.result.value;
+                        console.log(`${stepPrefix} 🖱️ [Bezier] 曲线平滑移动至输入框: (${Math.floor(x)}, ${Math.floor(y)})`);
                         await smoothMoveAndClick(Input, x, y, true);
-                        found = true;
-                    } else if (resValue && resValue.status === 'img_no_btn') {
-                        console.log(`${stepPrefix} 🧐 发现图片但尚未看到下载按钮，可能正在渲染中...`);
                     }
-                }
 
-                if (found) {
-                     const config = await getAutomationConfig();
-                     const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
-                     const files = await waitForAndMoveDownloads(Date.now(), sysDir, downloadDir, 60);
-                     if (files && files.length > 0) {
-                         task.downloadedFiles.push(...files);
-                         task.status = 'completed';
-                     } else {
-                         task.status = 'failed';
-                     }
-                } else {
+                    await new Promise(r => setTimeout(r, 1000));
+
+                    // 3. 粘贴参考图 (如果存在)
+                    const config = await getAutomationConfig();
+                    const isMac = os.platform() === 'darwin';
+                    if (task.images && task.images.length > 0) {
+                        console.log(`${stepPrefix} 🖼️ 处理图片粘贴...`);
+                        for (const imgUrl of task.images) {
+                            const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
+                            const localPath = path.resolve(__dirname, relativeUrl);
+                            if (fs.existsSync(localPath)) {
+                                if (copyImageToClipboard(localPath, isMac)) {
+                                    const mod = isMac ? 8 : 2; // Command or Ctrl
+                                    await Input.dispatchKeyEvent({ type: 'keyDown', modifiers: mod, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 }); 
+                                    await Input.dispatchKeyEvent({ type: 'keyUp', modifiers: mod, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 });
+                                    await new Promise(r => setTimeout(r, (config.pasteMin || 5) * 1000));
+                                }
+                            }
+                        }
+                    }
+
+                    // 4. 输入文字并发送
+                    console.log(`${stepPrefix} ✍️ 逐字模拟拟人化输入...`);
+                    for (const char of task.prompt) {
+                        await Input.dispatchKeyEvent({ type: 'char', text: char });
+                        await new Promise(r => setTimeout(r, Math.random() * 120 + 30));
+                    }
+                    
+                    await new Promise(r => setTimeout(r, 1500));
+                    await Input.dispatchKeyEvent({ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+                    await Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+
+                    const sendBtnRes = await Runtime.evaluate({ expression: sendBtnScript, returnByValue: true });
+                    if (sendBtnRes.result?.value) {
+                        const { x, y } = sendBtnRes.result.value;
+                        await smoothMoveAndClick(Input, x, y, true);
+                    }
+
+                    // 5. 循环监控结果
+                    let found = false;
+                    let attempts = 0;
+                    while (!found && attempts < 80) { 
+                        await new Promise(r => setTimeout(r, 4000));
+                        attempts++;
+                        
+                        if (attempts % 5 === 0) {
+                             const stateRes = await Runtime.evaluate({ expression: '({ title: document.title })', returnByValue: true });
+                             console.log(`${stepPrefix} 🔦 [监控中] 标题: "${stateRes.result?.value?.title || '未知'}" | ${attempts}/80`);
+                             await Runtime.evaluate({ expression: 'window.scrollTo(0, document.body.scrollHeight)' });
+                             const loopSnap = await Page.captureScreenshot({ format: 'png' });
+                             fs.writeFileSync(path.join(__dirname, `debug_${filename}_${i + 1}.png`), Buffer.from(loopSnap.data, 'base64'));
+                             await simulateIdleMovement(Input);
+                        }
+
+                        const resultDetect = await Runtime.evaluate({ expression: checkResultScript, returnByValue: true });
+                        const resValue = resultDetect.result?.value;
+
+                        if (resValue && resValue.status === 'found') {
+                            console.log(`${stepPrefix} ✅ [SUCCESS] 发现生图结果！正在执行下载点击...`);
+                            await smoothMoveAndClick(Input, resValue.x, resValue.y, true);
+                            await new Promise(r => setTimeout(r, 4000));
+                            
+                            // 实际的文件移动逻辑
+                            const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
+                            const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, downloadDir, 60);
+                            if (movedFiles && movedFiles.length > 0) {
+                                task.downloadedFiles.push(...movedFiles);
+                                task.status = 'completed';
+                                found = true;
+                            } else {
+                                console.warn(`${stepPrefix} ⚠️ 点击了下载但未在系统目录发现新文件，尝试继续等待...`);
+                            }
+                        } else if (resValue?.status === 'img_no_btn') {
+                            if (attempts % 10 === 0) console.log(`${stepPrefix} 🧐 看到图片，等待下载链接就绪...`);
+                        }
+                    }
+
+                    if (!found) {
+                        console.error(`${stepPrefix} ❌ 任务超时或下载失败。`);
+                        task.status = 'failed';
+                    }
+
+                } catch (taskErr: any) {
+                    console.error(`${stepPrefix} ❌ 任务执行异常:`, taskErr.message || taskErr);
                     task.status = 'failed';
+                } finally {
+                    if (client) {
+                        try { await client.close(); } catch(e) {}
+                    }
+                    if (currentTarget) {
+                        try { 
+                            console.log(`${stepPrefix} 🧹 正在关闭任务标签页...`);
+                            await CDP.Close({ id: currentTarget.id, port: 9222 }); 
+                        } catch(e) {}
+                    }
                 }
 
                 completedLoops++;
                 jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
-                
-                // 环节间隔，反爬：随机休息
-                const restTime = 5000 + Math.random() * 5000;
-                console.log(`${stepPrefix} 💤 循环结束，随机休息 ${Math.floor(restTime/1000)} 秒后继续...`);
-                await new Promise(r => setTimeout(r, restTime));
             }
         }
     } catch (err: any) {
@@ -532,10 +470,6 @@ async function executeWithCDP(tasks: any[], filename: string) {
             if (t.status !== 'completed') t.status = 'failed';
         });
     } finally {
-        if (client) {
-            console.log(`📡 正在断开 CDP 调试连接...`);
-            try { await client.close(); } catch(e) {}
-        }
         jobProgress.delete(filename);
     }
     return tasks;
