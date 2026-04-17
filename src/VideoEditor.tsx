@@ -111,6 +111,7 @@ export default function VideoEditor({
   // Split Images State
   const [splitImages, setSplitImages] = useState<string[]>([]);
   const [selectedSplitIndices, setSelectedSplitIndices] = useState<number[]>([]);
+  const [isProcessingGrid, setIsProcessingGrid] = useState(false);
 
   useEffect(() => {
     fetch('/api/bgm').then(res => res.json()).then(data => setBgmList(data));
@@ -596,10 +597,17 @@ export default function VideoEditor({
       {/* Gallery Picker Modal */}
       {showGallery && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
-          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+          <div className="relative bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            {isProcessingGrid && (
+              <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center z-50 rounded-2xl">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mb-4"></div>
+                <p className="text-blue-600 font-medium text-lg shadow-sm">正在切割图片，请稍候...</p>
+              </div>
+            )}
+            
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">从本地图库选择 {galleryMode === '4grid' ? '(4宫格)' : ''}</h2>
-              <button onClick={() => setShowGallery(false)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
+              <button disabled={isProcessingGrid} onClick={() => setShowGallery(false)} className="text-gray-400 hover:text-gray-600 disabled:opacity-50"><X size={24}/></button>
             </div>
             <div className="flex-grow overflow-y-auto mb-6 pr-2">
               {galleryImages.length === 0 ? (
@@ -613,14 +621,21 @@ export default function VideoEditor({
                     <div 
                       key={img} 
                     onClick={() => {
+                      if (isProcessingGrid) return;
+                      
                       if (galleryMode === '4grid') {
+                        setIsProcessingGrid(true);
                         // Process 4-grid from gallery image
                         const imgUrl = getBustedUrl(`/downloads/${img}`);
                         const image = new Image();
+                        image.crossOrigin = 'anonymous'; // Important for canvas export
                         image.onload = () => {
                           const canvas = document.createElement('canvas');
                           const context = canvas.getContext('2d');
-                          if (!context) return;
+                          if (!context) {
+                            setIsProcessingGrid(false);
+                            return;
+                          }
                           
                           const w = image.width / 2;
                           const h = image.height / 2;
@@ -642,7 +657,12 @@ export default function VideoEditor({
                           
                           setSplitImages(newImages);
                           setSelectedSplitIndices([]);
+                          setIsProcessingGrid(false);
                           setShowGallery(false);
+                        };
+                        image.onerror = () => {
+                          setIsProcessingGrid(false);
+                          showToast('图片加载失败，请重试', 'error');
                         };
                         image.src = imgUrl;
                       } else {
