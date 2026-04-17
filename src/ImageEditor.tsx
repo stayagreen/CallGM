@@ -597,6 +597,7 @@ export default function ImageEditor({ image, onSave, onCancel, onProcessStart }:
               <img 
                 ref={imageRef} 
                 src={image} 
+                crossOrigin="anonymous"
                 className="max-w-full max-h-full object-contain pointer-events-none block" 
                 style={{ maxHeight: 'calc(90vh - 200px)' }} 
                 onLoad={() => {

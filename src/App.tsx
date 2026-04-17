@@ -4,7 +4,8 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush } from 'lucide-react';
+import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 
 interface Task {
@@ -217,6 +218,68 @@ export default function App() {
   const [processingGalleryImages, setProcessingGalleryImages] = useState<Set<string>>(new Set());
   const manualProcessingImages = useRef<Set<string>>(new Set());
   const [galleryUpdateToken, setGalleryUpdateToken] = useState<number>(Date.now());
+  const [editingGalleryImage, setEditingGalleryImage] = useState<{ filename: string, url: string } | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    // Initialize SpeechRecognition if available
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = true; // allow continuous dictation
+      recognitionRef.current.interimResults = true; // show interim results
+      // Setting language to zh-CN covers Mandarin, but modern recognition models often handle mixed EN/ZH well.
+      recognitionRef.current.lang = 'zh-CN'; 
+      
+      recognitionRef.current.onresult = (event: any) => {
+        let finalTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          }
+        }
+        
+        if (finalTranscript && activeTaskId) {
+          setTasks(prev => prev.map(t => {
+            if (t.id === activeTaskId) {
+              return { ...t, prompt: t.prompt + (t.prompt && !t.prompt.endsWith(' ') ? ' ' : '') + finalTranscript };
+            }
+            return t;
+          }));
+        }
+      };
+
+      recognitionRef.current.onerror = (event: any) => {
+        console.error('Speech recognition error', event.error);
+        if (event.error !== 'no-speech') {
+          setIsRecording(false);
+        }
+      };
+
+      recognitionRef.current.onend = () => {
+        setIsRecording(false);
+      };
+    }
+  }, [activeTaskId]);
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+    } else {
+      if (!recognitionRef.current) {
+        alert('您的浏览器不支持语音输入 (请尝试使用 Chrome 浏览器)');
+        return;
+      }
+      try {
+        recognitionRef.current.start();
+        setIsRecording(true);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
 
   const handleOneClickWatermark = async (filename: string) => {
     if (window.confirm('确认要对该图片进行一键去水印吗？\n系统将尝试自动识别并移除右下角的星型水印。')) {
@@ -258,6 +321,7 @@ export default function App() {
   const [selectedGalleryImages, setSelectedGalleryImages] = useState<Set<string>>(new Set());
   const [isMobile, setIsMobile] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [submittingJobs, setSubmittingJobs] = useState<Job[]>([]);
   const [submittingVideoJobs, setSubmittingVideoJobs] = useState<Job[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
@@ -611,21 +675,33 @@ export default function App() {
   };
 
   const saveConfig = async () => {
-    // Clean up systemDownloadsDir to remove invisible characters (like LRM from Windows Explorer) and trim whitespace
-    const cleanedConfig = {
-      ...systemConfig,
-      systemDownloadsDir: systemConfig.systemDownloadsDir ? systemConfig.systemDownloadsDir.replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '').trim() : '',
-      chromePath: systemConfig.chromePath?.trim() || '',
-      userDataDir: systemConfig.userDataDir?.trim() || ''
-    };
-    
-    await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cleanedConfig)
-    });
-    setSystemConfig(cleanedConfig);
-    setShowConfigModal(false);
+    setIsSavingConfig(true);
+    try {
+      // Clean up systemDownloadsDir to remove invisible characters (like LRM from Windows Explorer) and trim whitespace
+      const cleanedConfig = {
+        ...systemConfig,
+        systemDownloadsDir: systemConfig.systemDownloadsDir ? systemConfig.systemDownloadsDir.replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '').trim() : '',
+        chromePath: systemConfig.chromePath?.trim() || '',
+        userDataDir: systemConfig.userDataDir?.trim() || ''
+      };
+      
+      await fetch('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cleanedConfig)
+      });
+      setSystemConfig(cleanedConfig);
+      
+      // Artificial delay so the loading UI is actually visible to users indicating that work was done.
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      setShowConfigModal(false);
+    } catch (e) {
+      console.error(e);
+      alert('保存失败，请检查网络');
+    } finally {
+      setIsSavingConfig(false);
+    }
   };
 
   return (
@@ -768,13 +844,22 @@ export default function App() {
           </div>
         </div>
 
-        <textarea
-          className="w-full p-4 border border-gray-200 rounded-xl mb-6 focus:ring-2 focus:ring-blue-500 outline-none"
-          placeholder="输入提示词..."
-          rows={4}
-          value={activeTask?.prompt || ''}
-          onChange={(e) => updateTask({ prompt: e.target.value })}
-        />
+        <div className="relative mb-6">
+          <textarea
+            className="w-full p-4 pr-12 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+            placeholder="输入提示词..."
+            rows={4}
+            value={activeTask?.prompt || ''}
+            onChange={(e) => updateTask({ prompt: e.target.value })}
+          />
+          <button 
+            onClick={toggleRecording}
+            className={`absolute right-3 bottom-3 p-2 rounded-full transition shadow-sm ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-blue-500'}`}
+            title="语音输入"
+          >
+            {isRecording ? <Mic /> : <MicOff />}
+          </button>
+        </div>
 
         <div className="mb-6">
           <input type="file" multiple onChange={handleImageUpload} className="hidden" ref={fileInputRef} accept="image/*" />
@@ -1236,6 +1321,14 @@ export default function App() {
                     <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
                     <div className="flex gap-1">
                       <button
+                        onClick={() => !processingGalleryImages.has(img) && setEditingGalleryImage({ filename: img, url: `/downloads/${img}?t=${galleryUpdateToken}` })}
+                        disabled={processingGalleryImages.has(img)}
+                        className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-purple-500 hover:bg-purple-50'}`}
+                        title="智能填充 (手动去水印)"
+                      >
+                        <Paintbrush className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={() => !processingGalleryImages.has(img) && handleOneClickWatermark(img)}
                         disabled={processingGalleryImages.has(img)}
                         className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
@@ -1423,6 +1516,46 @@ export default function App() {
         </div>
       )}
 
+      {editingGalleryImage && (
+        <div className="fixed inset-0 bg-black z-50 flex flex-col">
+          <ImageEditor
+            image={editingGalleryImage.url}
+            onSave={async (newImage) => {
+              // Convert base64 to File or just send to a new endpoint to overwrite
+              try {
+                setProcessingGalleryImages(prev => new Set(prev).add(editingGalleryImage.filename));
+                setEditingGalleryImage(null);
+                
+                const response = await fetch('/api/gallery/save-manual-edit', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    filename: editingGalleryImage.filename,
+                    base64: newImage
+                  })
+                });
+                
+                if (response.ok) {
+                  setGalleryUpdateToken(Date.now());
+                } else {
+                  alert('保存图片失败');
+                }
+              } catch (e) {
+                console.error(e);
+                alert('网络请求失败');
+              } finally {
+                setProcessingGalleryImages(prev => {
+                  const next = new Set(prev);
+                  next.delete(editingGalleryImage.filename);
+                  return next;
+                });
+              }
+            }}
+            onCancel={() => setEditingGalleryImage(null)}
+          />
+        </div>
+      )}
+
       {showTemplateModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
@@ -1462,11 +1595,18 @@ export default function App() {
         </div>
       )}
       {showConfigModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-lg">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
+          <div className="relative bg-white p-8 rounded-2xl shadow-xl w-full max-w-lg">
+            {isSavingConfig && (
+              <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center z-50 rounded-2xl">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mb-4"></div>
+                <p className="text-blue-600 font-medium text-lg shadow-sm">正在保存设置...</p>
+              </div>
+            )}
+            
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-gray-800">系统设置</h2>
-              <button onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
+              <button disabled={isSavingConfig} onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-gray-600 disabled:opacity-50"><X size={24}/></button>
             </div>
             <div className="mb-6 space-y-4 max-h-[60vh] overflow-y-auto pr-2">
               <div className="grid grid-cols-1 gap-4">
@@ -1558,8 +1698,10 @@ export default function App() {
               </div>
             </div>
             <div className="flex gap-3">
-              <button onClick={() => setShowConfigModal(false)} className="flex-1 py-3 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition">取消</button>
-              <button onClick={saveConfig} className="flex-1 py-3 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition">保存设置</button>
+              <button disabled={isSavingConfig} onClick={() => setShowConfigModal(false)} className="flex-1 py-3 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition disabled:opacity-50">取消</button>
+              <button disabled={isSavingConfig} onClick={saveConfig} className="flex-1 py-3 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                {isSavingConfig ? '保存中...' : '保存设置'}
+              </button>
             </div>
           </div>
         </div>

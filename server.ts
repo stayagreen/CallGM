@@ -605,6 +605,38 @@ async function startServer() {
     res.json({ success: true, urls: copiedUrls });
   });
 
+  app.post("/api/gallery/save-manual-edit", async (req, res) => {
+    const { filename, base64 } = req.body;
+    if (!filename || !base64) {
+      return res.status(400).json({ error: "Filename and base64 string are required" });
+    }
+
+    const filePath = path.join(downloadDir, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    try {
+      console.log(`🖌️ [Manual Edit] Saving edited image: ${filename}`);
+      // Remove data:image/...;base64, prefix
+      const base64Data = base64.replace(/^data:image\/\w+;base64,/, "");
+      const buffer = Buffer.from(base64Data, 'base64');
+      
+      fs.writeFileSync(filePath, buffer);
+      
+      // Delete thumbnail so it gets regenerated
+      const thumbPath = path.join(thumbDownloadsDir, filename);
+      if (fs.existsSync(thumbPath)) {
+        fs.unlinkSync(thumbPath);
+      }
+      
+      res.json({ status: "ok", message: "Image saved successfully" });
+    } catch (error) {
+      console.error(`❌ [Manual Edit] Failed: ${filename}`, error);
+      res.status(500).json({ error: "Failed to save edited image" });
+    }
+  });
+
   // API to trigger one-click watermark removal
   app.post("/api/gallery/auto-watermark", async (req, res) => {
     const { filename, imageQuality } = req.body;
