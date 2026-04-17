@@ -373,16 +373,49 @@ async function executeWithCDP(tasks: any[], filename: string) {
                 await Input.dispatchKeyEvent({ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
                 await Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
 
-                console.log(`${stepPrefix} 🛡️ 静默监控结果生成 (4s 轮询)...`);
+                // 增加：检查发送按钮点击作为兜底
+                await new Promise(r => setTimeout(r, 2000));
+                const sendBtnScript = `
+                    (() => {
+                        const btns = Array.from(document.querySelectorAll('button'));
+                        const sendBtn = btns.find(b => {
+                            const lbl = (b.getAttribute('aria-label') || '').toLowerCase();
+                            return lbl.includes('send') || lbl.includes('发送');
+                        });
+                        if (sendBtn) {
+                            const rect = sendBtn.getBoundingClientRect();
+                            return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+                        }
+                        return null;
+                    })()
+                `;
+                const sendBtnRes = await Runtime.evaluate({ expression: sendBtnScript, returnByValue: true });
+                if (sendBtnRes.result?.value) {
+                    const { x, y } = sendBtnRes.result.value;
+                    console.log(`${stepPrefix} 🖱️ [CDP 兜底] 物理点击发送按钮: (${Math.floor(x)}, ${Math.floor(y)})`);
+                    await smoothMoveAndClick(Input, x, y, true);
+                }
+
+                console.log(`${stepPrefix} 🛡️ 进入静默监控期 (获取结果中)...`);
                 
                 let found = false;
                 let attempts = 0;
-                while (!found && attempts < 50) {
+                while (!found && attempts < 60) { // 增加到 4 分钟超时
                     await new Promise(r => setTimeout(r, 4000));
                     attempts++;
                     
+                    // 诊断打印
+                    const diagRes = await Runtime.evaluate({ expression: '({ title: document.title, url: window.location.href })', returnByValue: true });
+                    const diag = diagRes.result?.value || { title: '未知', url: '未知' };
+                    
                     if (attempts % 5 === 0) {
+                         console.log(`${stepPrefix} 🔦 [当前状态] 网页标题: "${diag.title}" | 进度: ${attempts}/60`);
                          await simulateIdleMovement();
+                    }
+
+                    if (diag.title.includes('登录') || diag.title.includes('Sign in')) {
+                         console.error(`${stepPrefix} ❌ [CRITICAL] 检测到页面处于登录状态。请先在 UserData 目录中手动登录。`);
+                         break;
                     }
 
                     const checkScript = `
