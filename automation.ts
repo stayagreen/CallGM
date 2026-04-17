@@ -37,7 +37,7 @@ function copyImageToClipboard(imagePath: string, isMac: boolean) {
 let isRunning = false;
 let lastHeartbeat = Date.now();
 
-export const jobProgress = new Map<string, { completed: number, total: number, status: string }>();
+export const jobProgress = new Map<string, { completed: number, total: number, status: string, message?: string }>();
 export const processingImages = new Set<string>();
 
 const getRandomTime = (min: number, max: number) => {
@@ -219,7 +219,7 @@ async function smoothMoveAndClick(Input: any, endX: number, endY: number, click:
 async function executeWithCDP(tasks: any[], filename: string) {
     const totalLoops = tasks.reduce((acc: number, t: any) => acc + (parseInt(t.count) || 1), 0);
     let completedLoops = 0;
-    jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: '🚀 正在初始化引擎...' });
+    jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running', message: '🚀 正在初始化引擎...' });
 
     console.log('\n====================================================');
     console.log('🚀 正在启动 CDP 原生引擎 (最高安全性模式)...');
@@ -318,7 +318,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                 console.log(`\n${stepPrefix} 🚀 准备开启新标签页执行任务: "${task.prompt}"`);
                 
                 // 实时更新进度：开始当前 Loop
-                jobProgress.set(filename, { completed: completedLoops + 0.05, total: totalLoops, status: `🌐 正在打开标签页 [${i+1}/${task.count}]...` });
+                jobProgress.set(filename, { completed: completedLoops + 0.05, total: totalLoops, status: 'running', message: `🌐 正在打开标签页 [${i+1}/${task.count}]...` });
                 
                 let currentTarget: any = null;
                 let client: any = null;
@@ -370,7 +370,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                     }
 
                     console.log(`${stepPrefix} ⌨️ 正在定位输入框执行平滑移动...`);
-                    jobProgress.set(filename, { completed: completedLoops + 0.1, total: totalLoops, status: '🖱️ 正在聚焦输入框...' });
+                    jobProgress.set(filename, { completed: completedLoops + 0.1, total: totalLoops, status: 'running', message: '🖱️ 正在聚焦输入框...' });
                     const focusScript = `
                         (() => {
                             const el = document.querySelector('div[contenteditable="true"], textarea');
@@ -396,7 +396,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                     const isMac = os.platform() === 'darwin';
                     if (task.images && task.images.length > 0) {
                         console.log(`${stepPrefix} 🖼️ 处理图片粘贴...`);
-                        jobProgress.set(filename, { completed: completedLoops + 0.15, total: totalLoops, status: '🖼️ 正在上传参考图...' });
+                        jobProgress.set(filename, { completed: completedLoops + 0.15, total: totalLoops, status: 'running', message: '🖼️ 正在上传参考图...' });
                         for (const imgUrl of task.images) {
                             const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
                             const localPath = path.resolve(__dirname, relativeUrl);
@@ -438,7 +438,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                     await Runtime.evaluate({ expression: injectScript });
                     
                     // 实时更新进度：输入提示词完成
-                    jobProgress.set(filename, { completed: completedLoops + 0.4, total: totalLoops, status: '✍️ 提示词发送成功，等待模型响应...' });
+                    jobProgress.set(filename, { completed: completedLoops + 0.4, total: totalLoops, status: 'running', message: '✍️ 提示词发送成功，等待模型响应...' });
 
                     await new Promise(r => setTimeout(r, 1000));
                     await Input.dispatchKeyEvent({ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
@@ -473,7 +473,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                         const miniProgress = Math.min(0.85, 0.4 + (attempts / 80) * 0.45);
                         let subStatus = `🎨 模型正在生图中 [${attempts}s]...`;
                         if (resValue?.status === 'img_no_btn') subStatus = `🖼️ 图片已生成，等待下载按钮...`;
-                        jobProgress.set(filename, { completed: completedLoops + miniProgress, total: totalLoops, status: subStatus });
+                        jobProgress.set(filename, { completed: completedLoops + miniProgress, total: totalLoops, status: 'running', message: subStatus });
 
                         if (resValue && resValue.status === 'found') {
                             console.log(`${stepPrefix} ✅ [SUCCESS] 发现生图结果 (${resValue.imgCount} 张图)！正在启动下载流程...`);
@@ -508,7 +508,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                             
                             if (checkClick.result.value) {
                                 console.log(`${stepPrefix} ✅ UI 响应成功：检测到“正在下载”提示，正在等待文件落盘...`);
-                                jobProgress.set(filename, { completed: completedLoops + 0.9, total: totalLoops, status: '⬇️ 正在下载完整尺寸图片...' });
+                                jobProgress.set(filename, { completed: completedLoops + 0.9, total: totalLoops, status: 'running', message: '⬇️ 正在下载完整尺寸图片...' });
                             } else {
                                 console.log(`${stepPrefix} ⚠️ 点击未见 UI “正在下载”提示，尝试等待文件趋势。`);
                             }
@@ -556,13 +556,13 @@ async function executeWithCDP(tasks: any[], filename: string) {
                 }
 
                 completedLoops++;
-                jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: `✅ 第 ${completedLoops} 个循环已完成` });
+                jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'completed', message: `✅ 第 ${completedLoops} 个循环已完成` });
             }
         }
     } catch (err: any) {
         const errorMsg = err.message || String(err);
         console.error('❌ CDP 引擎发生异常中断:', errorMsg);
-        jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: `❌ 发生异常: ${errorMsg.slice(0, 30)}` });
+        jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'failed', message: `❌ 发生异常: ${errorMsg.slice(0, 30)}` });
         
         // 尝试诊断
         if (errorMsg.includes('Target crashed')) {

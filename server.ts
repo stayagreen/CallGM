@@ -302,15 +302,9 @@ async function startServer() {
           let status = 'pending';
           let statusMessage = '';
           if (progressInfo) {
-            if (progressInfo.status.includes('❌')) {
-              status = 'failed';
-            } else if (progressInfo.status.includes('✅') && progressInfo.completed === progressInfo.total) {
-              status = 'completed';
-            } else {
-              status = 'running';
-            }
+            status = progressInfo.status;
             progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
-            statusMessage = progressInfo.status;
+            statusMessage = progressInfo.message || '';
           }
 
           jobs.push({
