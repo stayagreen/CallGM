@@ -875,13 +875,7 @@ export default function App() {
               onContextMenu={(e) => e.preventDefault()}
               className={`w-full py-3 rounded-lg font-bold text-lg select-none touch-none transition-all shadow-sm flex items-center justify-center gap-2 border ${isRecording ? 'bg-gray-300 text-gray-800 border-gray-400' : 'bg-gray-100 text-gray-700 border-gray-200 active:bg-gray-200'}`}
             >
-              {isRecording ? (
-                <div className="flex gap-1 items-center justify-center">
-                  <span className="w-1 h-3 bg-red-500 rounded-full animate-bounce delay-100"></span>
-                  <span className="w-1 h-5 bg-red-500 rounded-full animate-bounce delay-200"></span>
-                  <span className="w-1 h-3 bg-red-500 rounded-full animate-bounce delay-300"></span>
-                </div>
-              ) : <Mic />}
+              {isRecording ? <Mic className="animate-pulse text-red-500" /> : <Mic />}
               {isRecording ? '松开 结束' : '按住 说话'}
             </button>
           </div>
