@@ -415,6 +415,10 @@ async function executeWithCDP(tasks: any[], filename: string) {
                     
                     if (attempts % 5 === 0) {
                          console.log(`${stepPrefix} 🔦 [当前状态] 网页标题: "${diag.title}" | 进度: ${attempts}/60`);
+                         
+                         // 强制滚动到底部，确保最新内容被渲染
+                         await Runtime.evaluate({ expression: 'window.scrollTo(0, document.body.scrollHeight)' });
+                         
                          // 持续截图诊断
                          const loopSnap = await Page.captureScreenshot({ format: 'png' });
                          fs.writeFileSync(path.join(__dirname, `debug_loop_${attempts}.png`), Buffer.from(loopSnap.data, 'base64'));
@@ -429,23 +433,32 @@ async function executeWithCDP(tasks: any[], filename: string) {
 
                     const checkScript = `
                         (() => {
-                            const messages = document.querySelectorAll('message-content, [data-message-author="model"], model-message');
+                            const messages = document.querySelectorAll('message-content, [data-message-author="model"], model-message, .model-response-text');
                             if (messages.length === 0) return { status: 'no_messages' };
-                            const lastMsg = messages[messages.length - 1];
-                            const img = lastMsg.querySelector('img');
-                            const btns = Array.from(lastMsg.querySelectorAll('button, a[download]'));
-                            const downloadBtn = btns.find(b => {
-                                const txt = (b.innerText || b.getAttribute('aria-label') || b.outerHTML).toLowerCase();
-                                return txt.includes('下载') || txt.includes('download');
-                            });
                             
-                            if (img && downloadBtn) {
-                                const rect = downloadBtn.getBoundingClientRect();
-                                return { 
-                                    status: 'found',
-                                    x: rect.left + rect.width / 2,
-                                    y: rect.top + rect.height / 2
-                                };
+                            // 从后往前找第一个包含图片的模型消息
+                            for (let i = messages.length - 1; i >= 0; i--) {
+                                const msg = messages[i];
+                                const img = msg.querySelector('img');
+                                if (img) {
+                                    const btns = Array.from(msg.querySelectorAll('button, a[download], [role="button"]'));
+                                    const downloadBtn = btns.find(b => {
+                                        const txt = (b.innerText || b.getAttribute('aria-label') || b.textContent || '').toLowerCase();
+                                        return txt.includes('下载') || txt.includes('download') || b.querySelector('mat-icon')?.textContent?.includes('download');
+                                    });
+                                    
+                                    if (downloadBtn) {
+                                        const rect = downloadBtn.getBoundingClientRect();
+                                        if (rect.width > 0 && rect.height > 0) {
+                                            return { 
+                                                status: 'found',
+                                                x: rect.left + rect.width / 2,
+                                                y: rect.top + rect.height / 2
+                                            };
+                                        }
+                                    }
+                                    return { status: 'img_no_btn', msgIndex: i };
+                                }
                             }
                             return { status: 'waiting' };
                         })()
@@ -459,6 +472,8 @@ async function executeWithCDP(tasks: any[], filename: string) {
                         console.log(`${stepPrefix} 🖱️ [Bezier] 曲线平滑移动至下载按钮: (${Math.floor(x)}, ${Math.floor(y)})`);
                         await smoothMoveAndClick(Input, x, y, true);
                         found = true;
+                    } else if (resValue && resValue.status === 'img_no_btn') {
+                        console.log(`${stepPrefix} 🧐 发现图片但尚未看到下载按钮，可能正在渲染中...`);
                     }
                 }
 
