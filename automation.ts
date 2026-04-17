@@ -72,17 +72,30 @@ async function ensureBrowserLaunched() {
     const port = 9222;
     const isOpen = await isPortOpen(port);
 
+    // 检查浏览器是否真的有响应 (而不仅仅是端口开了)
     if (isOpen) {
-        console.log(`✅ 检测到端口 ${port} 已开放，浏览器正在运行中。`);
-        return true;
+        try {
+            const response = await fetch(`http://localhost:${port}/json/version`).catch(() => null);
+            if (response && response.ok) {
+                console.log(`✅ 检测到端口 ${port} 且浏览器响应正常。`);
+                return true;
+            } else {
+                console.warn(`⚠️ 检测到端口 ${port} 已占用但浏览器无响应 (可能是僵尸进程)。`);
+                console.log(`💡 建议：请手动关闭所有 Chrome 进程后再试。`);
+                // 继续尝试启动，看是否能覆盖
+            }
+        } catch (e) {
+            console.warn(`⚠️ 无法验证浏览器健康状态: ${e}`);
+        }
     }
 
-    console.log(`🚀 未检测到运行中的浏览器，尝试自动启动...`);
+    console.log(`🚀 正在尝试启动浏览器...`);
     const chromePath = config.chromePath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
     const userDataDir = config.userDataDir || 'C:\\ChromeDebug';
+    const logPath = path.join(__dirname, 'chrome_debug.log');
 
     if (!fs.existsSync(chromePath)) {
-        console.error(`❌ 找不到 Chrome 程序: ${chromePath}，请在设置中修改路径。`);
+        console.error(`❌ 找不到 Chrome 程序: ${chromePath}`);
         return false;
     }
 
@@ -98,36 +111,42 @@ async function ensureBrowserLaunched() {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-extensions',
-        '--disable-background-networking',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-breakpad',
-        '--disable-component-update',
-        '--disable-domain-reliability',
-        '--disable-sync',
-        '--mute-audio',
-        '--remote-allow-origins=*'
+        '--remote-allow-origins=*',
+        '--disable-blink-features=AutomationControlled'
     ];
 
-    console.log(`📂 执行启动命令: "${chromePath}" ${args.join(' ')}`);
+    console.log(`📂 日志将同步至: ${logPath}`);
     
-    // 以分离模式启动，防止 Node 退出导致 Chrome 退出
+    // 创建日志流
+    const logStream = fs.createWriteStream(logPath, { flags: 'a' });
+    logStream.write(`\n\n--- 启动日期: ${new Date().toLocaleString()} ---\n`);
+
     const child = spawn(chromePath, args, {
         detached: true,
-        stdio: 'ignore'
+        stdio: ['ignore', 'pipe', 'pipe'] // 捕捉输出
     });
+
+    child.stdout?.pipe(logStream);
+    child.stderr?.pipe(logStream);
+
     child.unref();
 
     // 等待端口就绪
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 15; i++) {
         await new Promise(r => setTimeout(r, 1000));
-        if (await isPortOpen(port)) {
-            console.log(`✅ 浏览器已启动并准备就绪。`);
-            return true;
+        const check = await isPortOpen(port);
+        if (check) {
+            try {
+                const res = await fetch(`http://localhost:${port}/json/version`).catch(() => null);
+                if (res && res.ok) {
+                    console.log(`✅ 浏览器已启动并通过健康检查。`);
+                    return true;
+                }
+            } catch(e) {}
         }
     }
     
-    console.error(`❌ 浏览器启动超时，请尝试手动运行命令。`);
+    console.error(`❌ 浏览器就绪状态检查失败。`);
     return false;
 }
 
@@ -218,6 +237,14 @@ async function executeWithCDP(tasks: any[], filename: string) {
 
         client = await CDP({ target: target.id, port: 9222 });
         const { Page, Runtime, Input, Network, DOM } = client;
+
+        // 监听崩溃事件
+        client.on('error', (err: any) => {
+            console.error('🚫 [CDP 实时监听] 捕获到底层错误:', err);
+        });
+        client.on('disconnect', () => {
+            console.warn('🔌 [CDP 实时监听] 浏览器连接已断开');
+        });
 
         await Network.enable();
         await Page.enable();
@@ -391,6 +418,16 @@ async function executeWithCDP(tasks: any[], filename: string) {
         }
     } catch (err: any) {
         console.error('❌ CDP 引擎发生异常中断:', err.message || err);
+        
+        // 尝试诊断
+        if (err.message && err.message.includes('Target crashed')) {
+            console.log('🧐 诊断提示: 目标页面崩溃，通常是因为内存不足或 UserData 冲突。');
+            try {
+                const logTail = fs.readFileSync(path.join(__dirname, 'chrome_debug.log'), 'utf-8').split('\n').slice(-10).join('\n');
+                console.log('📋 浏览器最后 10 行日志反馈:\n' + logTail);
+            } catch(e) {}
+        }
+
         // 关键修复：发生崩溃或异常时，确保内存中的任务对象被标记为失败，以便写入文件
         tasks.forEach(t => {
             if (t.status !== 'completed') t.status = 'failed';
