@@ -91,8 +91,12 @@ async function ensureBrowserLaunched() {
         `--user-data-dir=${userDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
-        '--headless=new', // 强制后台运行，不干扰用户操作
-        '--window-size=1280,1024'
+        '--headless=new',
+        '--window-size=1280,1024',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        '--no-sandbox',
+        '--disable-setuid-sandbox'
     ];
 
     console.log(`📂 执行启动命令: "${chromePath}" ${args.join(' ')}`);
