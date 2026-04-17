@@ -82,37 +82,43 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     // 1. 读取图片
     const image = sharp(filePath);
     const { data: buffer, info } = await image.raw().toBuffer({ resolveWithObject: true });
+    console.log(`🖼️ [去水印-WASM] 图片信息: ${info.width}x${info.height}, 通道: ${info.channels}`);
     
-    // 2. 创建 Mat 并载入数据 (4.3.0 标准写法)
-    let src = new cvInst.Mat(info.height, info.width, cvInst.CV_8UC4);
-    src.data.set(new Uint8Array(buffer)); // 使用 Uint8Array 提高兼容性
+    // 2. 创建 Mat 并载入数据 (适配 3 或 4 通道)
+    let src = new cvInst.Mat(info.height, info.width, info.channels === 4 ? cvInst.CV_8UC4 : cvInst.CV_8UC3);
+    src.data.set(new Uint8Array(buffer));
 
     const h = src.rows;
     const w = src.cols;
 
-    // 3. ROI 区域锁定 (右下角)
-    const roiX = Math.floor(w * 0.75);
-    const roiY = Math.floor(h * 0.85);
+    // 3. ROI 区域锁定 (稍微放宽区域，从右下 30% x 25% 开始)
+    const roiX = Math.floor(w * 0.70);
+    const roiY = Math.floor(h * 0.75);
     const roiRect = new cvInst.Rect(roiX, roiY, w - roiX, h - roiY);
     let roi = src.roi(roiRect);
 
-    // 4. 颜色空间转换与二值化
+    // 4. 颜色空间转换与二值化 (放宽阈值至 200)
     let gray = new cvInst.Mat();
-    cvInst.cvtColor(roi, gray, cvInst.COLOR_RGBA2GRAY);
+    if (info.channels === 4) {
+      cvInst.cvtColor(roi, gray, cvInst.COLOR_RGBA2GRAY);
+    } else {
+      cvInst.cvtColor(roi, gray, cvInst.COLOR_RGB2GRAY);
+    }
     
     let binary = new cvInst.Mat();
-    // 4.3.0 标准 API: src, dst, thresh, maxval, type
-    cvInst.threshold(gray, binary, 240, 255, cvInst.THRESH_BINARY);
+    const thresholdVal = 200; // 从 240 降到 200，适应更淡的水印
+    cvInst.threshold(gray, binary, thresholdVal, 255, cvInst.THRESH_BINARY);
 
     // 5. 轮廓提取
     let contours = new cvInst.MatVector();
     let hierarchy = new cvInst.Mat();
     cvInst.findContours(binary, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
     
+    console.log(`🔍 [去水印-WASM] 区域内检测到轮廓数量: ${contours.size()}`);
+    
     let mask = cvInst.Mat.zeros(h, w, cvInst.CV_8UC1);
     let watermarkFound = false;
 
-    // 统一配置 Scalar 和 Point 避免某些版本报错
     const whiteScalar = new cvInst.Scalar(255, 255, 255, 255);
     const offsetPoint = new cvInst.Point(roiX, roiY);
 
@@ -120,24 +126,33 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
       const cnt = contours.get(i);
       const area = cvInst.contourArea(cnt);
       
-      if (area > 20 && area < 3000) {
+      // 调试：记录所有面积大于 10 的轮廓
+      if (area > 10) {
+        console.log(`📎 [去水印-WASM] 潜在轮廓 [${i}], 面积: ${Math.round(area)}`);
+      }
+
+      // 稍微放宽面积过滤条件
+      if (area > 15 && area < 4000) {
         console.log(`✨ [去水印-WASM] 锁定目标轮廓 [${i}], 面积: ${Math.round(area)}`);
-        // 标准 drawContours 参数: 目标Mat, 轮廓向量, 轮廓索引, 颜色, 粗细, 线型, 层次, 最大层级, 偏移量
         cvInst.drawContours(mask, contours, i, whiteScalar, -1, cvInst.LINE_8, hierarchy, 0, offsetPoint);
         watermarkFound = true;
       }
     }
 
     if (!watermarkFound) {
-      console.log(`⚠️ [去水印-WASM] 未发现符合形状的水印，跳过修复`);
+      console.log(`⚠️ [去水印-WASM] 未发现符合形状的水印 (阈值: ${thresholdVal})，跳过修复`);
       src.delete(); roi.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete(); mask.delete();
       return false;
     }
 
-    // 6. 核心：Telea 修复 (4.3.0 JS API 对齐)
+    // 6. 核心：Telea 修复
     console.log(`🛠️ [去水印-WASM] 应用 Telea 修复算法...`);
     let srcRGB = new cvInst.Mat();
-    cvInst.cvtColor(src, srcRGB, cvInst.COLOR_RGBA2RGB);
+    if (info.channels === 4) {
+      cvInst.cvtColor(src, srcRGB, cvInst.COLOR_RGBA2RGB);
+    } else {
+      src.copyTo(srcRGB);
+    }
 
     let dst = new cvInst.Mat();
     cvInst.inpaint(srcRGB, mask, dst, 3, cvInst.INPAINT_TELEA);
