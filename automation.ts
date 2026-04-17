@@ -260,24 +260,50 @@ async function executeWithCDP(tasks: any[], filename: string) {
 
     const checkResultScript = `
         (() => {
-            const messages = document.querySelectorAll('message-content, [data-message-author="model"], model-message, .model-response-text');
+            // 1. 获取模型回复容器
+            const messages = document.querySelectorAll('message-content, [data-message-author="model"], .model-response-text, model-message');
             if (messages.length === 0) return { status: 'no_messages' };
-            for (let i = messages.length - 1; i >= 0; i--) {
-                const msg = messages[i];
-                const img = msg.querySelector('img');
-                if (img) {
-                    const btns = Array.from(msg.querySelectorAll('button, a[download], [role="button"]'));
-                    const downloadBtn = btns.find(b => {
-                        const txt = (b.innerText || b.getAttribute('aria-label') || b.textContent || '').toLowerCase();
-                        return txt.includes('下载') || txt.includes('download') || b.querySelector('mat-icon')?.textContent?.includes('download');
-                    });
-                    if (downloadBtn) {
-                        const rect = downloadBtn.getBoundingClientRect();
-                        return { status: 'found', x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-                    }
-                    return { status: 'img_no_btn' };
-                }
+            
+            // 2. 聚焦最后一条回复
+            const lastMessage = messages[messages.length - 1];
+
+            // 3. 只要最后一条回复里有图片 (不分类型，只要有 img 即可)
+            const images = lastMessage.querySelectorAll('img');
+            
+            // 4. 定位下载按钮 (使用极度精准的固定标识)
+            const allElements = Array.from(lastMessage.querySelectorAll('button, a, [role="button"], [data-test-id], mat-icon'));
+            const downloadBtn = allElements.find(el => {
+                const b = el.closest('button, a, [role="button"]') || el;
+                const html = b.outerHTML.toLowerCase();
+                const text = b.innerText.toLowerCase();
+                const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+                const title = (b.getAttribute('title') || '').toLowerCase();
+                const tooltip = (b.getAttribute('mat-tooltip') || b.getAttribute('data-tooltip') || '').toLowerCase();
+                
+                // 极度精准的固定标识匹配
+                const isMatch = html.includes('下载完整尺寸的图片') || html.includes('download full size') || 
+                               text.includes('下载完整尺寸的图片') || text.includes('download full size') ||
+                               aria.includes('下载完整尺寸的图片') || aria.includes('download full size') ||
+                               title.includes('下载完整尺寸的图片') || title.includes('download full size') ||
+                               tooltip.includes('下载完整尺寸的图片') || tooltip.includes('download full size');
+                
+                const rect = b.getBoundingClientRect();
+                return isMatch && rect.width > 0 && rect.height > 0;
+            });
+
+            if (images.length > 0 && downloadBtn) {
+                const b = downloadBtn.closest('button, a, [role="button"]') || downloadBtn;
+                const rect = b.getBoundingClientRect();
+                return { 
+                    status: 'found', 
+                    x: rect.left + rect.width / 2, 
+                    y: rect.top + rect.height / 2,
+                    imgCount: images.length
+                };
+            } else if (images.length > 0) {
+                return { status: 'img_no_btn', imgCount: images.length };
             }
+
             return { status: 'waiting' };
         })()
     `;
@@ -427,7 +453,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                         const resValue = resultDetect.result?.value;
 
                         if (resValue && resValue.status === 'found') {
-                            console.log(`${stepPrefix} ✅ [SUCCESS] 发现生图结果！正在执行物理点击与 JS 兜底点击...`);
+                            console.log(`${stepPrefix} ✅ [SUCCESS] 发现生图结果 (${resValue.imgCount} 张图)！正在启动下载流程...`);
                             const clickX = Math.floor(resValue.x);
                             const clickY = Math.floor(resValue.y);
                             
@@ -451,7 +477,19 @@ async function executeWithCDP(tasks: any[], filename: string) {
                                 `
                             });
 
-                            await new Promise(r => setTimeout(r, 4000));
+                            // 验证是否触发了下载标识 (根据用户反馈：正在下载完整尺寸的图片 / Downloading full size)
+                            await new Promise(r => setTimeout(r, 2000));
+                            const checkClick = await Runtime.evaluate({
+                                expression: `document.body.innerText.includes('Downloading full size') || document.body.innerText.includes('正在下载完整尺寸的图片')`
+                            });
+                            
+                            if (checkClick.result.value) {
+                                console.log(`${stepPrefix} ✅ UI 响应成功：检测到“正在下载”提示，正在等待文件落盘...`);
+                            } else {
+                                console.log(`${stepPrefix} ⚠️ 点击未见 UI “正在下载”提示，尝试等待文件。`);
+                            }
+                            
+                            await new Promise(r => setTimeout(r, 2000));
                             
                             // 实际的文件移动逻辑
                             const config = await getAutomationConfig();
@@ -469,7 +507,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                                 attempts += 10; 
                             }
                         } else if (resValue?.status === 'img_no_btn') {
-                            if (attempts % 10 === 0) console.log(`${stepPrefix} 🧐 看到图片，等待下载链接就绪...`);
+                            if (attempts % 5 === 0) console.log(`${stepPrefix} 🧐 已看到图片 (${resValue.imgCount}张)，但下载按钮尚未出现，静待渲染...`);
                         }
                     }
 
@@ -956,12 +994,12 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                     const tooltip = (b.getAttribute('mat-tooltip') || '').toLowerCase();
                     const dataTooltip = (b.getAttribute('data-tooltip') || '').toLowerCase();
                     
-                    return html.includes('下载') || html.includes('download') || 
-                           text.includes('下载') || text.includes('download') ||
-                           aria.includes('下载') || aria.includes('download') ||
-                           title.includes('下载') || title.includes('download') ||
-                           tooltip.includes('下载') || tooltip.includes('download') ||
-                           dataTooltip.includes('下载') || dataTooltip.includes('download');
+                    return html.includes('下载完整尺寸的图片') || html.includes('download full size') || 
+                           text.includes('下载完整尺寸的图片') || text.includes('download full size') ||
+                           aria.includes('下载完整尺寸的图片') || aria.includes('download full size') ||
+                           title.includes('下载完整尺寸的图片') || title.includes('download full size') ||
+                           tooltip.includes('下载完整尺寸的图片') || tooltip.includes('download full size') ||
+                           dataTooltip.includes('下载完整尺寸的图片') || dataTooltip.includes('download full size');
                 });
                 const debugInfo = 'DEBUG: 第' + attempts + '次扫描\\n找到图片: ' + images.length + ' 张\\n找到所有按钮: ' + allBtns.length + ' 个\\n匹配到下载按钮: ' + targetBtns.length + ' 个';
                 updateStatus(debugInfo);
@@ -976,7 +1014,9 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
                                     const html = b.outerHTML.toLowerCase();
                                     const text = b.innerText.toLowerCase();
                                     const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-                                    return html.includes('下载') || html.includes('download') || text.includes('下载') || text.includes('download') || aria.includes('下载') || aria.includes('download');
+                                    return html.includes('下载完整尺寸的图片') || html.includes('download full size') || 
+                                           text.includes('下载完整尺寸的图片') || text.includes('download full size') || 
+                                           aria.includes('下载完整尺寸的图片') || aria.includes('download full size');
                                 });
                                 
                                 const btnsToClick = currentBtns.length > 0 ? currentBtns : targetBtns;
