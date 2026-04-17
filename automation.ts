@@ -409,11 +409,25 @@ async function executeWithCDP(tasks: any[], filename: string) {
                                         await smoothMoveAndClick(Input, x, y, true);
                                     }
                                     
-                                    const mod = isMac ? 8 : 2; // Command or Ctrl
-                                    // 模拟按下 V 键
+                                    const modKey = isMac ? 'Meta' : 'Control';
+                                    const modVKeyCode = isMac ? 91 : 17; // Meta or Control
+                                    const mod = isMac ? 8 : 2;
+
+                                    // 1. 按下修饰键 (Ctrl/Cmd)
+                                    await Input.dispatchKeyEvent({ type: 'keyDown', key: modKey, windowsVirtualKeyCode: modVKeyCode });
+                                    await new Promise(r => setTimeout(r, 50));
+
+                                    // 2. 按下并释放 V 键
                                     await Input.dispatchKeyEvent({ type: 'keyDown', modifiers: mod, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 }); 
-                                    await Input.dispatchKeyEvent({ type: 'char', modifiers: mod, text: 'v' }); 
+                                    await new Promise(r => setTimeout(r, 50));
                                     await Input.dispatchKeyEvent({ type: 'keyUp', modifiers: mod, key: 'v', code: 'KeyV', windowsVirtualKeyCode: 86 });
+                                    
+                                    // 3. 释放修饰键
+                                    await new Promise(r => setTimeout(r, 50));
+                                    await Input.dispatchKeyEvent({ type: 'keyUp', key: modKey, windowsVirtualKeyCode: modVKeyCode });
+                                    
+                                    console.log(`${stepPrefix} ✅ 图片粘贴指令已发出，正在等待解析...`);
+                                    // 给图片解析一点时间
                                     await new Promise(r => setTimeout(r, (config.pasteMin || 5) * 1000));
                                 }
                             }
