@@ -157,8 +157,8 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
      */
     if (!watermarkFound) {
       console.log(`📡 [第二阶段] 激活后备方案：高光隔离探测...`);
-      // 这里的 240 是针对近乎纯白的水印，过滤掉对比度较低的背景浮雕
-      cvInst.threshold(gray, binary, 240, 255, cvInst.THRESH_BINARY);
+      // 稍微降低阈值以捕获水印的半透明或抗锯齿边缘 (240 -> 230)
+      cvInst.threshold(gray, binary, 230, 255, cvInst.THRESH_BINARY);
       
       // 更积极的膨胀，合并断裂的白色像素
       let fallbackKernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(5, 5));
@@ -177,7 +177,8 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
 
     // --- 极速膨胀 ---
     let dilatedMask = new cvInst.Mat();
-    let dKernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(7, 7)); // 覆盖尖角阴影
+    // 显著增加膨胀半径 (7x7 -> 15x15)，确保彻底覆盖水印周围的任何残余阴影、光晕或抗锯齿边缘
+    let dKernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(15, 15)); 
     cvInst.dilate(mask, dilatedMask, dKernel);
     
     console.log(`🎭 [星型探测] 修复蒙版大小: ${cvInst.countNonZero(dilatedMask)} 像素`);
@@ -192,7 +193,8 @@ export async function autoInpaint(filePath: string): Promise<boolean> {
     }
 
     let dst = new cvInst.Mat();
-    cvInst.inpaint(srcRGB, dilatedMask, dst, 5, cvInst.INPAINT_TELEA);
+    // 增加修复半径 (5 -> 7) 以获得更平滑的融合效果
+    cvInst.inpaint(srcRGB, dilatedMask, dst, 7, cvInst.INPAINT_TELEA);
 
     // 7. 保存结果
     const processedBuffer = Buffer.from(dst.data);
