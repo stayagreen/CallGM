@@ -380,14 +380,24 @@ async function executeWithCDP(tasks: any[], filename: string) {
                         }
                     }
 
-                    // 4. 输入文字并发送
-                    console.log(`${stepPrefix} ✍️ 逐字模拟拟人化输入...`);
-                    for (const char of task.prompt) {
-                        await Input.dispatchKeyEvent({ type: 'char', text: char });
-                        await new Promise(r => setTimeout(r, Math.random() * 120 + 30));
-                    }
+                    // 4. 高速文本注入 (模拟粘贴)
+                    console.log(`${stepPrefix} ✍️ 正在高速注入提示词 (长文本优化)...`);
+                    const inputPrompt = task.prompt.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+                    const injectScript = `
+                        (() => {
+                            const el = document.querySelector('div[contenteditable="true"], textarea');
+                            if (el) {
+                                el.focus();
+                                // 使用 insertText 模拟粘贴，能触发框架的 input 事件且速度极快
+                                document.execCommand('insertText', false, \`${inputPrompt}\`);
+                                return true;
+                            }
+                            return false;
+                        })()
+                    `;
+                    await Runtime.evaluate({ expression: injectScript });
                     
-                    await new Promise(r => setTimeout(r, 1500));
+                    await new Promise(r => setTimeout(r, 1000));
                     await Input.dispatchKeyEvent({ type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
                     await Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
 
