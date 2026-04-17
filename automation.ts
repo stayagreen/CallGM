@@ -90,7 +90,9 @@ async function ensureBrowserLaunched() {
         `--remote-debugging-port=${port}`,
         `--user-data-dir=${userDataDir}`,
         '--no-first-run',
-        '--no-default-browser-check'
+        '--no-default-browser-check',
+        '--headless=new', // 强制后台运行，不干扰用户操作
+        '--window-size=1280,1024'
     ];
 
     console.log(`📂 执行启动命令: "${chromePath}" ${args.join(' ')}`);
@@ -167,6 +169,8 @@ async function executeWithCDP(tasks: any[], filename: string) {
     const launched = await ensureBrowserLaunched();
     if (!launched) {
          console.error('❌ 无法确保浏览器运行，退出任务。');
+         // 如果无法启动，标记所有任务为失败
+         tasks.forEach(t => t.status = 'failed');
          return tasks;
     }
 
@@ -176,11 +180,16 @@ async function executeWithCDP(tasks: any[], filename: string) {
     let client: any;
     try {
         const targets = await CDP.List({ port: 9222 });
-        let target = targets.find((t: any) => t.url.includes('gemini.google.com') && t.type === 'page');
+        let target = targets.find((t: any) => (t.url.includes('gemini.google.com') || t.url === 'about:blank') && t.type === 'page');
         
         if (!target) {
-            console.log('🌐 未发现 Gemini 标签页，正在创建新标签页...');
+            console.log('🌐 未发现可用标签页，正在创建新标签页...');
             target = await CDP.New({ url: 'https://gemini.google.com/', port: 9222 });
+        } else if (target.url === 'about:blank') {
+            console.log('🌐 发现空标签页，正在导航到 Gemini...');
+            const tempClient = await CDP({ target: target.id, port: 9222 });
+            await tempClient.Page.navigate({ url: 'https://gemini.google.com/' });
+            await tempClient.close();
         }
 
         client = await CDP({ target: target.id, port: 9222 });
