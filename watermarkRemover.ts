@@ -124,56 +124,96 @@ export async function autoInpaint(
     const offsetPoint = new cvInst.Point(roiX, roiY);
 
     /**
-     * 第一阶段：OTSU 自动阈值探测 (原始方案)
-     * 适合水印与背景有一定区分度的情况
+     * 第一阶段：OTSU 自动阈值探测 (标准模式)
+     * 适合水印与背景有明显区分度的情况
      */
     console.log(`📡 [第一阶段] 尝试 OTSU 自动阈值识别...`);
     cvInst.threshold(gray, binary, 0, 255, cvInst.THRESH_BINARY + cvInst.THRESH_OTSU);
-    
-    // 形态学膨胀：让纤细的星角变粗
     let kernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(3, 3));
     cvInst.dilate(binary, binary, kernel);
     cvInst.findContours(binary, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
 
     const checkContours = (stage: string) => {
+      let foundInThisStage = false;
       for (let i = 0; i < contours.size(); ++i) {
         const cnt = contours.get(i);
         const area = cvInst.contourArea(cnt);
         const rect = cvInst.boundingRect(cnt);
         const aspect = rect.width / rect.height;
   
-        if (area >= 35 && area < 4000) {
-          if (aspect > 0.4 && aspect < 2.5) {
+        // 星型水印面积通常在 40-1000 之间 (取决于原图分辨率)
+        if (area >= 30 && area < 5000) {
+          if (aspect > 0.3 && aspect < 3.0) {
             console.log(`✨ [${stage}] 匹配成功！目标 [${i}]: 面积=${Math.round(area)}, 比例=${aspect.toFixed(2)}`);
             cvInst.drawContours(mask, contours, i, whiteScalar, -1, cvInst.LINE_8, hierarchy, 0, offsetPoint);
             watermarkFound = true;
+            foundInThisStage = true;
           }
         }
       }
+      return foundInThisStage;
     };
 
     checkContours("第一阶段");
 
     /**
-     * 第二阶段：高光隔离探测 (后备方案)
-     * 针对白色水印在浅色复杂背景下的情况，通过强制提取极高亮度像素来隔离水印
+     * 第二阶段：局部对比度增强 (CLAHE/拉伸模式)
+     * 针对“光亮背景+淡色水印”导致无法二值化的情况。
+     * 手动拉伸亮部区域的动态范围，强行让水印轮廓浮现。
      */
     if (!watermarkFound) {
-      console.log(`📡 [第二阶段] 激活后备方案：高光隔离探测...`);
-      // 稍微降低阈值以捕获水印的半透明或抗锯齿边缘 (240 -> 230)
-      cvInst.threshold(gray, binary, 230, 255, cvInst.THRESH_BINARY);
+      console.log(`📡 [第二阶段] 激活对比度增强模式 (CLAHE)...`);
+      let clGray = new cvInst.Mat();
+      // 这里不使用内置 CLAHE 以防 WASM 版本不支持，手动进行局部增益处理
+      // 我们对 ROI 进行极端的亮度平衡：找到最亮的和平均亮度，然后拉开差距
+      let minMax = cvInst.minMaxLoc(gray);
+      let alpha = 255 / (minMax.maxVal - minMax.minVal + 1);
+      let beta = -minMax.minVal * alpha;
+      gray.convertTo(clGray, -1, alpha * 1.5, beta); // 激进的对比度系数
       
-      // 更积极的膨胀，合并断裂的白色像素
-      let fallbackKernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(5, 5));
-      cvInst.dilate(binary, binary, fallbackKernel);
-      
+      cvInst.threshold(clGray, binary, 200, 255, cvInst.THRESH_BINARY);
       cvInst.findContours(binary, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
       checkContours("第二阶段");
-      fallbackKernel.delete();
+      clGray.delete();
+    }
+
+    /**
+     * 第三阶段：梯度边缘检测 (Canny/直线骨架模式)
+     * 如果前两阶段的“面”识别都失败（水印完全融入背景色），则通过检测水印的“笔直边缘”来抓取特征。
+     * 星型水印具有非常强烈的几何直线特征。
+     */
+    if (!watermarkFound) {
+      console.log(`📡 [第三阶段] 激活梯度边缘检测 (Canny)...`);
+      let edges = new cvInst.Mat();
+      // 使用 Canny 算子抓取高频边缘，忽略颜色深浅
+      cvInst.Canny(gray, edges, 50, 150, 3);
+      
+      // 对边缘进行一次厚度扩张，让细小的直线连接
+      let edgeKernel = cvInst.getStructuringElement(cvInst.MORPH_RECT, new cvInst.Size(5, 5));
+      cvInst.dilate(edges, edges, edgeKernel);
+      
+      cvInst.findContours(edges, contours, hierarchy, cvInst.RETR_EXTERNAL, cvInst.CHAIN_APPROX_SIMPLE);
+      
+      // 第三阶段的面积判断稍微严格一点，防止误伤自然的纹理
+      for (let i = 0; i < contours.size(); ++i) {
+        const cnt = contours.get(i);
+        const area = cvInst.contourArea(cnt);
+        const rect = cvInst.boundingRect(cnt);
+        const aspect = rect.width / rect.height;
+        
+        // 星型轮廓即便在边缘模式下，宽高比也应接近 1:1
+        if (area >= 60 && area < 2000 && aspect > 0.6 && aspect < 1.6) {
+          console.log(`✨ [第三阶段] 成功通过边缘匹配定位水印！`);
+          cvInst.drawContours(mask, contours, i, whiteScalar, -1, cvInst.LINE_8, hierarchy, 0, offsetPoint);
+          watermarkFound = true;
+        }
+      }
+      edges.delete();
+      edgeKernel.delete();
     }
 
     if (!watermarkFound) {
-      console.log(`⚠️ [星型探测] 经过两个阶段探测均无法定位特征水印。`);
+      console.log(`⚠️ [星型探测] 经过三阶段地毯式搜索，仍无法定位水印特征。`);
       src.delete(); roi.delete(); gray.delete(); binary.delete(); contours.delete(); hierarchy.delete(); mask.delete(); kernel.delete();
       return false;
     }
