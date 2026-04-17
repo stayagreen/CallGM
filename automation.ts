@@ -305,6 +305,28 @@ async function executeWithCDP(tasks: any[], filename: string) {
                     await Runtime.enable();
                     await DOM.enable();
 
+                    // 1.5 设置标准视口与下载行为
+                    try {
+                        await client.send('Emulation.setDeviceMetricsOverride', {
+                            width: 1280,
+                            height: 800,
+                            deviceScaleFactor: 1,
+                            mobile: false
+                        });
+                        
+                        const config = await getAutomationConfig();
+                        const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
+                        if (!fs.existsSync(sysDir)) fs.mkdirSync(sysDir, { recursive: true });
+
+                        await client.send('Page.setDownloadBehavior', {
+                            behavior: 'allow',
+                            downloadPath: sysDir
+                        });
+                        console.log(`${stepPrefix} ⚙️ 已配置视口(1280x800)与下载路径: ${sysDir}`);
+                    } catch (e: any) {
+                        console.warn(`${stepPrefix} ⚠️ 设置视口/下载行为失败:`, e.message);
+                    }
+
                     console.log(`${stepPrefix} 🌐 新标签页已就绪，正在等待页面加载 (8秒)...`);
                     await new Promise(r => setTimeout(r, 8000));
                     await simulateIdleMovement(Input);
@@ -395,19 +417,46 @@ async function executeWithCDP(tasks: any[], filename: string) {
                         const resValue = resultDetect.result?.value;
 
                         if (resValue && resValue.status === 'found') {
-                            console.log(`${stepPrefix} ✅ [SUCCESS] 发现生图结果！正在执行下载点击...`);
-                            await smoothMoveAndClick(Input, resValue.x, resValue.y, true);
+                            console.log(`${stepPrefix} ✅ [SUCCESS] 发现生图结果！正在执行物理点击与 JS 兜底点击...`);
+                            const clickX = Math.floor(resValue.x);
+                            const clickY = Math.floor(resValue.y);
+                            
+                            // 物理模拟点击
+                            await smoothMoveAndClick(Input, clickX, clickY, true);
+                            
+                            // JS 强制点击补位 (防止物理模拟未能触碰正确元素)
+                            await Runtime.evaluate({ 
+                                expression: `
+                                    (() => {
+                                        const el = document.elementFromPoint(${clickX}, ${clickY});
+                                        if (el) {
+                                            const btn = el.closest('button, a[download], [role="button"]') || el;
+                                            if (typeof btn.click === 'function') {
+                                                btn.click();
+                                                return "JS_CLICKED";
+                                            }
+                                        }
+                                        return "JS_NOT_CLICKED";
+                                    })()
+                                `
+                            });
+
                             await new Promise(r => setTimeout(r, 4000));
                             
                             // 实际的文件移动逻辑
+                            const config = await getAutomationConfig();
+                            const timeoutSeconds = config.downloadTimeout || 35; // 默认缩短到 35 秒
                             const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
-                            const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, downloadDir, 60);
+                            const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, downloadDir, timeoutSeconds);
+                            
                             if (movedFiles && movedFiles.length > 0) {
                                 task.downloadedFiles.push(...movedFiles);
                                 task.status = 'completed';
                                 found = true;
                             } else {
-                                console.warn(`${stepPrefix} ⚠️ 点击了下载但未在系统目录发现新文件，尝试继续等待...`);
+                                console.warn(`${stepPrefix} ⚠️ 尝试了下载点击，但未检测到新文件。`);
+                                // 如果已经点击过且失败，我们不再无休止地在 while 循环中重复点击，增加 attempts 消耗
+                                attempts += 10; 
                             }
                         } else if (resValue?.status === 'img_no_btn') {
                             if (attempts % 10 === 0) console.log(`${stepPrefix} 🧐 看到图片，等待下载链接就绪...`);
