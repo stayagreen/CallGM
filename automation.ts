@@ -6,6 +6,7 @@ import { execSync, spawn } from 'child_process';
 import net from 'net';
 import { autoInpaint } from './watermarkRemover.js';
 import CDP from 'chrome-remote-interface';
+import db from './src/db/db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const taskDir = path.join(__dirname, 'task');
@@ -234,7 +235,7 @@ async function smoothMoveAndClick(Input: any, endX: number, endY: number, click:
     }
 }
 
-async function executeWithCDP(tasks: any[], filename: string) {
+async function executeWithCDP(tasks: any[], filename: string, userId?: string | number) {
     const totalLoops = tasks.reduce((acc: number, t: any) => acc + (parseInt(t.count) || 1), 0);
     let completedLoops = 0;
     jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running', message: '🚀 正在初始化引擎...' });
@@ -733,7 +734,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
     return tasks;
 }
 
-async function executeBatch(input: any, filename: string) {
+async function executeBatch(input: any, filename: string, userId?: string | number) {
     const tasks = Array.isArray(input) ? input : (input.tasks || []);
     if (!Array.isArray(tasks) || tasks.length === 0) {
         console.log(`⚠️ 批次 ${filename} 中没有可执行的任务任务。`);
@@ -741,13 +742,13 @@ async function executeBatch(input: any, filename: string) {
     }
 
     const firstExecutor = tasks[0]?.executor || 'cdp';
-    console.log(`📡 任务分发器: 正在使用 [${firstExecutor.toUpperCase()}] 引擎执行批次 ${filename}`);
+    console.log(`📡 任务分发器: 正在使用 [${firstExecutor.toUpperCase()}] 引擎执行批次 ${filename} (User: ${userId || 'global'})`);
     
     let result;
     if (firstExecutor === 'cdp') {
-        result = await executeWithCDP(tasks, filename);
+        result = await executeWithCDP(tasks, filename, userId);
     } else {
-        result = await executeWithPhysicalSimulation(tasks, filename);
+        result = await executeWithPhysicalSimulation(tasks, filename, userId);
     }
 
     if (Array.isArray(input)) {
@@ -802,16 +803,61 @@ export function startAutomationWatcher() {
       for (const { path: filePath, filename } of taskFiles) {
         console.log(`\n📄 开始解析任务文件: ${filename} (位置: ${filePath})`);
         
+        // 使用相对路径作为 Key，确保多用户环境下不冲突
+        const relKey = path.relative(taskDir, filePath).replace(/\\/g, '/');
+        const jobId = filename.replace('.json', '');
+
         // Read task
         const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         
+        // Update DB: Status -> Running
+        try {
+            db.prepare('UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('running', jobId);
+        } catch(e) {}
+
         // Execute task
-        const updatedTaskData = await executeBatch(taskData, filename);
+        const updatedTaskData = await executeBatch(taskData, jobId, taskData.userId);
         
         // Update the file with downloadedFiles info before moving
         if (updatedTaskData) {
             fs.writeFileSync(filePath, JSON.stringify(updatedTaskData, null, 2));
         }
+
+        // Determine final status
+        let finalStatus = 'completed';
+        let resultFiles = [];
+        if (updatedTaskData) {
+            const tasks = Array.isArray(updatedTaskData) ? updatedTaskData : (updatedTaskData.tasks || []);
+            if (tasks.some((t: any) => t.status === 'failed')) finalStatus = 'failed';
+            
+            // Collect all result files
+            tasks.forEach((t: any) => {
+                if (t.downloadedFiles) resultFiles.push(...t.downloadedFiles);
+            });
+        }
+
+        // Register result files in assets table
+        if (resultFiles.length > 0) {
+            for (const file of resultFiles) {
+                try {
+                    db.prepare('INSERT OR IGNORE INTO assets (user_id, job_id, type, file_path) VALUES (?, ?, ?, ?)').run(
+                        taskData.userId || 1, 
+                        jobId, 
+                        'image', 
+                        file.replace(/\\/g, '/')
+                    );
+                } catch(e) {}
+            }
+        }
+
+        // Update DB: Final Status
+        try {
+            db.prepare('UPDATE tasks SET status = ?, progress = 100, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+                finalStatus,
+                JSON.stringify(resultFiles),
+                jobId
+            );
+        } catch(e) {}
         
         // Move to history - 需要确保子目录对应的 history 文件夹存在
         const fileDir = path.dirname(filePath);
@@ -825,7 +871,8 @@ export function startAutomationWatcher() {
         
         // 核心优化：延迟清理内存状态，给 UI 缓冲时间
         setTimeout(() => {
-            jobProgress.delete(filename);
+            jobProgress.delete(relKey);
+            jobProgress.delete(filename); // 兼容旧版
         }, 3000);
 
         console.log('👀 恢复监听新任务...\n');
@@ -953,7 +1000,7 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
     return movedFiles;
 }
 
-async function executeWithPhysicalSimulation(tasks: any, filename: string) {
+async function executeWithPhysicalSimulation(tasks: any, filename: string, userId?: string | number) {
   const totalLoops = tasks.reduce((acc: number, t: any) => acc + t.count, 0);
   let completedLoops = 0;
   jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
@@ -1278,7 +1325,11 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             const timeoutSeconds = Math.floor(getRandomTime(min, max) / 1000);
             
             // 给足等待图片生成和下载
-            const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, downloadDir, timeoutSeconds);
+            // 监控下载
+            const userDownloadDir = userId ? path.join(downloadDir, userId.toString()) : downloadDir;
+            if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
+
+            const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, userDownloadDir, timeoutSeconds);
             if (files && files.length > 0) {
                 task.downloadedFiles.push(...files);
                 console.log(`📦 成功移动 ${files.length} 个文件`);

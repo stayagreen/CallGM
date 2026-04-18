@@ -92,6 +92,101 @@ async function startServer() {
   const dirs = [taskDir, historyDir, downloadDir, uploadsDir, thumbnailsDir, thumbDownloadsDir, thumbUploadsDir, videoTaskDir, videoHistoryDir, videoDownloadDir, videoThumbDir, bgmDir];
   dirs.forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); });
 
+  // Sync function to populate DB from existing files
+  const syncFilesToDb = () => {
+    console.log('🔄 Starting DB sync with existing files...');
+    
+    // Sync Tasks
+    const syncTasks = (baseDir: string, type: string) => {
+        const getJsonFiles = (dir: string): string[] => {
+            let results: string[] = [];
+            if (!fs.existsSync(dir)) return results;
+            const items = fs.readdirSync(dir);
+            for (const item of items) {
+                const fullPath = path.join(dir, item);
+                if (fs.statSync(fullPath).isDirectory()) {
+                    results = [...results, ...getJsonFiles(fullPath)];
+                } else if (item.endsWith('.json')) {
+                    results.push(fullPath);
+                }
+            }
+            return results;
+        };
+
+        const jsonFiles = getJsonFiles(baseDir);
+        for (const filePath of jsonFiles) {
+            try {
+                const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+                const filename = path.basename(filePath);
+                const jobId = filename.replace('.json', '');
+                
+                let userId = data.userId;
+                if (userId === undefined) {
+                    const matches = filename.match(/task_(?:video_)?(\d+)_/);
+                    if (matches) userId = parseInt(matches[1]);
+                }
+                if (!userId) userId = 1; // Default to admin if unknown
+
+                const stat = fs.statSync(filePath);
+                const status = filePath.includes('history') ? 'completed' : 'pending';
+                
+                db.prepare('INSERT OR IGNORE INTO tasks (id, user_id, type, data, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+                    jobId, userId, type, JSON.stringify(data), status, 
+                    stat.birthtime.toISOString(), stat.mtime.toISOString()
+                );
+            } catch(e) {}
+        }
+    };
+
+    syncTasks(taskDir, 'image');
+    syncTasks(videoTaskDir, 'video');
+
+    // Sync Assets
+    const syncAssets = (baseDir: string, type: string, rootDir: string) => {
+        const getFiles = (dir: string): string[] => {
+            let results: string[] = [];
+            if (!fs.existsSync(dir)) return results;
+            const items = fs.readdirSync(dir);
+            for (const item of items) {
+                const fullPath = path.join(dir, item);
+                if (fs.statSync(fullPath).isDirectory()) {
+                    if (item !== 'history') results = [...results, ...getFiles(fullPath)];
+                } else {
+                    const ext = path.extname(item).toLowerCase();
+                    if (type === 'image' && ['.jpg', '.jpeg', '.png', '.webp', '.gif'].includes(ext)) {
+                        results.push(fullPath);
+                    } else if (type === 'video' && ['.mp4', '.webm', '.mov'].includes(ext)) {
+                        results.push(fullPath);
+                    }
+                }
+            }
+            return results;
+        };
+
+        const files = getFiles(baseDir);
+        for (const filePath of files) {
+            try {
+                const relativePath = path.relative(rootDir, filePath).replace(/\\/g, '/');
+                const pathParts = relativePath.split('/');
+                let userId = parseInt(pathParts[0]);
+                if (isNaN(userId)) userId = 1;
+
+                db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(
+                    userId, type, relativePath
+                );
+            } catch(e) {}
+        }
+    };
+
+    syncAssets(downloadDir, 'image', downloadDir);
+    syncAssets(videoDownloadDir, 'video', videoDownloadDir);
+    syncAssets(uploadsDir, 'image', __dirname); // Uploads include the "uploads/" prefix in Assets table
+
+    console.log('✅ DB sync complete.');
+  };
+
+  syncFilesToDb();
+
   // Serve static files
   app.use("/downloads", express.static(downloadDir));
   app.use("/uploads", express.static(uploadsDir));
@@ -124,74 +219,76 @@ async function startServer() {
             const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
             const base64Data = matches[2];
             const filename = `ref_vid_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
+            const relativePath = path.join(user.id.toString(), filename);
             fs.writeFileSync(path.join(userUploadsDir, filename), base64Data, 'base64');
+            
+            // Register upload in assets table
+            try {
+              db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'image', `uploads/${relativePath}`);
+            } catch(e) {}
+
             sb.image = `/uploads/${user.id}/${filename}`;
           }
         }
       });
     }
 
+    const jobId = `task_video_${user.id}_${Date.now()}`;
+    const filename = `${jobId}.json`;
     const userVideoTaskDir = path.join(getUserStoragePath(req, videoTaskDir));
     if (!fs.existsSync(userVideoTaskDir)) fs.mkdirSync(userVideoTaskDir, { recursive: true });
 
-    const filename = `task_video_${Date.now()}.json`;
-    fs.writeFileSync(path.join(userVideoTaskDir, filename), JSON.stringify({ ...taskData, userId: user.id }, null, 2));
-    res.json({ status: "ok", message: "Video task queued", filename });
+    const finalTaskData = { ...taskData, userId: user.id, id: jobId };
+    fs.writeFileSync(path.join(userVideoTaskDir, filename), JSON.stringify(finalTaskData, null, 2));
+
+    // Register job in DB
+    db.prepare('INSERT INTO tasks (id, user_id, type, data, status) VALUES (?, ?, ?, ?, ?)').run(
+      jobId, 
+      user.id, 
+      'video', 
+      JSON.stringify(finalTaskData), 
+      'pending'
+    );
+
+    res.json({ status: "ok", message: "Video task queued", filename, jobId });
   });
 
   // Video Jobs API
   app.get("/api/video/jobs", requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
-    const jobs: any[] = [];
     
-    const readVideoJobsFromDir = (dir: string, defaultStatus: string = 'completed') => {
-      if (!fs.existsSync(dir)) return;
-      const subDirs = [dir];
-      if (user.role === 'admin') {
-          try {
-              const entries = fs.readdirSync(dir);
-              entries.forEach(e => {
-                  const p = path.join(dir, e);
-                  if (fs.statSync(p).isDirectory() && e !== 'history') subDirs.push(p);
-              });
-          } catch(e) {}
-      }
+    let query = 'SELECT * FROM tasks WHERE type = ?';
+    let params: any[] = ['video'];
 
-      for (const d of subDirs) {
-          const files = fs.readdirSync(d).filter(f => f.endsWith('.json'));
-          for (const file of files) {
-            try {
-              const filePath = path.join(d, file);
-              const stat = fs.statSync(filePath);
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              
-              if (user.role !== 'admin' && data.userId !== user.id) continue;
+    if (user.role !== 'admin') {
+      query += ' AND user_id = ?';
+      params.push(user.id);
+    }
 
-              const progressInfo = videoJobProgress.get(file);
-              const status = progressInfo ? progressInfo.status : (data.status || defaultStatus);
-              const progress = progressInfo ? progressInfo.progress : (status === 'completed' ? 100 : 0);
+    query += ' ORDER BY created_at DESC LIMIT 100';
 
-              jobs.push({ 
-                id: file, 
-                timestamp: stat.mtimeMs, 
-                data, 
-                status, 
-                progress,
-                error: progressInfo?.error || data.error
-              });
-            } catch (e) {}
-          }
-      }
-    };
-
-    const userVideoHistoryDir = path.join(getUserStoragePath(req, videoHistoryDir));
-    const userVideoTaskDir = path.join(getUserStoragePath(req, videoTaskDir));
-
-    readVideoJobsFromDir(userVideoHistoryDir, 'completed');
-    readVideoJobsFromDir(userVideoTaskDir, 'pending');
-
-    jobs.sort((a, b) => b.timestamp - a.timestamp);
-    res.json(jobs);
+    try {
+      const rows = db.prepare(query).all(...params) as any[];
+      const jobs = rows.map(row => {
+        const data = JSON.parse(row.data);
+        const progressInfo = videoJobProgress.get(row.id);
+        
+        return {
+          id: row.id,
+          userId: row.user_id,
+          status: progressInfo ? progressInfo.status : row.status,
+          progress: progressInfo ? progressInfo.progress : row.progress,
+          statusMessage: progressInfo ? (progressInfo.error || '') : '',
+          createdAt: row.created_at,
+          ...data,
+          resultFiles: JSON.parse(row.result_files || '[]')
+        };
+      });
+      res.json(jobs);
+    } catch (e) {
+      console.error('Failed to get video jobs from DB', e);
+      res.status(500).json({ error: 'Database error' });
+    }
   });
 
   // Processing Status API (Watermark removal)
@@ -259,13 +356,17 @@ async function startServer() {
   });
 
   // API to save a file to gallery (downloads folder)
-  app.post("/api/gallery/save", (req, res) => {
+  app.post("/api/gallery/save", requireAuth, (req: any, res) => {
+    const user = req.session.user;
     const { url } = req.body;
     if (!url) return res.status(400).json({ error: "URL is required" });
 
     console.log(`[GallerySave] Request to save: ${url.substring(0, 50)}...`);
 
     try {
+      const userDownloadDir = path.join(downloadDir, user.id.toString());
+      if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
+
       if (url.startsWith('data:image')) {
         // Handle base64
         const matches = url.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
@@ -273,10 +374,13 @@ async function startServer() {
           const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
           const base64Data = matches[2];
           const filename = `saved_${Date.now()}_${Math.floor(Math.random()*1000)}.${ext}`;
-          const destPath = path.join(downloadDir, filename);
+          const destPath = path.join(userDownloadDir, filename);
           fs.writeFileSync(destPath, base64Data, 'base64');
-          console.log(`[GallerySave] Base64 saved to: ${destPath}`);
-          return res.json({ status: "ok", filename });
+          
+          const relativePath = path.join(user.id.toString(), filename).replace(/\\/g, '/');
+          db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'image', relativePath);
+
+          return res.json({ status: "ok", filename, url: `/downloads/${relativePath}` });
         }
         return res.status(400).json({ error: "Invalid base64 format" });
       }
@@ -285,29 +389,38 @@ async function startServer() {
       let sourcePath = '';
       
       if (url.startsWith('/uploads/')) {
-        sourcePath = path.join(uploadsDir, filename);
+        // Handle user-specific uploads
+        const uploadFilename = path.basename(url);
+        sourcePath = path.join(uploadsDir, user.role === 'admin' ? '' : user.id.toString(), uploadFilename);
+        if (!fs.existsSync(sourcePath)) {
+            // Try root uploads just in case
+            sourcePath = path.join(uploadsDir, uploadFilename);
+        }
       } else if (url.startsWith('/downloads/')) {
-        sourcePath = path.join(downloadDir, filename);
+        const downloadFilename = path.basename(url);
+        sourcePath = path.join(downloadDir, user.role === 'admin' ? '' : user.id.toString(), downloadFilename);
+        if (!fs.existsSync(sourcePath)) {
+            sourcePath = path.join(downloadDir, downloadFilename);
+        }
       } else {
-        // Try to resolve from filename alone if it's just a name
         sourcePath = path.join(uploadsDir, filename);
         if (!fs.existsSync(sourcePath)) {
           sourcePath = path.join(downloadDir, filename);
         }
       }
 
-      console.log(`[GallerySave] Resolved source path: ${sourcePath}`);
-
       if (!fs.existsSync(sourcePath)) {
-        console.error(`[GallerySave] Source file not found: ${sourcePath}`);
         return res.status(404).json({ error: "Source file not found" });
       }
 
       const newFilename = `saved_${Date.now()}_${filename}`;
-      const destPath = path.join(downloadDir, newFilename);
+      const destPath = path.join(userDownloadDir, newFilename);
       fs.copyFileSync(sourcePath, destPath);
-      console.log(`[GallerySave] File copied to: ${destPath}`);
-      res.json({ status: "ok", filename: newFilename });
+      
+      const relativePath = path.join(user.id.toString(), newFilename).replace(/\\/g, '/');
+      db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'image', relativePath);
+
+      res.json({ status: "ok", filename: newFilename, url: `/downloads/${relativePath}` });
     } catch (e) {
       console.error('[GallerySave] Failed to save to gallery', e);
       res.status(500).json({ error: "Internal server error" });
@@ -332,8 +445,15 @@ async function startServer() {
               const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
               const base64Data = matches[2];
               const filename = `ref_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
+              const relativePath = path.join(user.id.toString(), filename);
               fs.writeFileSync(path.join(userUploadsDir, filename), base64Data, 'base64');
-              return `/uploads/${user.id}/${filename}`; // Adjusting returned URL format
+              
+              // Register upload in assets table
+              try {
+                db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'image', `uploads/${relativePath}`);
+              } catch(e) {}
+
+              return `/uploads/${user.id}/${filename}`;
             }
           }
           return img;
@@ -341,15 +461,27 @@ async function startServer() {
       }
     });
 
-    // Save to JSON file in user-specific task directory
+    // Generate unique ID for the job
+    const jobId = `task_${user.id}_${Date.now()}`;
+    const filename = `${jobId}.json`;
+    
+    // Save to JSON file in user-specific task directory (for the engine to pick up)
     const userTaskDir = path.join(getUserStoragePath(req, taskDir));
     if (!fs.existsSync(userTaskDir)) fs.mkdirSync(userTaskDir, { recursive: true });
-    
-    const filename = `task_${Date.now()}.json`;
     const filePath = path.join(userTaskDir, filename);
-    fs.writeFileSync(filePath, JSON.stringify({ ...req.body, userId: user.id }, null, 2));
+    const taskData = { ...req.body, userId: user.id, id: jobId };
+    fs.writeFileSync(filePath, JSON.stringify(taskData, null, 2));
 
-    res.json({ status: "ok", message: "Tasks queued", filename });
+    // Register job in DB
+    db.prepare('INSERT INTO tasks (id, user_id, type, data, status) VALUES (?, ?, ?, ?, ?)').run(
+      jobId, 
+      user.id, 
+      'image', 
+      JSON.stringify(taskData), 
+      'pending'
+    );
+
+    res.json({ status: "ok", message: "Tasks queued", filename, jobId });
   });
 
   // API route for browser to send debug info
@@ -363,63 +495,39 @@ async function startServer() {
   // API route to get jobs (pending, running, completed)
   app.get("/api/jobs", requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
-    const jobs: any[] = [];
     
-    // Helper to read jobs from a specific directory, filtered by userId
-    const readJobsFromDir = (dir: string, defaultStatus: string = 'completed') => {
-      if (!fs.existsSync(dir)) return;
-      
-      const subDirs = [dir];
-      if (user.role === 'admin') {
-          // Admin sees everything - scan subfolders
-          try {
-              const entries = fs.readdirSync(dir);
-              entries.forEach(e => {
-                  const p = path.join(dir, e);
-                  if (fs.statSync(p).isDirectory() && e !== 'history') subDirs.push(p);
-              });
-          } catch(e) {}
-      }
+    let query = 'SELECT * FROM tasks WHERE type = ?';
+    let params: any[] = ['image'];
 
-      for (const d of subDirs) {
-          const files = fs.readdirSync(d).filter(f => f.endsWith('.json'));
-          for (const file of files) {
-            try {
-              const filePath = path.join(d, file);
-              const stat = fs.statSync(filePath);
-              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              
-              // RBAC Check: Only include if admin or userId matches
-              if (user.role !== 'admin' && data.userId !== user.id) continue;
+    if (user.role !== 'admin') {
+      query += ' AND user_id = ?';
+      params.push(user.id);
+    }
 
-              // 基础状态判定
-              let progress = defaultStatus === 'completed' ? 100 : 0;
-              let jobStatus = (data.status === 'error' || data.status === 'failed') ? 'failed' : defaultStatus;
-              let statusMessage = '';
-              
-              // 内存中的实时状态优先级最高
-              const progressInfo = jobProgress.get(file);
-              if (progressInfo) {
-                 jobStatus = progressInfo.status;
-                 progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
-                 statusMessage = progressInfo.message || '';
-              }
+    query += ' ORDER BY created_at DESC LIMIT 100';
 
-              jobs.push({ id: file, timestamp: stat.mtimeMs, tasks: data.tasks || data, status: jobStatus, progress, statusMessage });
-            } catch (e) {}
-          }
-      }
-    };
-
-    // Correct paths for user-specific directories
-    const userHistoryDir = path.join(getUserStoragePath(req, historyDir));
-    const userTaskDir = path.join(getUserStoragePath(req, taskDir));
-
-    readJobsFromDir(userHistoryDir, 'completed');
-    readJobsFromDir(userTaskDir, 'pending');
-
-    jobs.sort((a, b) => b.timestamp - a.timestamp);
-    res.json(jobs);
+    try {
+      const rows = db.prepare(query).all(...params) as any[];
+      const jobs = rows.map(row => {
+        const data = JSON.parse(row.data);
+        const progressInfo = jobProgress.get(row.id);
+        
+        return {
+          id: row.id,
+          userId: row.user_id,
+          status: progressInfo ? progressInfo.status : row.status,
+          progress: progressInfo ? (progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0) : row.progress,
+          statusMessage: progressInfo ? progressInfo.message : '',
+          createdAt: row.created_at,
+          tasks: data.tasks || data,
+          resultFiles: JSON.parse(row.result_files || '[]')
+        };
+      });
+      res.json(jobs);
+    } catch (e) {
+      console.error('Failed to get jobs from DB', e);
+      res.status(500).json({ error: 'Database error' });
+    }
   });
 
   // API route to batch delete jobs
@@ -428,6 +536,13 @@ async function startServer() {
     if (!Array.isArray(filenames)) return res.status(400).json({error: 'Invalid request'});
     
     for (const file of filenames) {
+      const jobId = file.replace('.json', '');
+      
+      // Delete from DB
+      try {
+        db.prepare('DELETE FROM tasks WHERE id = ?').run(jobId);
+      } catch(e) {}
+
       // Helper to find file in root or subdirs
       const findAndDelete = (baseDir: string, targetFile: string) => {
           const rootPath = path.join(baseDir, targetFile);
@@ -457,6 +572,7 @@ async function startServer() {
 
   const dataDir = path.join(__dirname, "data");
   const templatesPath = path.join(dataDir, "templates.json");
+  const configPath = path.join(dataDir, 'config.json');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
   // API route for templates
@@ -477,8 +593,33 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // API route for config
-  const configPath = path.join(dataDir, 'config.json');
+  // API route for gallery images (with DB permission check)
+  app.get('/api/gallery/:img', requireAuth, (req: any, res) => {
+    const imgName = req.params.img;
+    const user = req.session.user;
+    
+    // Check DB for asset permissions
+    const asset = db.prepare('SELECT * FROM assets WHERE file_path LIKE ?').get(`%${imgName}`) as any;
+    
+    if (asset) {
+      if (user.role !== 'admin' && asset.user_id !== user.id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const fullPath = path.join(__dirname, asset.file_path.startsWith('uploads/') ? '' : 'download', asset.file_path);
+      if (fs.existsSync(fullPath)) {
+        return res.sendFile(fullPath);
+      }
+    }
+
+    // Fallback for user-specific directories if not in DB yet
+    const userPath = path.join(downloadDir, user.role === 'admin' ? '' : user.id.toString(), imgName);
+    if (fs.existsSync(userPath)) {
+       return res.sendFile(userPath);
+    }
+    
+    res.status(404).json({ error: "Image not found" });
+  });
   const oldConfigPath = path.join(__dirname, 'config.json');
   
   // 迁移逻辑
@@ -524,19 +665,24 @@ async function startServer() {
 
   // Get all downloaded images
   app.get('/api/images', requireAuth, checkAccess, (req: any, res) => {
-    const userStoragePath = getUserStoragePath(req, downloadDir);
-    if (!fs.existsSync(userStoragePath)) return res.json([]);
+    const user = req.session.user;
+    
+    let query = 'SELECT * FROM assets WHERE type = ?';
+    let params: any[] = ['image'];
+
+    if (user.role !== 'admin') {
+      query += ' AND user_id = ?';
+      params.push(user.id);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
     try {
-      const files = fs.readdirSync(userStoragePath).filter(f => f.match(/\.(jpg|jpeg|png|webp|gif)$/i));
-      // Sort by modified time descending (newest first)
-      files.sort((a, b) => {
-        const statB = fs.statSync(path.join(userStoragePath, b));
-        const statA = fs.statSync(path.join(userStoragePath, a));
-        return statB.mtimeMs - statA.mtimeMs;
-      });
-      res.json(files);
+      const rows = db.prepare(query).all(...params) as any[];
+      // The frontend expects an array of paths relative to /downloads/
+      res.json(rows.map(row => row.file_path.replace(/\\/g, '/')));
     } catch (err) {
-      console.error('Failed to read images:', err);
+      console.error('Failed to read images from DB:', err);
       res.status(500).json({ error: 'Failed to read images' });
     }
   });
@@ -544,47 +690,23 @@ async function startServer() {
   // Get all downloaded videos
   app.get('/api/videos', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
-    if (!fs.existsSync(videoDownloadDir)) return res.json([]);
-    
+
+    let query = 'SELECT * FROM assets WHERE type = ?';
+    let params: any[] = ['video'];
+
+    if (user.role !== 'admin') {
+      query += ' AND user_id = ?';
+      params.push(user.id);
+    }
+
+    query += ' ORDER BY created_at DESC';
+
     try {
-      const userVideoDir = path.join(getUserStoragePath(req, videoDownloadDir));
-      if (!fs.existsSync(userVideoDir)) return res.json([]);
-
-      // Helper to scan a directory recursively for videos
-      const getVideosInDir = (base: string, relativeRoot: string = "") => {
-          let results: { name: string, path: string, mtime: number }[] = [];
-          if (!fs.existsSync(base)) return results;
-          const items = fs.readdirSync(base);
-          for (const item of items) {
-              const fullPath = path.join(base, item);
-              const relPath = path.join(relativeRoot, item);
-              const stat = fs.statSync(fullPath);
-              if (stat.isDirectory()) {
-                  if (item !== 'history') {
-                    results = [...results, ...getVideosInDir(fullPath, relPath)];
-                  }
-              } else if (item.match(/\.(mp4|webm|mov)$/i)) {
-                  results.push({ name: item, path: relPath, mtime: stat.mtimeMs });
-              }
-          }
-          return results;
-      };
-
-      let videos: { name: string, path: string, mtime: number }[] = [];
-      if (user.role === 'admin') {
-          // Admin sees EVERYTHING
-          videos = getVideosInDir(videoDownloadDir);
-      } else {
-          // User sees only their files
-          videos = getVideosInDir(userVideoDir, user.id.toString());
-      }
-
-      videos.sort((a, b) => b.mtime - a.mtime);
-      
-      // Return relative paths that the frontend can use
-      res.json(videos.map(v => v.path.replace(/\\/g, '/')));
+      const rows = db.prepare(query).all(...params) as any[];
+      // The frontend expects paths relative to /downloads/videos/
+      res.json(rows.map(row => row.file_path.replace(/\\/g, '/')));
     } catch (err) {
-      console.error('Failed to read videos:', err);
+      console.error('Failed to read videos from DB:', err);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -595,6 +717,11 @@ async function startServer() {
     const vidPath = req.params[0]; // Gets the full path after /api/videos/
     
     if (!vidPath) return res.status(400).json({ error: 'Video path required' });
+
+    // Clean up DB
+    try {
+      db.prepare('DELETE FROM assets WHERE file_path = ? AND type = ?').run(vidPath.replace(/\\/g, '/'), 'video');
+    } catch(e) {}
 
     // Ensure users only delete their own
     if (user.role !== 'admin') {

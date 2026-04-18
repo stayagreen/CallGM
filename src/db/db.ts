@@ -24,11 +24,25 @@ db.exec(`
   );
   
   CREATE TABLE IF NOT EXISTS tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL,
-    task_name TEXT NOT NULL,
+    type TEXT NOT NULL, -- 'image' or 'video'
     data TEXT NOT NULL,
     status TEXT DEFAULT 'pending',
+    progress INTEGER DEFAULT 0,
+    result_files TEXT DEFAULT '[]', -- JSON array
+    error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    job_id TEXT,
+    type TEXT NOT NULL, -- 'image' or 'video'
+    file_path TEXT UNIQUE NOT NULL, -- e.g. '1/saved_123.jpg'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
   );

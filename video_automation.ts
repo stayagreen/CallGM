@@ -5,6 +5,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import sharp from 'sharp';
 import { execa } from 'execa';
+import db from './src/db/db.js';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 let FFMPEG_PATH = 'ffmpeg'; // Default to system ffmpeg
@@ -85,15 +86,16 @@ export function startVideoAutomationWatcher(getConcurrency: () => number) {
                 if (activeVideoJobs >= maxConcurrency) break;
                 
                 // Check if already processing
-                if (videoJobProgress.has(filename) && videoJobProgress.get(filename)?.status === 'running') continue;
+                const relKey = path.relative(videoTaskDir, filePath).replace(/\\/g, '/');
+                if (videoJobProgress.has(relKey) && videoJobProgress.get(relKey)?.status === 'running') continue;
 
                 activeVideoJobs++;
-                videoJobProgress.set(filename, { progress: 0, status: 'running' });
+                videoJobProgress.set(relKey, { progress: 0, status: 'running' });
                 
                 // Process async without blocking the loop
-                processVideoTask(filePath, filename).catch(err => {
+                processVideoTask(filePath, relKey).catch(err => {
                     console.error(`❌ 视频任务 ${filename} 失败:`, err);
-                    videoJobProgress.set(filename, { progress: 0, status: 'error', error: err.message });
+                    videoJobProgress.set(relKey, { progress: 0, status: 'error', error: err.message });
                     // Move to history even on error to keep record
                     try {
                         const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -121,10 +123,17 @@ export function startVideoAutomationWatcher(getConcurrency: () => number) {
     }, 3000);
 }
 
-async function processVideoTask(filePath: string, filename: string) {
+async function processVideoTask(filePath: string, jobKey: string) {
+    const filename = path.basename(filePath);
+    const jobId = filename.replace('.json', '');
     const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     const { storyboards, bgm, introAnimation, outroAnimation, userId } = taskData;
     
+    // Update DB: Status -> Running
+    try {
+        db.prepare('UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('running', jobId);
+    } catch(e) {}
+
     // Ensure user directories exist
     const userVideoDownloadDir = userId ? path.join(videoDownloadDir, userId.toString()) : videoDownloadDir;
     const userVideoThumbDir = userId ? path.join(videoThumbDir, userId.toString()) : videoThumbDir;
@@ -180,21 +189,21 @@ async function processVideoTask(filePath: string, filename: string) {
         const clipPath = path.join(videoTaskDir, `temp_${filename}_clip_${i}.mp4`);
         await generateClip(sb, clipPath, targetWidth, targetHeight);
         clipPaths.push(clipPath);
-        videoJobProgress.set(filename, { progress: Math.floor((i / storyboards.length) * 40), status: 'running' });
+        videoJobProgress.set(jobKey, { progress: Math.floor((i / storyboards.length) * 40), status: 'running' });
     }
 
     // 2. Concatenate clips with transitions
     const concatPath = path.join(videoTaskDir, `temp_${filename}_concat.mp4`);
     let finalDuration = 0;
     await concatenateClips(clipPaths, storyboards, concatPath, (p) => {
-        videoJobProgress.set(filename, { progress: 40 + Math.floor(p * 0.4), status: 'running' });
+        videoJobProgress.set(jobKey, { progress: 40 + Math.floor(p * 0.4), status: 'running' });
     }).then(duration => {
         finalDuration = duration;
     });
 
     // 3. Add BGM and Intro/Outro
     await addBgmAndFinalize(concatPath, finalDuration, bgm, introAnimation, outroAnimation, outputPath, (p) => {
-        videoJobProgress.set(filename, { progress: 80 + Math.floor(p * 0.2), status: 'running' });
+        videoJobProgress.set(jobKey, { progress: 80 + Math.floor(p * 0.2), status: 'running' });
     });
 
     // 4. Generate Thumbnail
@@ -216,7 +225,31 @@ async function processVideoTask(filePath: string, filename: string) {
 
     fs.renameSync(filePath, path.join(targetHistoryDir, filename));
     
-    videoJobProgress.set(filename, { progress: 100, status: 'completed' });
+    // Update DB: Final Status and Asset registration
+    const relativeAssetPath = userId ? `${userId}/${outputFilename}` : outputFilename;
+    try {
+        db.prepare('UPDATE tasks SET status = ?, progress = 100, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+            'completed',
+            JSON.stringify([relativeAssetPath]),
+            jobId
+        );
+        
+        db.prepare('INSERT OR IGNORE INTO assets (user_id, job_id, type, file_path) VALUES (?, ?, ?, ?)').run(
+            userId || 1,
+            jobId,
+            'video',
+            relativeAssetPath
+        );
+    } catch(e) {}
+
+    videoJobProgress.set(jobKey, { progress: 100, status: 'completed' });
+    
+    // Cleanup progress map after delay
+    setTimeout(() => {
+        videoJobProgress.delete(jobKey);
+        videoJobProgress.delete(filename); // compat
+    }, 3000);
+
     console.log(`✅ 视频渲染完成: ${outputFilename} (User: ${userId || 'global'})`);
 }
 
