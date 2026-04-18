@@ -204,7 +204,21 @@ async function startServer() {
     }
 
     if (type === 'videos') {
-      const thumbPath = path.join(videoThumbDir, filename);
+      let thumbPath = path.join(videoThumbDir, filename);
+      // If not in root, try searching in subdirectories (UserId subdirs)
+      if (!fs.existsSync(thumbPath)) {
+          try {
+              const subdirs = fs.readdirSync(videoThumbDir);
+              for (const sub of subdirs) {
+                  const subPath = path.join(videoThumbDir, sub, filename);
+                  if (fs.existsSync(subPath)) {
+                      thumbPath = subPath;
+                      break;
+                  }
+              }
+          } catch(e) {}
+      }
+
       if (fs.existsSync(thumbPath)) {
         return res.sendFile(thumbPath);
       } else {
@@ -501,41 +515,102 @@ async function startServer() {
   });
 
   // Get all downloaded videos
-  app.get('/api/videos', (req, res) => {
+  app.get('/api/videos', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
     if (!fs.existsSync(videoDownloadDir)) return res.json([]);
+    
     try {
-      const files = fs.readdirSync(videoDownloadDir).filter(f => f.match(/\.(mp4|webm|mov)$/i));
-      files.sort((a, b) => {
-        return fs.statSync(path.join(videoDownloadDir, b)).mtimeMs - fs.statSync(path.join(videoDownloadDir, a)).mtimeMs;
-      });
-      res.json(files);
+      const userVideoDir = path.join(getUserStoragePath(req, videoDownloadDir));
+      if (!fs.existsSync(userVideoDir)) return res.json([]);
+
+      // Helper to scan a directory recursively for videos
+      const getVideosInDir = (base: string, relativeRoot: string = "") => {
+          let results: { name: string, path: string, mtime: number }[] = [];
+          const items = fs.readdirSync(base);
+          for (const item of items) {
+              const fullPath = path.join(base, item);
+              const relPath = path.join(relativeRoot, item);
+              const stat = fs.statSync(fullPath);
+              if (stat.isDirectory()) {
+                  // Only admin scans subfolders for general exploration if needed, 
+                  // but for the simple list we just flatten or specific subfolders.
+                  results = [...results, ...getVideosInDir(fullPath, relPath)];
+              } else if (item.match(/\.(mp4|webm|mov)$/i)) {
+                  results.push({ name: item, path: relPath, mtime: stat.mtimeMs });
+              }
+          }
+          return results;
+      };
+
+      let videos: { name: string, path: string, mtime: number }[] = [];
+      if (user.role === 'admin') {
+          // Admin sees EVERYTHING
+          videos = getVideosInDir(videoDownloadDir);
+      } else {
+          // User sees only their files
+          videos = getVideosInDir(userVideoDir, user.id.toString());
+      }
+
+      videos.sort((a, b) => b.mtime - a.mtime);
+      
+      // Return relative paths that the frontend can use
+      res.json(videos.map(v => v.path.replace(/\\/g, '/')));
     } catch (err) {
+      console.error('Failed to read videos:', err);
       res.status(500).json({ error: 'Failed to read videos' });
     }
   });
 
   // Delete a downloaded video
-  app.delete('/api/videos/:filename', (req, res) => {
-    const filename = req.params.filename;
-    const filePath = path.join(videoDownloadDir, filename);
-    const thumbPath = path.join(videoThumbDir, filename.replace(/\.[^/.]+$/, ".jpg"));
+  app.delete('/api/videos/:user_id?/:filename', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    const { user_id, filename } = req.params;
+    
+    // If user_id is provided, use it (if admin or self)
+    const targetUserId = user_id || (user.role === 'admin' ? null : user.id.toString());
+    
+    if (user.role !== 'admin' && targetUserId && targetUserId !== user.id.toString()) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    let filePath = '';
+    let thumbPath = '';
+    
+    if (targetUserId) {
+        filePath = path.join(videoDownloadDir, targetUserId, filename);
+        thumbPath = path.join(videoThumbDir, targetUserId, filename.replace(/\.[^/.]+$/, ".jpg"));
+    } else {
+        // Admin trying to delete from root (if any left)
+        filePath = path.join(videoDownloadDir, filename);
+        thumbPath = path.join(videoThumbDir, filename.replace(/\.[^/.]+$/, ".jpg"));
+    }
+
     if (fs.existsSync(filePath)) {
       try {
         fs.unlinkSync(filePath);
         if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
         
         // Also try to find and delete the associated job history file
-        if (fs.existsSync(videoHistoryDir)) {
-          const historyFiles = fs.readdirSync(videoHistoryDir);
-          for (const file of historyFiles) {
-            try {
-              const jobPath = path.join(videoHistoryDir, file);
-              const taskData = JSON.parse(fs.readFileSync(jobPath, 'utf-8'));
-              if (taskData.outputVideo === filename) {
-                fs.unlinkSync(jobPath);
+        // Since we don't know exactly where history is without scanning, we scan all
+        const allHistoryDirs = [videoHistoryDir];
+        try {
+            const subs = fs.readdirSync(videoHistoryDir).filter(f => fs.statSync(path.join(videoHistoryDir,f)).isDirectory());
+            subs.forEach(s => allHistoryDirs.push(path.join(videoHistoryDir, s)));
+        } catch(e) {}
+
+        for (const hDir of allHistoryDirs) {
+            if (fs.existsSync(hDir)) {
+              const historyFiles = fs.readdirSync(hDir).filter(f => f.endsWith('.json'));
+              for (const file of historyFiles) {
+                try {
+                  const jobPath = path.join(hDir, file);
+                  const taskData = JSON.parse(fs.readFileSync(jobPath, 'utf-8'));
+                  if (taskData.outputVideo === filename) {
+                    fs.unlinkSync(jobPath);
+                  }
+                } catch (e) {}
               }
-            } catch (e) {}
-          }
+            }
         }
         
         res.json({ success: true });

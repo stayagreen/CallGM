@@ -123,11 +123,18 @@ export function startVideoAutomationWatcher(getConcurrency: () => number) {
 
 async function processVideoTask(filePath: string, filename: string) {
     const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    const { storyboards, bgm, introAnimation, outroAnimation } = taskData;
+    const { storyboards, bgm, introAnimation, outroAnimation, userId } = taskData;
     
+    // Ensure user directories exist
+    const userVideoDownloadDir = userId ? path.join(videoDownloadDir, userId.toString()) : videoDownloadDir;
+    const userVideoThumbDir = userId ? path.join(videoThumbDir, userId.toString()) : videoThumbDir;
+    
+    if (!fs.existsSync(userVideoDownloadDir)) fs.mkdirSync(userVideoDownloadDir, { recursive: true });
+    if (!fs.existsSync(userVideoThumbDir)) fs.mkdirSync(userVideoThumbDir, { recursive: true });
+
     const outputFilename = `video_${Date.now()}.mp4`;
-    const outputPath = path.join(videoDownloadDir, outputFilename);
-    const thumbPath = path.join(videoThumbDir, outputFilename.replace('.mp4', '.jpg'));
+    const outputPath = path.join(userVideoDownloadDir, outputFilename);
+    const thumbPath = path.join(userVideoThumbDir, outputFilename.replace('.mp4', '.jpg'));
 
     // Determine target resolution based on first image (1080p default)
     let targetWidth = 1920;
@@ -210,7 +217,7 @@ async function processVideoTask(filePath: string, filename: string) {
     fs.renameSync(filePath, path.join(targetHistoryDir, filename));
     
     videoJobProgress.set(filename, { progress: 100, status: 'completed' });
-    console.log(`✅ 视频渲染完成: ${outputFilename}`);
+    console.log(`✅ 视频渲染完成: ${outputFilename} (User: ${userId || 'global'})`);
 }
 
 async function generateClip(sb: any, outputPath: string, targetWidth: number, targetHeight: number): Promise<void> {

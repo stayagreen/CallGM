@@ -734,14 +734,27 @@ async function executeWithCDP(tasks: any[], filename: string) {
     return tasks;
 }
 
-async function executeBatch(tasks: any[], filename: string) {
+async function executeBatch(input: any, filename: string) {
+    const tasks = Array.isArray(input) ? input : (input.tasks || []);
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+        console.log(`⚠️ 批次 ${filename} 中没有可执行的任务任务。`);
+        return input;
+    }
+
     const firstExecutor = tasks[0]?.executor || 'cdp';
     console.log(`📡 任务分发器: 正在使用 [${firstExecutor.toUpperCase()}] 引擎执行批次 ${filename}`);
     
+    let result;
     if (firstExecutor === 'cdp') {
-        return await executeWithCDP(tasks, filename);
+        result = await executeWithCDP(tasks, filename);
     } else {
-        return await executeWithPhysicalSimulation(tasks, filename);
+        result = await executeWithPhysicalSimulation(tasks, filename);
+    }
+
+    if (Array.isArray(input)) {
+        return result;
+    } else {
+        return { ...input, tasks: result };
     }
 }
 
