@@ -656,10 +656,15 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                             const config = await getAutomationConfig();
                             const timeoutSeconds = parseConfigNumber(config.downloadTimeout, 35); // 默认缩短到 35 秒
                             const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
-                            const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, downloadDir, timeoutSeconds);
+                            const userDownloadDir = userId ? path.join(downloadDir, userId.toString()) : downloadDir;
+                            if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
+                            
+                            const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, userDownloadDir, timeoutSeconds);
                             
                             if (movedFiles && movedFiles.length > 0) {
-                                task.downloadedFiles.push(...movedFiles);
+                                // Important: make sure we push the relative path to db (like "1/Gemini_xxx.jpg")
+                                const prefixedFiles = userId ? movedFiles.map(f => path.join(userId.toString(), f).replace(/\\/g, '/')) : movedFiles;
+                                task.downloadedFiles.push(...prefixedFiles);
                                 task.status = 'completed';
                                 found = true;
                             } else {
@@ -872,7 +877,7 @@ export function startAutomationWatcher() {
         // 核心优化：延迟清理内存状态，给 UI 缓冲时间
         setTimeout(() => {
             jobProgress.delete(relKey);
-            jobProgress.delete(filename); // 兼容旧版
+            jobProgress.delete(jobId);
         }, 3000);
 
         console.log('👀 恢复监听新任务...\n');
@@ -1331,7 +1336,8 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
 
             const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, userDownloadDir, timeoutSeconds);
             if (files && files.length > 0) {
-                task.downloadedFiles.push(...files);
+                const prefixedFiles = userId ? files.map(f => path.join(userId.toString(), f).replace(/\\/g, '/')) : files;
+                task.downloadedFiles.push(...prefixedFiles);
                 console.log(`📦 成功移动 ${files.length} 个文件`);
                 task.status = 'completed';
             } else {
@@ -1347,7 +1353,12 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
 
         console.log('✅ 当前任务彻底执行完毕！准备进入下一个任务。');
         completedLoops++;
-        jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+        // Identify if it's the final loop
+        if (completedLoops >= totalLoops) {
+            jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'completed' });
+        } else {
+            jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
+        }
         
         // 使用配置的任务间隔时间
         await new Promise(r => setTimeout(r, getRandomTime(config.taskMin, config.taskMax)));
