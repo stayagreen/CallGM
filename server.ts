@@ -279,8 +279,8 @@ async function startServer() {
           status: progressInfo ? progressInfo.status : row.status,
           progress: progressInfo ? progressInfo.progress : row.progress,
           statusMessage: progressInfo ? (progressInfo.error || '') : '',
-          createdAt: row.created_at,
-          ...data,
+          timestamp: new Date(row.created_at).getTime(),
+          data: data,
           resultFiles: JSON.parse(row.result_files || '[]')
         };
       });
@@ -517,9 +517,9 @@ async function startServer() {
           userId: row.user_id,
           status: progressInfo ? progressInfo.status : row.status,
           progress: progressInfo ? (progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0) : row.progress,
-          statusMessage: progressInfo ? progressInfo.message : '',
-          createdAt: row.created_at,
-          tasks: data.tasks || data,
+          statusMessage: progressInfo ? (progressInfo.message || '') : '',
+          timestamp: new Date(row.created_at).getTime(),
+          tasks: data.tasks || (Array.isArray(data) ? data : []),
           resultFiles: JSON.parse(row.result_files || '[]')
         };
       });
