@@ -137,7 +137,7 @@ async function ensureBrowserLaunched() {
         `--user-data-dir=${userDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
-        // '--headless=new', // 临时禁用，以便用户显式观察执行过程
+        '--headless=new',
         '--window-size=1280,1024',
         '--disable-gpu',
         '--disable-dev-shm-usage',

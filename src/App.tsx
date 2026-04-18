@@ -270,12 +270,6 @@ export default function App() {
       alert('您的浏览器不支持语音输入 (请尝试使用 Chrome 浏览器)');
       return;
     }
-    
-    // Trigger haptic feedback when pressing to talk
-    if (navigator.vibrate) {
-      navigator.vibrate(50);
-    }
-    
     try {
       recognitionRef.current.start();
       setIsRecording(true);
@@ -857,28 +851,25 @@ export default function App() {
 
         <div className="relative mb-6">
           <textarea
-            className="w-full p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+            className="w-full p-4 pr-12 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
             placeholder="输入提示词..."
             rows={4}
             value={activeTask?.prompt || ''}
             onChange={(e) => updateTask({ prompt: e.target.value })}
           />
-          
-          <div className="flex justify-center mt-3">
-            <button 
-              onMouseDown={startRecording}
-              onMouseUp={stopRecording}
-              onMouseLeave={stopRecording}
-              onTouchStart={startRecording}
-              onTouchEnd={stopRecording}
-              onTouchCancel={stopRecording}
-              onContextMenu={(e) => e.preventDefault()}
-              className={`w-full py-3 rounded-lg font-bold text-lg select-none touch-none transition-all shadow-sm flex items-center justify-center gap-2 border ${isRecording ? 'bg-gray-300 text-gray-800 border-gray-400' : 'bg-gray-100 text-gray-700 border-gray-200 active:bg-gray-200'}`}
-            >
-              {isRecording ? <Mic className="animate-pulse text-red-500" /> : <Mic />}
-              {isRecording ? '松开 结束' : '按住 说话'}
-            </button>
-          </div>
+          <button 
+            onMouseDown={startRecording}
+            onMouseUp={stopRecording}
+            onMouseLeave={stopRecording}
+            onTouchStart={startRecording}
+            onTouchEnd={stopRecording}
+            onTouchCancel={stopRecording}
+            onContextMenu={(e) => e.preventDefault()}
+            className={`absolute right-3 bottom-3 p-2 rounded-full transition shadow-sm select-none touch-none ${isRecording ? 'bg-red-500 text-white animate-pulse scale-110' : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-blue-500'}`}
+            title="按压即说"
+          >
+            {isRecording ? <Mic /> : <MicOff />}
+          </button>
         </div>
 
         <div className="mb-6">
