@@ -1,3 +1,4 @@
+process.env.TZ = 'Asia/Shanghai';
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -180,7 +181,14 @@ async function startServer() {
 
     syncAssets(downloadDir, 'image', downloadDir);
     syncAssets(videoDownloadDir, 'video', videoDownloadDir);
-    syncAssets(uploadsDir, 'image', __dirname); // Uploads include the "uploads/" prefix in Assets table
+    syncAssets(uploadsDir, 'upload', __dirname); // Uploads include the "uploads/" prefix in Assets table
+
+    try {
+        // Fix existing broken gallery images by converting 'uploads/...' records to 'upload' type instead of 'image'
+        db.prepare("UPDATE assets SET type = 'upload' WHERE file_path LIKE 'uploads/%' AND type = 'image'").run();
+    } catch(e) {
+        console.error("Failed to migrate asset types", e);
+    }
 
     console.log('✅ DB sync complete.');
   };
@@ -224,7 +232,7 @@ async function startServer() {
             
             // Register upload in assets table
             try {
-              db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'image', `uploads/${relativePath}`);
+              db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'upload', `uploads/${relativePath}`);
             } catch(e) {}
 
             sb.image = `/uploads/${user.id}/${filename}`;
@@ -279,7 +287,7 @@ async function startServer() {
           status: progressInfo ? progressInfo.status : row.status,
           progress: progressInfo ? progressInfo.progress : row.progress,
           statusMessage: progressInfo ? (progressInfo.error || '') : '',
-          timestamp: new Date(row.created_at).getTime(),
+          timestamp: new Date(row.created_at.endsWith('Z') ? row.created_at : row.created_at.replace(' ', 'T') + 'Z').getTime(),
           data: data,
           resultFiles: JSON.parse(row.result_files || '[]')
         };
@@ -455,7 +463,7 @@ async function startServer() {
               
               // Register upload in assets table
               try {
-                db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'image', `uploads/${relativePath}`);
+                db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'upload', `uploads/${relativePath}`);
               } catch(e) {}
 
               return `/uploads/${user.id}/${filename}`;
@@ -523,7 +531,7 @@ async function startServer() {
           status: progressInfo ? progressInfo.status : row.status,
           progress: progressInfo ? (progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0) : row.progress,
           statusMessage: progressInfo ? (progressInfo.message || '') : '',
-          timestamp: new Date(row.created_at).getTime(),
+          timestamp: new Date(row.created_at.endsWith('Z') ? row.created_at : row.created_at.replace(' ', 'T') + 'Z').getTime(),
           tasks: data.tasks || (Array.isArray(data) ? data : []),
           resultFiles: JSON.parse(row.result_files || '[]')
         };
@@ -876,6 +884,12 @@ async function startServer() {
         const buffer = Buffer.from(data, 'base64');
         const filename = `upload_${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
         fs.writeFileSync(path.join(userStoragePath, filename), buffer);
+        
+        try {
+            const relativePath = path.join(user.id.toString(), filename).replace(/\\/g, '/');
+            db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'image', relativePath);
+        } catch(e) {}
+        
         savedFiles.push(filename);
       } catch (e) {
         console.error('Failed to save uploaded image:', e);

@@ -1532,16 +1532,16 @@ function MainApp() {
                     </button>
                   </div>
 
-                  {job.status === 'completed' && job.data.outputVideo && (
+                  {((job.status === 'completed' && job.data.outputVideo) || (job.status === 'completed' && job.resultFiles && job.resultFiles.length > 0)) && (
                     <div className="mt-4 flex gap-3">
                       <button 
-                        onClick={() => setViewingVideo(`/downloads/videos/${job.data.outputVideo}`)}
+                        onClick={() => setViewingVideo(`/downloads/videos/${job.data.outputVideo || job.resultFiles[0]}`)}
                         className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg font-medium hover:bg-blue-100 transition"
                       >
                         <PlayCircle size={16}/> 预览视频
                       </button>
                       <a 
-                        href={`/downloads/videos/${job.data.outputVideo}`} 
+                        href={`/downloads/videos/${job.data.outputVideo || job.resultFiles[0]}`} 
                         download
                         className="flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg font-medium hover:bg-gray-100 transition border border-gray-200"
                       >
