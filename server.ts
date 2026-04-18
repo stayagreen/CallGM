@@ -144,7 +144,7 @@ async function startServer() {
     const user = req.session.user;
     const jobs: any[] = [];
     
-    const readVideoJobsFromDir = (dir: string, currentStatus?: string) => {
+    const readVideoJobsFromDir = (dir: string, defaultStatus: string = 'completed') => {
       if (!fs.existsSync(dir)) return;
       const subDirs = [dir];
       if (user.role === 'admin') {
@@ -168,12 +168,15 @@ async function startServer() {
               if (user.role !== 'admin' && data.userId !== user.id) continue;
 
               const progressInfo = videoJobProgress.get(file);
+              const status = progressInfo ? progressInfo.status : (data.status || defaultStatus);
+              const progress = progressInfo ? progressInfo.progress : (status === 'completed' ? 100 : 0);
+
               jobs.push({ 
                 id: file, 
                 timestamp: stat.mtimeMs, 
                 data, 
-                status: progressInfo ? progressInfo.status : (data.status || 'completed'), 
-                progress: progressInfo ? progressInfo.progress : (data.status === 'error' ? 0 : 100),
+                status, 
+                progress,
                 error: progressInfo?.error || data.error
               });
             } catch (e) {}
@@ -184,8 +187,8 @@ async function startServer() {
     const userVideoHistoryDir = path.join(getUserStoragePath(req, videoHistoryDir));
     const userVideoTaskDir = path.join(getUserStoragePath(req, videoTaskDir));
 
-    readVideoJobsFromDir(userVideoHistoryDir);
-    readVideoJobsFromDir(userVideoTaskDir);
+    readVideoJobsFromDir(userVideoHistoryDir, 'completed');
+    readVideoJobsFromDir(userVideoTaskDir, 'pending');
 
     jobs.sort((a, b) => b.timestamp - a.timestamp);
     res.json(jobs);
@@ -363,7 +366,7 @@ async function startServer() {
     const jobs: any[] = [];
     
     // Helper to read jobs from a specific directory, filtered by userId
-    const readJobsFromDir = (dir: string, statusOverride?: string) => {
+    const readJobsFromDir = (dir: string, defaultStatus: string = 'completed') => {
       if (!fs.existsSync(dir)) return;
       
       const subDirs = [dir];
@@ -389,17 +392,17 @@ async function startServer() {
               // RBAC Check: Only include if admin or userId matches
               if (user.role !== 'admin' && data.userId !== user.id) continue;
 
-              let progress = 100;
-              let jobStatus = statusOverride || (data.status === 'error' ? 'failed' : 'completed');
+              // 基础状态判定
+              let progress = defaultStatus === 'completed' ? 100 : 0;
+              let jobStatus = (data.status === 'error' || data.status === 'failed') ? 'failed' : defaultStatus;
               let statusMessage = '';
               
-              if (!statusOverride) {
-                 const progressInfo = jobProgress.get(file);
-                 if (progressInfo) {
-                    jobStatus = progressInfo.status;
-                    progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
-                    statusMessage = progressInfo.message || '';
-                 }
+              // 内存中的实时状态优先级最高
+              const progressInfo = jobProgress.get(file);
+              if (progressInfo) {
+                 jobStatus = progressInfo.status;
+                 progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
+                 statusMessage = progressInfo.message || '';
               }
 
               jobs.push({ id: file, timestamp: stat.mtimeMs, tasks: data.tasks || data, status: jobStatus, progress, statusMessage });
@@ -412,8 +415,8 @@ async function startServer() {
     const userHistoryDir = path.join(getUserStoragePath(req, historyDir));
     const userTaskDir = path.join(getUserStoragePath(req, taskDir));
 
-    readJobsFromDir(userHistoryDir);
-    readJobsFromDir(userTaskDir);
+    readJobsFromDir(userHistoryDir, 'completed');
+    readJobsFromDir(userTaskDir, 'pending');
 
     jobs.sort((a, b) => b.timestamp - a.timestamp);
     res.json(jobs);

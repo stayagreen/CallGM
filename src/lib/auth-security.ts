@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import path from 'path';
 
 // 定义权限校验中间件
 export const checkAccess = (req: any, res: Response, next: NextFunction) => {
@@ -27,6 +28,5 @@ export const getUserStoragePath = (req: any, basePath: string) => {
   if (user.role === 'admin') return basePath;
   
   // 返回相对于根路径加上用户ID
-  const path = require('path');
   return path.join(basePath, user.id.toString());
 };

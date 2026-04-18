@@ -112,7 +112,6 @@ async function ensureBrowserLaunched() {
     try {
         const isWin = process.platform === 'win32';
         const killCmd = isWin ? 'taskkill /F /IM chrome.exe /T' : 'pkill -f chrome';
-        const { execSync } = require('child_process');
         try {
             execSync(killCmd, { stdio: 'ignore' });
             console.log(`   👉 已尝试清理 Chrome 相关线程。`);

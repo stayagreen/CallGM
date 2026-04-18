@@ -87,7 +87,7 @@ const JobItem = React.memo(({
                   {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
                   {job.status === 'pending' && <Clock size={14} />}
                   {job.status === 'failed' && <X size={14} />}
-                  {job.status === 'completed' ? '已完成' : job.status === 'running' ? '执行中' : job.status === 'failed' ? '执行失败' : '排队中'}
+                  {job.status === 'completed' ? '已完成' : job.status === 'running' ? '执行中' : job.status === 'failed' ? '执行失败' : '待执行'}
                 </span>
               </div>
               <div className="text-sm text-gray-500 font-medium flex items-center gap-1">
@@ -1463,7 +1463,7 @@ function MainApp() {
                         {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
                         {job.status === 'pending' && <Clock size={14} />}
                         {job.status === 'error' && <X size={14} />}
-                        {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '排队中'}
+                        {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
                       </span>
                     </div>
                     <button 
