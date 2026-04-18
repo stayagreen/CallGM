@@ -788,6 +788,7 @@ export function handleBrowserDebug(msg: string) {
 }
 
 async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string, maxWaitSeconds: number = 130): Promise<string[]> {
+    console.log(`[DEBUG] waitForAndMoveDownloads called with maxWaitSeconds: ${maxWaitSeconds} seconds`);
     console.log(`\n⏳ 开始死守系统下载目录，等待图片出现: ${systemDownloadsDir}`);
     let attempts = 0;
     const movedFiles: string[] = [];
