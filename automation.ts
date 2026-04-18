@@ -750,38 +750,58 @@ export function startAutomationWatcher() {
     isRunning = true;
 
     try {
-      const files = fs.readdirSync(taskDir);
-      const taskFiles = files.filter(f => f.endsWith('.json') && fs.statSync(path.join(taskDir, f)).isFile());
+      // 获取所有任务目录（根 taskDir 和所有用户子目录）
+      let allDirs = [taskDir];
+      try {
+        const subDirs = fs.readdirSync(taskDir).filter(f => {
+            const fullPath = path.join(taskDir, f);
+            return fs.statSync(fullPath).isDirectory() && f !== 'history';
+        });
+        allDirs = [...allDirs, ...subDirs.map(sd => path.join(taskDir, sd))];
+      } catch (e) {}
+
+      const taskFiles: { path: string, filename: string }[] = [];
+      
+      for (const dir of allDirs) {
+          const files = fs.readdirSync(dir);
+          files.filter(f => f.endsWith('.json') && fs.statSync(path.join(dir, f)).isFile()).forEach(f => {
+              taskFiles.push({ path: path.join(dir, f), filename: f });
+          });
+      }
 
       if (taskFiles.length > 0) {
-          console.log(`\n🔔 [${new Date().toLocaleTimeString()}] 检测到 ${taskFiles.length} 个新任务文件！准备开始执行...`);
+          console.log(`\n🔔 [${new Date().toLocaleTimeString()}] 检测到 ${taskFiles.length} 个任务文件！准备开始执行...`);
       } else {
-          // 每 60 秒打印一次心跳日志，让用户知道脚本还在正常工作
+          // 每 60 秒打印一次心跳日志
           if (Date.now() - lastHeartbeat > 60000) {
               console.log(`⏳ [${new Date().toLocaleTimeString()}] 自动化引擎持续监听中... (暂无新任务)`);
               lastHeartbeat = Date.now();
           }
       }
 
-      for (const file of taskFiles) {
-        const filePath = path.join(taskDir, file);
-        console.log(`\n📄 开始解析任务文件: ${file}`);
+      for (const { path: filePath, filename } of taskFiles) {
+        console.log(`\n📄 开始解析任务文件: ${filename} (位置: ${filePath})`);
         
         // Read task
         const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
         
         // Execute task
-        const updatedTaskData = await executeBatch(taskData, file);
+        const updatedTaskData = await executeBatch(taskData, filename);
         
         // Update the file with downloadedFiles info before moving
         if (updatedTaskData) {
             fs.writeFileSync(filePath, JSON.stringify(updatedTaskData, null, 2));
         }
         
-        // Move to history
-        const historyPath = path.join(historyDir, file);
+        // Move to history - 需要确保子目录对应的 history 文件夹存在
+        const fileDir = path.dirname(filePath);
+        const relativeSubDir = path.relative(taskDir, fileDir);
+        const targetHistoryDir = path.join(historyDir, relativeSubDir);
+        if (!fs.existsSync(targetHistoryDir)) fs.mkdirSync(targetHistoryDir, { recursive: true });
+        
+        const historyPath = path.join(targetHistoryDir, filename);
         fs.renameSync(filePath, historyPath);
-        console.log(`✅ 任务文件 ${file} 已全部执行完毕，并归档到 history 目录。`);
+        console.log(`✅ 任务文件 ${filename} 已全部执行完毕，并归档到 ${targetHistoryDir}。`);
         console.log('👀 恢复监听新任务...\n');
         lastHeartbeat = Date.now(); // 任务完成后重置心跳计时
       }
