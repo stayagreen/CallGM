@@ -612,19 +612,25 @@ async function executeWithCDP(tasks: any[], filename: string) {
                             });
 
                             // 验证是否触发了下载标识 (根据用户反馈：正在下载完整尺寸的图片 / Downloading full size)
-                            await new Promise(r => setTimeout(r, 2000));
-                            const checkClick = await Runtime.evaluate({
-                                expression: `document.body.innerText.includes('Downloading full size') || document.body.innerText.includes('正在下载完整尺寸的图片')`
-                            });
+                            let downloadDetected = false;
+                            for (let poll = 0; poll < 10; poll++) { // 最多轮询 10 秒
+                                const checkClick = await Runtime.evaluate({
+                                    expression: `document.body.innerText.includes('Downloading full size') || document.body.innerText.includes('正在下载完整尺寸的图片')`
+                                });
+                                
+                                if (checkClick.result && checkClick.result.value) {
+                                    downloadDetected = true;
+                                    break;
+                                }
+                                await new Promise(r => setTimeout(r, 1000));
+                            }
                             
-                            if (checkClick.result.value) {
+                            if (downloadDetected) {
                                 console.log(`${stepPrefix} ✅ UI 响应成功：检测到“正在下载”提示，正在等待文件落盘...`);
                                 jobProgress.set(filename, { completed: completedLoops + 0.9, total: totalLoops, status: 'running', message: '⬇️ 正在下载完整尺寸图片...' });
                             } else {
-                                console.log(`${stepPrefix} ⚠️ 点击未见 UI “正在下载”提示，尝试等待文件趋势。`);
+                                console.log(`${stepPrefix} ⚠️ 点击后多次尝试仍未见 UI “正在下载”提示，尝试等待文件趋势。`);
                             }
-                            
-                            await new Promise(r => setTimeout(r, 2000));
                             
                             // 实际的文件移动逻辑
                             const config = await getAutomationConfig();
