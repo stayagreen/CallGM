@@ -23,9 +23,10 @@ export const getUserStoragePath = (req: any, basePath: string) => {
   const user = req.session.user;
   if (!user) throw new Error('Unauthorized');
   
-  // 管理员访问的是全部数据的前缀，或者是专门的 admin 目录
-  // 用户访问的是自己的目录
-  return user.role === 'admin' 
-    ? basePath 
-    : `${basePath}/${user.id}`;
+  // 管理员访问的是全部数据的根
+  if (user.role === 'admin') return basePath;
+  
+  // 返回相对于根路径加上用户ID
+  const path = require('path');
+  return path.join(basePath, user.id.toString());
 };

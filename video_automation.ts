@@ -63,32 +63,53 @@ export function startVideoAutomationWatcher(getConcurrency: () => number) {
         if (activeVideoJobs >= maxConcurrency) return;
 
         try {
-            const files = fs.readdirSync(videoTaskDir).filter(f => f.endsWith('.json') && fs.statSync(path.join(videoTaskDir, f)).isFile());
+            // 获取所有视频任务目录（根 videoTaskDir 和用户子目录）
+            let allDirs = [videoTaskDir];
+            try {
+                const subDirs = fs.readdirSync(videoTaskDir).filter(f => {
+                    const p = path.join(videoTaskDir, f);
+                    return fs.statSync(p).isDirectory() && f !== 'history';
+                });
+                allDirs = [...allDirs, ...subDirs.map(sd => path.join(videoTaskDir, sd))];
+            } catch(e) {}
+
+            const taskFiles: { path: string, filename: string }[] = [];
+            for (const dir of allDirs) {
+                const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && fs.statSync(path.join(dir, f)).isFile());
+                files.forEach(f => {
+                    taskFiles.push({ path: path.join(dir, f), filename: f });
+                });
+            }
             
-            for (const file of files) {
+            for (const { path: filePath, filename } of taskFiles) {
                 if (activeVideoJobs >= maxConcurrency) break;
                 
-                const filePath = path.join(videoTaskDir, file);
                 // Check if already processing
-                if (videoJobProgress.has(file) && videoJobProgress.get(file)?.status === 'running') continue;
+                if (videoJobProgress.has(filename) && videoJobProgress.get(filename)?.status === 'running') continue;
 
                 activeVideoJobs++;
-                videoJobProgress.set(file, { progress: 0, status: 'running' });
+                videoJobProgress.set(filename, { progress: 0, status: 'running' });
                 
                 // Process async without blocking the loop
-                processVideoTask(filePath, file).catch(err => {
-                    console.error(`❌ 视频任务 ${file} 失败:`, err);
-                    videoJobProgress.set(file, { progress: 0, status: 'error', error: err.message });
+                processVideoTask(filePath, filename).catch(err => {
+                    console.error(`❌ 视频任务 ${filename} 失败:`, err);
+                    videoJobProgress.set(filename, { progress: 0, status: 'error', error: err.message });
                     // Move to history even on error to keep record
                     try {
                         const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
                         taskData.status = 'error';
                         taskData.error = err.message;
-                        fs.writeFileSync(path.join(videoHistoryDir, file), JSON.stringify(taskData, null, 2));
+                        
+                        // 确定正确的 history 目录
+                        const fileDir = path.dirname(filePath);
+                        const relativeSubDir = path.relative(videoTaskDir, fileDir);
+                        const targetHistoryDir = path.join(videoHistoryDir, relativeSubDir);
+                        if (!fs.existsSync(targetHistoryDir)) fs.mkdirSync(targetHistoryDir, { recursive: true });
+
+                        fs.writeFileSync(path.join(targetHistoryDir, filename), JSON.stringify(taskData, null, 2));
                         fs.unlinkSync(filePath);
                     } catch (e) {
                         console.error('Failed to move error task to history', e);
-                        try { fs.renameSync(filePath, filePath + '.error'); } catch (e2) {}
                     }
                 }).finally(() => {
                     activeVideoJobs--;
@@ -121,9 +142,13 @@ async function processVideoTask(filePath: string, filename: string) {
                 const buffer = Buffer.from(base64Data, 'base64');
                 metadata = await sharp(buffer).metadata();
             } else {
-                if (firstImgPath.startsWith('/uploads/')) firstImgPath = path.join(__dirname, 'uploads', firstImgPath.replace('/uploads/', ''));
-                else if (firstImgPath.startsWith('/downloads/')) firstImgPath = path.join(__dirname, 'download', firstImgPath.replace('/downloads/', ''));
-                metadata = await sharp(firstImgPath).metadata();
+                let localPath = firstImgPath;
+                if (firstImgPath.startsWith('/uploads/')) {
+                    localPath = path.join(__dirname, 'uploads', firstImgPath.replace('/uploads/', ''));
+                } else if (firstImgPath.startsWith('/downloads/')) {
+                    localPath = path.join(__dirname, 'download', firstImgPath.replace('/downloads/', ''));
+                }
+                metadata = await sharp(localPath).metadata();
             }
             
             if (metadata.width && metadata.height) {
@@ -175,7 +200,14 @@ async function processVideoTask(filePath: string, filename: string) {
     // Move task to history
     taskData.outputVideo = outputFilename;
     fs.writeFileSync(filePath, JSON.stringify(taskData, null, 2));
-    fs.renameSync(filePath, path.join(videoHistoryDir, filename));
+    
+    // 确定正确的 history 目录
+    const fileDir = path.dirname(filePath);
+    const relativeSubDir = path.relative(videoTaskDir, fileDir);
+    const targetHistoryDir = path.join(videoHistoryDir, relativeSubDir);
+    if (!fs.existsSync(targetHistoryDir)) fs.mkdirSync(targetHistoryDir, { recursive: true });
+
+    fs.renameSync(filePath, path.join(targetHistoryDir, filename));
     
     videoJobProgress.set(filename, { progress: 100, status: 'completed' });
     console.log(`✅ 视频渲染完成: ${outputFilename}`);
@@ -184,9 +216,11 @@ async function processVideoTask(filePath: string, filename: string) {
 async function generateClip(sb: any, outputPath: string, targetWidth: number, targetHeight: number): Promise<void> {
     // Resolve image path
     let imgPath = sb.image;
-    if (imgPath.startsWith('/uploads/')) imgPath = path.join(__dirname, 'uploads', imgPath.replace('/uploads/', ''));
-    else if (imgPath.startsWith('/downloads/')) imgPath = path.join(__dirname, 'download', imgPath.replace('/downloads/', ''));
-    else if (imgPath.startsWith('data:image')) {
+    if (imgPath.startsWith('/uploads/')) {
+        imgPath = path.join(__dirname, 'uploads', imgPath.replace('/uploads/', ''));
+    } else if (imgPath.startsWith('/downloads/')) {
+        imgPath = path.join(__dirname, 'download', imgPath.replace('/downloads/', ''));
+    } else if (imgPath.startsWith('data:image')) {
         // Base64
         const base64Data = imgPath.replace(/^data:image\/\w+;base64,/, "");
         imgPath = path.join(videoTaskDir, `temp_img_${Date.now()}.png`);

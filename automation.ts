@@ -427,8 +427,16 @@ async function executeWithCDP(tasks: any[], filename: string) {
                         const { Runtime } = client;
 
                         for (const imgUrl of task.images) {
-                            const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
-                            const localPath = path.resolve(__dirname, relativeUrl);
+                            let localPath = '';
+                            if (imgUrl.startsWith('/uploads/')) {
+                                localPath = path.join(__dirname, 'uploads', imgUrl.replace('/uploads/', ''));
+                            } else if (imgUrl.startsWith('/downloads/')) {
+                                localPath = path.join(__dirname, 'download', imgUrl.replace('/downloads/', ''));
+                            } else {
+                                const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
+                                localPath = path.resolve(__dirname, relativeUrl);
+                            }
+                            
                             if (fs.existsSync(localPath)) {
                                 console.log(`${stepPrefix} 📂 准备处理本地文件: ${localPath}`);
                                 

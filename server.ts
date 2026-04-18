@@ -108,10 +108,14 @@ async function startServer() {
   });
 
   // Video Task Execution API
-  app.post("/api/video/execute", (req, res) => {
+  app.post("/api/video/execute", requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
     const taskData = req.body;
     
     // Process base64 images
+    const userUploadsDir = path.join(getUserStoragePath(req, uploadsDir));
+    if (!fs.existsSync(userUploadsDir)) fs.mkdirSync(userUploadsDir, { recursive: true });
+
     if (taskData.storyboards) {
       taskData.storyboards.forEach((sb: any) => {
         if (sb.image && sb.image.startsWith('data:image')) {
@@ -120,58 +124,68 @@ async function startServer() {
             const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
             const base64Data = matches[2];
             const filename = `ref_vid_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
-            fs.writeFileSync(path.join(uploadsDir, filename), base64Data, 'base64');
-            sb.image = `/uploads/${filename}`;
+            fs.writeFileSync(path.join(userUploadsDir, filename), base64Data, 'base64');
+            sb.image = `/uploads/${user.id}/${filename}`;
           }
         }
       });
     }
 
+    const userVideoTaskDir = path.join(getUserStoragePath(req, videoTaskDir));
+    if (!fs.existsSync(userVideoTaskDir)) fs.mkdirSync(userVideoTaskDir, { recursive: true });
+
     const filename = `task_video_${Date.now()}.json`;
-    fs.writeFileSync(path.join(videoTaskDir, filename), JSON.stringify(taskData, null, 2));
+    fs.writeFileSync(path.join(userVideoTaskDir, filename), JSON.stringify({ ...taskData, userId: user.id }, null, 2));
     res.json({ status: "ok", message: "Video task queued", filename });
   });
 
   // Video Jobs API
-  app.get("/api/video/jobs", (req, res) => {
+  app.get("/api/video/jobs", requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
     const jobs: any[] = [];
     
-    if (fs.existsSync(videoHistoryDir)) {
-      const files = fs.readdirSync(videoHistoryDir).filter(f => f.endsWith('.json'));
-      for (const file of files) {
-        try {
-          const stat = fs.statSync(path.join(videoHistoryDir, file));
-          const data = JSON.parse(fs.readFileSync(path.join(videoHistoryDir, file), 'utf-8'));
-          jobs.push({ 
-            id: file, 
-            timestamp: stat.mtimeMs, 
-            data, 
-            status: data.status || 'completed', 
-            progress: data.status === 'error' ? 0 : 100,
-            error: data.error
-          });
-        } catch (e) {}
+    const readVideoJobsFromDir = (dir: string, currentStatus?: string) => {
+      if (!fs.existsSync(dir)) return;
+      const subDirs = [dir];
+      if (user.role === 'admin') {
+          try {
+              const entries = fs.readdirSync(dir);
+              entries.forEach(e => {
+                  const p = path.join(dir, e);
+                  if (fs.statSync(p).isDirectory() && e !== 'history') subDirs.push(p);
+              });
+          } catch(e) {}
       }
-    }
 
-    if (fs.existsSync(videoTaskDir)) {
-      const files = fs.readdirSync(videoTaskDir).filter(f => f.endsWith('.json') && fs.statSync(path.join(videoTaskDir, f)).isFile());
-      for (const file of files) {
-        try {
-          const stat = fs.statSync(path.join(videoTaskDir, file));
-          const data = JSON.parse(fs.readFileSync(path.join(videoTaskDir, file), 'utf-8'));
-          const progressInfo = videoJobProgress.get(file);
-          jobs.push({
-            id: file,
-            timestamp: stat.mtimeMs,
-            data,
-            status: progressInfo ? progressInfo.status : 'pending',
-            progress: progressInfo ? progressInfo.progress : 0,
-            error: progressInfo?.error
-          });
-        } catch (e) {}
+      for (const d of subDirs) {
+          const files = fs.readdirSync(d).filter(f => f.endsWith('.json'));
+          for (const file of files) {
+            try {
+              const filePath = path.join(d, file);
+              const stat = fs.statSync(filePath);
+              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              
+              if (user.role !== 'admin' && data.userId !== user.id) continue;
+
+              const progressInfo = videoJobProgress.get(file);
+              jobs.push({ 
+                id: file, 
+                timestamp: stat.mtimeMs, 
+                data, 
+                status: progressInfo ? progressInfo.status : (data.status || 'completed'), 
+                progress: progressInfo ? progressInfo.progress : (data.status === 'error' ? 0 : 100),
+                error: progressInfo?.error || data.error
+              });
+            } catch (e) {}
+          }
       }
-    }
+    };
+
+    const userVideoHistoryDir = path.join(getUserStoragePath(req, videoHistoryDir));
+    const userVideoTaskDir = path.join(getUserStoragePath(req, videoTaskDir));
+
+    readVideoJobsFromDir(userVideoHistoryDir);
+    readVideoJobsFromDir(userVideoTaskDir);
 
     jobs.sort((a, b) => b.timestamp - a.timestamp);
     res.json(jobs);
@@ -287,7 +301,7 @@ async function startServer() {
     const { tasks } = req.body;
     
     // Process base64 images and save them as files in user-specific upload directory
-    const userUploadsDir = path.join(getUserStoragePath(req, uploadsDir.replace(process.cwd(), '')), 'uploads');
+    const userUploadsDir = path.join(getUserStoragePath(req, uploadsDir));
     if (!fs.existsSync(userUploadsDir)) fs.mkdirSync(userUploadsDir, { recursive: true });
 
     tasks.forEach((task: any) => {
@@ -309,7 +323,7 @@ async function startServer() {
     });
 
     // Save to JSON file in user-specific task directory
-    const userTaskDir = path.join(getUserStoragePath(req, taskDir.replace(process.cwd(), '')));
+    const userTaskDir = path.join(getUserStoragePath(req, taskDir));
     if (!fs.existsSync(userTaskDir)) fs.mkdirSync(userTaskDir, { recursive: true });
     
     const filename = `task_${Date.now()}.json`;
@@ -335,37 +349,52 @@ async function startServer() {
     // Helper to read jobs from a specific directory, filtered by userId
     const readJobsFromDir = (dir: string, statusOverride?: string) => {
       if (!fs.existsSync(dir)) return;
-      const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
-      for (const file of files) {
-        try {
-          const filePath = path.join(dir, file);
-          const stat = fs.statSync(filePath);
-          const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-          
-          // RBAC Check: Only include if admin or userId matches
-          if (user.role !== 'admin' && data.userId !== user.id) continue;
+      
+      const subDirs = [dir];
+      if (user.role === 'admin') {
+          // Admin sees everything - scan subfolders
+          try {
+              const entries = fs.readdirSync(dir);
+              entries.forEach(e => {
+                  const p = path.join(dir, e);
+                  if (fs.statSync(p).isDirectory() && e !== 'history') subDirs.push(p);
+              });
+          } catch(e) {}
+      }
 
-          let progress = 100;
-          let jobStatus = statusOverride || (data.status === 'error' ? 'failed' : 'completed');
-          let statusMessage = '';
-          
-          if (!statusOverride) {
-             const progressInfo = jobProgress.get(file);
-             if (progressInfo) {
-                jobStatus = progressInfo.status;
-                progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
-                statusMessage = progressInfo.message || '';
-             }
+      for (const d of subDirs) {
+          const files = fs.readdirSync(d).filter(f => f.endsWith('.json'));
+          for (const file of files) {
+            try {
+              const filePath = path.join(d, file);
+              const stat = fs.statSync(filePath);
+              const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+              
+              // RBAC Check: Only include if admin or userId matches
+              if (user.role !== 'admin' && data.userId !== user.id) continue;
+
+              let progress = 100;
+              let jobStatus = statusOverride || (data.status === 'error' ? 'failed' : 'completed');
+              let statusMessage = '';
+              
+              if (!statusOverride) {
+                 const progressInfo = jobProgress.get(file);
+                 if (progressInfo) {
+                    jobStatus = progressInfo.status;
+                    progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
+                    statusMessage = progressInfo.message || '';
+                 }
+              }
+
+              jobs.push({ id: file, timestamp: stat.mtimeMs, tasks: data.tasks || data, status: jobStatus, progress, statusMessage });
+            } catch (e) {}
           }
-
-          jobs.push({ id: file, timestamp: stat.mtimeMs, tasks: data.tasks || data, status: jobStatus, progress, statusMessage });
-        } catch (e) {}
       }
     };
 
     // Correct paths for user-specific directories
-    const userHistoryDir = path.join(getUserStoragePath(req, historyDir.replace(process.cwd(), '')));
-    const userTaskDir = path.join(getUserStoragePath(req, taskDir.replace(process.cwd(), '')));
+    const userHistoryDir = path.join(getUserStoragePath(req, historyDir));
+    const userTaskDir = path.join(getUserStoragePath(req, taskDir));
 
     readJobsFromDir(userHistoryDir);
     readJobsFromDir(userTaskDir);
