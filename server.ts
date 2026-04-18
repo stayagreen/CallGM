@@ -343,6 +343,11 @@ async function startServer() {
     }
 
     try {
+      const thumbDirname = path.dirname(thumbPath);
+      if (!fs.existsSync(thumbDirname)) {
+        fs.mkdirSync(thumbDirname, { recursive: true });
+      }
+      
       await sharp(sourcePath)
         .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
         .webp({ quality: 80 })
