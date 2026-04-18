@@ -5,6 +5,17 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import os from "os";
 import sharp from "sharp";
+import session from "express-session";
+import { checkAccess, getUserStoragePath } from "./src/lib/auth-security.js";
+import bcrypt from "bcryptjs";
+import db from "./src/db/db.js";
+
+declare module 'express-session' {
+  interface SessionData {
+    user: { id: number; username: string; role: string };
+  }
+}
+
 import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages } from "./automation.js";
 import { startVideoAutomationWatcher, videoJobProgress } from "./video_automation.js";
 
@@ -16,6 +27,52 @@ async function startServer() {
   const PORT = process.env.DISABLE_HMR === 'true' ? 3000 : 4000;
 
   app.use(express.json({ limit: "500mb" }));
+  
+  // Session configuration
+  app.use(session({
+    secret: 'secure-random-key-change-this',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: false } // Set to true in production with HTTPS
+  }));
+
+  // Auth Middleware
+  const requireAuth = (req: any, res: any, next: any) => {
+    if (req.session.user) {
+      next();
+    } else {
+      res.status(401).json({ error: 'Unauthorized' });
+    }
+  };
+
+  // Auth routes
+  app.post('/api/register', async (req, res) => {
+    const { username, password } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    try {
+      db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(username, hashedPassword);
+      res.json({ message: 'User registered' });
+    } catch (e) {
+      res.status(400).json({ error: 'User already exists' });
+    }
+  });
+
+  app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
+    if (user && await bcrypt.compare(password, user.password)) {
+      req.session.user = { id: user.id, username: user.username, role: user.role };
+      res.json({ message: 'Logged in', user: req.session.user });
+    } else {
+      res.status(401).json({ error: 'Invalid credentials' });
+    }
+  });
+
+  app.post('/api/logout', (req, res) => {
+    req.session.destroy(() => {
+      res.json({ message: 'Logged out' });
+    });
+  });
 
   const taskDir = path.join(__dirname, "task");
   const historyDir = path.join(taskDir, "history");
@@ -224,11 +281,15 @@ async function startServer() {
     }
   });
 
-  // API route to save generation request
-  app.post("/api/execute", (req, res) => {
+  // API to save generation request
+  app.post("/api/execute", requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
     const { tasks } = req.body;
     
-    // Process base64 images and save them as files
+    // Process base64 images and save them as files in user-specific upload directory
+    const userUploadsDir = path.join(getUserStoragePath(req, uploadsDir.replace(process.cwd(), '')), 'uploads');
+    if (!fs.existsSync(userUploadsDir)) fs.mkdirSync(userUploadsDir, { recursive: true });
+
     tasks.forEach((task: any) => {
       if (task.images && Array.isArray(task.images)) {
         task.images = task.images.map((img: string) => {
@@ -238,8 +299,8 @@ async function startServer() {
               const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
               const base64Data = matches[2];
               const filename = `ref_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
-              fs.writeFileSync(path.join(uploadsDir, filename), base64Data, 'base64');
-              return `/uploads/${filename}`;
+              fs.writeFileSync(path.join(userUploadsDir, filename), base64Data, 'base64');
+              return `/uploads/${user.id}/${filename}`; // Adjusting returned URL format
             }
           }
           return img;
@@ -247,10 +308,13 @@ async function startServer() {
       }
     });
 
-    // Save to JSON file with unique name
+    // Save to JSON file in user-specific task directory
+    const userTaskDir = path.join(getUserStoragePath(req, taskDir.replace(process.cwd(), '')));
+    if (!fs.existsSync(userTaskDir)) fs.mkdirSync(userTaskDir, { recursive: true });
+    
     const filename = `task_${Date.now()}.json`;
-    const filePath = path.join(taskDir, filename);
-    fs.writeFileSync(filePath, JSON.stringify(tasks, null, 2));
+    const filePath = path.join(userTaskDir, filename);
+    fs.writeFileSync(filePath, JSON.stringify({ ...req.body, userId: user.id }, null, 2));
 
     res.json({ status: "ok", message: "Tasks queued", filename });
   });
@@ -264,60 +328,47 @@ async function startServer() {
   });
 
   // API route to get jobs (pending, running, completed)
-  app.get("/api/jobs", (req, res) => {
+  app.get("/api/jobs", requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
     const jobs: any[] = [];
     
-    // Read completed jobs from history
-    if (fs.existsSync(historyDir)) {
-      const files = fs.readdirSync(historyDir).filter(f => f.endsWith('.json'));
+    // Helper to read jobs from a specific directory, filtered by userId
+    const readJobsFromDir = (dir: string, statusOverride?: string) => {
+      if (!fs.existsSync(dir)) return;
+      const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'));
       for (const file of files) {
         try {
-          const stat = fs.statSync(path.join(historyDir, file));
-          const data = JSON.parse(fs.readFileSync(path.join(historyDir, file), 'utf-8'));
+          const filePath = path.join(dir, file);
+          const stat = fs.statSync(filePath);
+          const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
           
-          // 如果任务列表里有任何一个任务的状态是 failed，则整个 Job 标记为 failed
-          const hasFailedTask = Array.isArray(data) && data.some((t: any) => t.status === 'failed');
-          
-          jobs.push({
-            id: file,
-            timestamp: stat.mtimeMs,
-            tasks: data,
-            status: hasFailedTask ? 'failed' : 'completed',
-            progress: 100
-          });
-        } catch (e) {}
-      }
-    }
+          // RBAC Check: Only include if admin or userId matches
+          if (user.role !== 'admin' && data.userId !== user.id) continue;
 
-    // Read pending/running jobs from task dir
-    if (fs.existsSync(taskDir)) {
-      const files = fs.readdirSync(taskDir).filter(f => f.endsWith('.json') && fs.statSync(path.join(taskDir, f)).isFile());
-      for (const file of files) {
-        try {
-          const stat = fs.statSync(path.join(taskDir, file));
-          const data = JSON.parse(fs.readFileSync(path.join(taskDir, file), 'utf-8'));
-          const progressInfo = jobProgress.get(file);
-          
-          let progress = 0;
-          let status = 'pending';
+          let progress = 100;
+          let jobStatus = statusOverride || (data.status === 'error' ? 'failed' : 'completed');
           let statusMessage = '';
-          if (progressInfo) {
-            status = progressInfo.status;
-            progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
-            statusMessage = progressInfo.message || '';
+          
+          if (!statusOverride) {
+             const progressInfo = jobProgress.get(file);
+             if (progressInfo) {
+                jobStatus = progressInfo.status;
+                progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
+                statusMessage = progressInfo.message || '';
+             }
           }
 
-          jobs.push({
-            id: file,
-            timestamp: stat.mtimeMs,
-            tasks: data,
-            status: status,
-            progress: progress,
-            statusMessage: statusMessage
-          });
+          jobs.push({ id: file, timestamp: stat.mtimeMs, tasks: data.tasks || data, status: jobStatus, progress, statusMessage });
         } catch (e) {}
       }
-    }
+    };
+
+    // Correct paths for user-specific directories
+    const userHistoryDir = path.join(getUserStoragePath(req, historyDir.replace(process.cwd(), '')));
+    const userTaskDir = path.join(getUserStoragePath(req, taskDir.replace(process.cwd(), '')));
+
+    readJobsFromDir(userHistoryDir);
+    readJobsFromDir(userTaskDir);
 
     jobs.sort((a, b) => b.timestamp - a.timestamp);
     res.json(jobs);
@@ -405,10 +456,11 @@ async function startServer() {
   });
 
   // Get all downloaded images
-  app.get('/api/images', (req, res) => {
-    if (!fs.existsSync(downloadDir)) return res.json([]);
+  app.get('/api/images', requireAuth, checkAccess, (req: any, res) => {
+    const userStoragePath = getUserStoragePath(req, downloadDir);
+    if (!fs.existsSync(userStoragePath)) return res.json([]);
     try {
-      const files = fs.readdirSync(downloadDir).filter(f => f.match(/\.(jpg|jpeg|png|webp|gif)$/i));
+      const files = fs.readdirSync(userStoragePath).filter(f => f.match(/\.(jpg|jpeg|png|webp|gif)$/i));
       // Sort by modified time descending (newest first)
       files.sort((a, b) => {
         return fs.statSync(path.join(downloadDir, b)).mtimeMs - fs.statSync(path.join(downloadDir, a)).mtimeMs;
@@ -508,8 +560,9 @@ async function startServer() {
   });
 
   // Delete a downloaded image
-  app.delete('/api/images/:filename', (req, res) => {
-    const filePath = path.join(downloadDir, req.params.filename);
+  app.delete('/api/images/:filename', requireAuth, checkAccess, (req: any, res) => {
+    const userStoragePath = getUserStoragePath(req, downloadDir);
+    const filePath = path.join(userStoragePath, req.params.filename);
     if (fs.existsSync(filePath)) {
       try {
         fs.unlinkSync(filePath);
@@ -523,11 +576,12 @@ async function startServer() {
   });
 
   // Upload images to gallery
-  app.post('/api/images/upload', express.json({ limit: '500mb' }), (req, res) => {
+  app.post('/api/images/upload', requireAuth, checkAccess, express.json({ limit: '500mb' }), (req: any, res) => {
+    const userStoragePath = getUserStoragePath(req, downloadDir);
     const { images } = req.body;
     if (!images || !Array.isArray(images)) return res.status(400).json({ error: 'Invalid images' });
     
-    if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
+    if (!fs.existsSync(userStoragePath)) fs.mkdirSync(userStoragePath, { recursive: true });
     
     const savedFiles: string[] = [];
     images.forEach((base64: string) => {
@@ -539,7 +593,7 @@ async function startServer() {
         const data = matches[2];
         const buffer = Buffer.from(data, 'base64');
         const filename = `upload_${Date.now()}_${Math.floor(Math.random() * 1000)}.${ext}`;
-        fs.writeFileSync(path.join(downloadDir, filename), buffer);
+        fs.writeFileSync(path.join(userStoragePath, filename), buffer);
         savedFiles.push(filename);
       } catch (e) {
         console.error('Failed to save uploaded image:', e);
@@ -550,7 +604,8 @@ async function startServer() {
   });
 
   // Update gallery image
-  app.post('/api/gallery/update', express.json({ limit: '500mb' }), (req, res) => {
+  app.post('/api/gallery/update', requireAuth, checkAccess, express.json({ limit: '500mb' }), (req: any, res) => {
+    const userStoragePath = getUserStoragePath(req, downloadDir);
     const { filename, image } = req.body;
     if (!filename || !image) return res.status(400).json({ error: 'Missing filename or image' });
     
@@ -560,7 +615,7 @@ async function startServer() {
       
       const data = matches[2];
       const buffer = Buffer.from(data, 'base64');
-      const filePath = path.join(downloadDir, filename);
+      const filePath = path.join(userStoragePath, filename);
       
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'Original image not found' });

@@ -1,13 +1,11 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { Login } from './components/Login';
 
+// Shared type interfaces
 interface Task {
   id: string;
   prompt: string;
@@ -178,7 +176,56 @@ const JobItem = React.memo(({
   );
 });
 
-export default function App() {
+// Shared type interfaces
+interface Task {
+  id: string;
+  prompt: string;
+  images: string[];
+  count: number;
+  download: boolean;
+  downloadedFiles?: string[];
+  executor?: 'js' | 'cdp';
+  status?: 'pending' | 'running' | 'completed' | 'failed';
+}
+
+interface Job {
+  id: string;
+  timestamp: number;
+  tasks: Task[];
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  statusMessage?: string;
+}
+
+interface Template {
+  id: string;
+  name: string;
+  prompt: string;
+}
+
+// ... rest of the code ...
+
+export default function AppContent() {
+  const { user, loading, logout } = useAuth();
+  
+  if (loading) return <div>加载中...</div>;
+  if (!user) return <Login />;
+
+  return (
+    <>
+      <div className="p-6 max-w-4xl mx-auto bg-gray-50 min-h-screen">
+          <div className="flex justify-between items-center mb-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+            <h1 className="text-xl font-bold">欢迎, {user.username} ({user.role})</h1>
+            <button onClick={logout} className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition">登出</button>
+          </div>
+          <MainApp />
+      </div>
+    </>
+  );
+}
+
+// Rename original App to MainApp to keep existing functionality intact
+function MainApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string>('');
   const [videoTasks, setVideoTasks] = useState<VideoTask[]>([]);
@@ -256,7 +303,6 @@ export default function App() {
           setIsRecording(false);
         }
       };
-
       recognitionRef.current.onend = () => {
         setIsRecording(false);
       };

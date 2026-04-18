@@ -1,0 +1,5 @@
+{
+  "version": "1.1",
+  "description": "Pre-refactor checkpoint: Including CDP/JS automation with polling-based download detection. Ready for database/auth refactoring.",
+  "timestamp": "2026-04-18T10:10:00Z"
+}
