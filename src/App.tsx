@@ -417,9 +417,15 @@ function MainApp() {
     try {
       const res = await fetch('/api/jobs');
       const data = await res.json();
-      setJobs(data);
+      if (Array.isArray(data)) {
+        setJobs(data);
+      } else {
+        console.error('Invalid jobs data:', data);
+        setJobs([]);
+      }
     } catch (error) {
       console.error('Failed to fetch jobs:', error);
+      setJobs([]);
     }
   };
 
@@ -427,9 +433,15 @@ function MainApp() {
     try {
       const res = await fetch('/api/video/jobs');
       const data = await res.json();
-      setVideoJobs(data);
+      if (Array.isArray(data)) {
+        setVideoJobs(data);
+      } else {
+        console.error('Invalid video jobs data:', data);
+        setVideoJobs([]);
+      }
     } catch (error) {
       console.error('Failed to fetch video jobs:', error);
+      setVideoJobs([]);
     }
   };
 
@@ -438,14 +450,15 @@ function MainApp() {
       const res = await fetch('/api/processing-status');
       const backendProcessing = await res.json() as string[];
       
-      setProcessingGalleryImages(prev => {
-        // Merge manual edits (client-side) and auto-removal (server-side)
-        const combined = new Set(backendProcessing);
-        manualProcessingImages.current.forEach(img => combined.add(img));
-        
-        // If the set hasn't changed its size or content significantly, we can just return or construct new
-        return combined;
-      });
+      if (Array.isArray(backendProcessing)) {
+        setProcessingGalleryImages(prev => {
+          // Merge manual edits (client-side) and auto-removal (server-side)
+          const combined = new Set(backendProcessing);
+          manualProcessingImages.current.forEach(img => combined.add(img));
+          
+          return combined;
+        });
+      }
     } catch (error) {
       console.error('Failed to fetch processing status:', error);
     }
@@ -476,10 +489,16 @@ function MainApp() {
     try {
       const res = await fetch('/api/images');
       const data = await res.json();
-      setGalleryImages(data);
+      if (Array.isArray(data)) {
+        setGalleryImages(data);
+      } else {
+        console.error('Invalid gallery images data:', data);
+        setGalleryImages([]);
+      }
       setGalleryUpdateToken(Date.now());
     } catch (error) {
       console.error('Failed to fetch gallery:', error);
+      setGalleryImages([]);
     }
   };
 
