@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
+    "clean-data": "tsx clean_data.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
