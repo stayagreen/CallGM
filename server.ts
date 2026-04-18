@@ -812,9 +812,34 @@ async function startServer() {
   });
 
   // Delete a downloaded image
-  app.delete('/api/images/:filename', requireAuth, checkAccess, (req: any, res) => {
-    const userStoragePath = getUserStoragePath(req, downloadDir);
-    const filePath = path.join(userStoragePath, req.params.filename);
+  app.delete('/api/images/*', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    const imgPath = req.params[0]; // Gets the full path after /api/images/
+    
+    if (!imgPath) return res.status(400).json({ error: 'Image path required' });
+
+    // Clean up DB
+    try {
+      db.prepare('DELETE FROM assets WHERE file_path = ? AND type = ?').run(imgPath.replace(/\\/g, '/'), 'image');
+    } catch(e) {}
+
+    // Ensure users only delete their own
+    if (user.role !== 'admin') {
+        const pathParts = imgPath.split('/');
+        // Uploads have "uploads/userid/..." structure, normal has "userid/..."
+        const targetUserId = pathParts[0] === 'uploads' ? pathParts[1] : pathParts[0];
+        if (targetUserId !== user.id.toString()) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
+    }
+
+    const isUpload = imgPath.startsWith('uploads/');
+    const baseDir = isUpload ? path.join(__dirname, 'uploads') : downloadDir;
+    // For uploads we strip the "uploads/" prefix to find the physical file
+    const physicalPath = isUpload ? imgPath.replace(/^uploads\//, '') : imgPath;
+    
+    const filePath = path.join(baseDir, physicalPath);
+
     if (fs.existsSync(filePath)) {
       try {
         fs.unlinkSync(filePath);

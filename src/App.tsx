@@ -544,7 +544,10 @@ function MainApp() {
     if (!window.confirm('确定要删除这张图片吗？这将会从本地硬盘中彻底删除该文件。')) return;
     
     try {
-      await fetch(`/api/images/${filename}`, { method: 'DELETE' });
+      // Split the path and encode components to preserve '/' slashes.
+      // E.g. '1/my_image.png' -> '1/my_image.png' cleanly in the URL path.
+      const encodedFilename = filename.split('/').map(encodeURIComponent).join('/');
+      await fetch(`/api/images/${encodedFilename}`, { method: 'DELETE' });
       fetchGallery();
     } catch (error) {
       console.error('Failed to delete image:', error);
