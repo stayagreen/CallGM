@@ -729,7 +729,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
             if (t.status !== 'completed') t.status = 'failed';
         });
     } finally {
-        jobProgress.delete(filename);
+        // jobProgress.delete(filename); // 移动到执行循环外，确保归档后才清理状态
     }
     return tasks;
 }
@@ -823,6 +823,12 @@ export function startAutomationWatcher() {
         const historyPath = path.join(targetHistoryDir, filename);
         fs.renameSync(filePath, historyPath);
         console.log(`✅ 任务文件 ${filename} 已全部执行完毕，并归档到 ${targetHistoryDir}。`);
+        
+        // 核心优化：延迟清理内存状态，给 UI 缓冲时间
+        setTimeout(() => {
+            jobProgress.delete(filename);
+        }, 3000);
+
         console.log('👀 恢复监听新任务...\n');
         lastHeartbeat = Date.now(); // 任务完成后重置心跳计时
       }
@@ -1356,6 +1362,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
     } catch (e) {
         // 如果 nutjs 还没加载或者关闭失败，静默处理
     }
-    jobProgress.delete(filename);
+    // jobProgress.delete(filename);
   }
 }

@@ -197,8 +197,10 @@ async function startServer() {
   });
 
   // Thumbnail generation endpoint
-  app.get("/api/thumbnails/:type/:filename", async (req, res) => {
-    const { type, filename } = req.params;
+  // Thumbnail serving with subdirectory support
+  app.get("/api/thumbnails/:type/*", async (req, res) => {
+    const { type } = req.params;
+    const filename = req.params[0];
     if (type !== 'downloads' && type !== 'uploads' && type !== 'videos') {
       return res.status(400).send('Invalid type');
     }
@@ -418,15 +420,34 @@ async function startServer() {
   });
 
   // API route to batch delete jobs
-  app.post("/api/jobs/delete", (req, res) => {
+  app.post("/api/jobs/delete", requireAuth, checkAccess, (req: any, res) => {
     const { filenames } = req.body;
     if (!Array.isArray(filenames)) return res.status(400).json({error: 'Invalid request'});
     
     for (const file of filenames) {
-      const historyPath = path.join(historyDir, file);
-      const taskPath = path.join(taskDir, file);
-      if (fs.existsSync(historyPath)) fs.unlinkSync(historyPath);
-      if (fs.existsSync(taskPath)) fs.unlinkSync(taskPath);
+      // Helper to find file in root or subdirs
+      const findAndDelete = (baseDir: string, targetFile: string) => {
+          const rootPath = path.join(baseDir, targetFile);
+          if (fs.existsSync(rootPath)) {
+              fs.unlinkSync(rootPath);
+              return true;
+          }
+          // Scan subdirs
+          try {
+              const subs = fs.readdirSync(baseDir).filter(f => fs.statSync(path.join(baseDir, f)).isDirectory());
+              for (const sub of subs) {
+                  const subPath = path.join(baseDir, sub, targetFile);
+                  if (fs.existsSync(subPath)) {
+                      fs.unlinkSync(subPath);
+                      return true;
+                  }
+              }
+          } catch(e) {}
+          return false;
+      };
+
+      findAndDelete(historyDir, file);
+      findAndDelete(taskDir, file);
     }
     res.json({ success: true });
   });
@@ -506,10 +527,13 @@ async function startServer() {
       const files = fs.readdirSync(userStoragePath).filter(f => f.match(/\.(jpg|jpeg|png|webp|gif)$/i));
       // Sort by modified time descending (newest first)
       files.sort((a, b) => {
-        return fs.statSync(path.join(downloadDir, b)).mtimeMs - fs.statSync(path.join(downloadDir, a)).mtimeMs;
+        const statB = fs.statSync(path.join(userStoragePath, b));
+        const statA = fs.statSync(path.join(userStoragePath, a));
+        return statB.mtimeMs - statA.mtimeMs;
       });
       res.json(files);
     } catch (err) {
+      console.error('Failed to read images:', err);
       res.status(500).json({ error: 'Failed to read images' });
     }
   });
@@ -526,15 +550,16 @@ async function startServer() {
       // Helper to scan a directory recursively for videos
       const getVideosInDir = (base: string, relativeRoot: string = "") => {
           let results: { name: string, path: string, mtime: number }[] = [];
+          if (!fs.existsSync(base)) return results;
           const items = fs.readdirSync(base);
           for (const item of items) {
               const fullPath = path.join(base, item);
               const relPath = path.join(relativeRoot, item);
               const stat = fs.statSync(fullPath);
               if (stat.isDirectory()) {
-                  // Only admin scans subfolders for general exploration if needed, 
-                  // but for the simple list we just flatten or specific subfolders.
-                  results = [...results, ...getVideosInDir(fullPath, relPath)];
+                  if (item !== 'history') {
+                    results = [...results, ...getVideosInDir(fullPath, relPath)];
+                  }
               } else if (item.match(/\.(mp4|webm|mov)$/i)) {
                   results.push({ name: item, path: relPath, mtime: stat.mtimeMs });
               }
@@ -557,41 +582,35 @@ async function startServer() {
       res.json(videos.map(v => v.path.replace(/\\/g, '/')));
     } catch (err) {
       console.error('Failed to read videos:', err);
-      res.status(500).json({ error: 'Failed to read videos' });
+      res.status(500).json({ error: 'Internal server error' });
     }
   });
 
   // Delete a downloaded video
-  app.delete('/api/videos/:user_id?/:filename', requireAuth, checkAccess, (req: any, res) => {
+  app.delete('/api/videos/*', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
-    const { user_id, filename } = req.params;
+    const vidPath = req.params[0]; // Gets the full path after /api/videos/
     
-    // If user_id is provided, use it (if admin or self)
-    const targetUserId = user_id || (user.role === 'admin' ? null : user.id.toString());
-    
-    if (user.role !== 'admin' && targetUserId && targetUserId !== user.id.toString()) {
-        return res.status(403).json({ error: 'Forbidden' });
+    if (!vidPath) return res.status(400).json({ error: 'Video path required' });
+
+    // Ensure users only delete their own
+    if (user.role !== 'admin') {
+        const pathParts = vidPath.split('/');
+        if (pathParts[0] !== user.id.toString()) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
     }
 
-    let filePath = '';
-    let thumbPath = '';
-    
-    if (targetUserId) {
-        filePath = path.join(videoDownloadDir, targetUserId, filename);
-        thumbPath = path.join(videoThumbDir, targetUserId, filename.replace(/\.[^/.]+$/, ".jpg"));
-    } else {
-        // Admin trying to delete from root (if any left)
-        filePath = path.join(videoDownloadDir, filename);
-        thumbPath = path.join(videoThumbDir, filename.replace(/\.[^/.]+$/, ".jpg"));
-    }
+    const filePath = path.join(videoDownloadDir, vidPath);
+    const thumbPath = path.join(videoThumbDir, vidPath.replace(/\.[^/.]+$/, ".jpg"));
 
     if (fs.existsSync(filePath)) {
       try {
         fs.unlinkSync(filePath);
         if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
         
-        // Also try to find and delete the associated job history file
-        // Since we don't know exactly where history is without scanning, we scan all
+        // Cleanup history - search all potential history locations
+        const filename = path.basename(vidPath);
         const allHistoryDirs = [videoHistoryDir];
         try {
             const subs = fs.readdirSync(videoHistoryDir).filter(f => fs.statSync(path.join(videoHistoryDir,f)).isDirectory());
@@ -612,7 +631,6 @@ async function startServer() {
               }
             }
         }
-        
         res.json({ success: true });
       } catch (err) {
         res.status(500).json({ error: 'Failed to delete video' });

@@ -487,9 +487,15 @@ function MainApp() {
     try {
       const res = await fetch('/api/videos');
       const data = await res.json();
-      setVideoGallery(data);
+      if (Array.isArray(data)) {
+        setVideoGallery(data);
+      } else {
+        console.error('Video gallery data is not an array:', data);
+        setVideoGallery([]);
+      }
     } catch (error) {
       console.error('Failed to fetch video gallery:', error);
+      setVideoGallery([]);
     }
   };
 
