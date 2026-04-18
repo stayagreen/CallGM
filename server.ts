@@ -265,15 +265,15 @@ async function startServer() {
   app.get("/api/video/jobs", requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
     
-    let query = 'SELECT * FROM tasks WHERE type = ?';
+    let query = 'SELECT tasks.*, users.username FROM tasks LEFT JOIN users ON tasks.user_id = users.id WHERE tasks.type = ?';
     let params: any[] = ['video'];
 
     if (user.role !== 'admin') {
-      query += ' AND user_id = ?';
+      query += ' AND tasks.user_id = ?';
       params.push(user.id);
     }
 
-    query += ' ORDER BY created_at DESC LIMIT 100';
+    query += ' ORDER BY tasks.created_at DESC LIMIT 100';
 
     try {
       const rows = db.prepare(query).all(...params) as any[];
@@ -284,6 +284,7 @@ async function startServer() {
         return {
           id: row.id,
           userId: row.user_id,
+          username: row.username,
           status: progressInfo ? progressInfo.status : row.status,
           progress: progressInfo ? progressInfo.progress : row.progress,
           statusMessage: progressInfo ? (progressInfo.error || '') : '',
@@ -509,15 +510,15 @@ async function startServer() {
   app.get("/api/jobs", requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
     
-    let query = 'SELECT * FROM tasks WHERE type = ?';
+    let query = 'SELECT tasks.*, users.username FROM tasks LEFT JOIN users ON tasks.user_id = users.id WHERE tasks.type = ?';
     let params: any[] = ['image'];
 
     if (user.role !== 'admin') {
-      query += ' AND user_id = ?';
+      query += ' AND tasks.user_id = ?';
       params.push(user.id);
     }
 
-    query += ' ORDER BY created_at DESC LIMIT 100';
+    query += ' ORDER BY tasks.created_at DESC LIMIT 100';
 
     try {
       const rows = db.prepare(query).all(...params) as any[];
@@ -528,6 +529,7 @@ async function startServer() {
         return {
           id: row.id,
           userId: row.user_id,
+          username: row.username,
           status: progressInfo ? progressInfo.status : row.status,
           progress: progressInfo ? (progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0) : row.progress,
           statusMessage: progressInfo ? (progressInfo.message || '') : '',
@@ -680,20 +682,24 @@ async function startServer() {
   app.get('/api/images', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
     
-    let query = 'SELECT * FROM assets WHERE type = ?';
+    let query = 'SELECT assets.*, users.username FROM assets LEFT JOIN users ON assets.user_id = users.id WHERE type = ?';
     let params: any[] = ['image'];
 
     if (user.role !== 'admin') {
-      query += ' AND user_id = ?';
+      query += ' AND assets.user_id = ?';
       params.push(user.id);
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY assets.created_at DESC';
 
     try {
       const rows = db.prepare(query).all(...params) as any[];
-      // The frontend expects an array of paths relative to /downloads/
-      res.json(rows.map(row => row.file_path.replace(/\\/g, '/')));
+      // The frontend expects an array of paths or objects. Since we are upgrading it, return objects.
+      res.json(rows.map(row => ({
+        path: row.file_path.replace(/\\/g, '/'),
+        userId: row.user_id,
+        username: row.username
+      })));
     } catch (err) {
       console.error('Failed to read images from DB:', err);
       res.status(500).json({ error: 'Failed to read images' });
@@ -704,20 +710,24 @@ async function startServer() {
   app.get('/api/videos', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
 
-    let query = 'SELECT * FROM assets WHERE type = ?';
+    let query = 'SELECT assets.*, users.username FROM assets LEFT JOIN users ON assets.user_id = users.id WHERE type = ?';
     let params: any[] = ['video'];
 
     if (user.role !== 'admin') {
-      query += ' AND user_id = ?';
+      query += ' AND assets.user_id = ?';
       params.push(user.id);
     }
 
-    query += ' ORDER BY created_at DESC';
+    query += ' ORDER BY assets.created_at DESC';
 
     try {
       const rows = db.prepare(query).all(...params) as any[];
       // The frontend expects paths relative to /downloads/videos/
-      res.json(rows.map(row => row.file_path.replace(/\\/g, '/')));
+      res.json(rows.map(row => ({
+        path: row.file_path.replace(/\\/g, '/'),
+        userId: row.user_id,
+        username: row.username
+      })));
     } catch (err) {
       console.error('Failed to read videos from DB:', err);
       res.status(500).json({ error: 'Internal server error' });

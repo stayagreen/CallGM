@@ -14,16 +14,26 @@ interface Task {
   download: boolean;
   downloadedFiles?: string[];
   executor?: 'js' | 'cdp';
-  status?: 'pending' | 'running' | 'completed' | 'failed';
+  status?: 'pending' | 'running' | 'completed' | 'failed' | 'error';
 }
 
 interface Job {
   id: string;
   timestamp: number;
   tasks: Task[];
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'error';
   progress: number;
   statusMessage?: string;
+  resultFiles?: string[];
+  data?: any;
+  userId?: number;
+  username?: string;
+}
+
+interface GalleryAsset {
+  path: string;
+  userId: number;
+  username: string;
 }
 
 interface Template {
@@ -176,33 +186,6 @@ const JobItem = React.memo(({
   );
 });
 
-// Shared type interfaces
-interface Task {
-  id: string;
-  prompt: string;
-  images: string[];
-  count: number;
-  download: boolean;
-  downloadedFiles?: string[];
-  executor?: 'js' | 'cdp';
-  status?: 'pending' | 'running' | 'completed' | 'failed';
-}
-
-interface Job {
-  id: string;
-  timestamp: number;
-  tasks: Task[];
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  progress: number;
-  statusMessage?: string;
-}
-
-interface Template {
-  id: string;
-  name: string;
-  prompt: string;
-}
-
 // ... rest of the code ...
 
 export default function AppContent() {
@@ -257,8 +240,8 @@ function MainApp() {
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
-  const [galleryImages, setGalleryImages] = useState<string[]>([]);
-  const [videoGallery, setVideoGallery] = useState<string[]>([]);
+  const [galleryImages, setGalleryImages] = useState<GalleryAsset[]>([]);
+  const [videoGallery, setVideoGallery] = useState<GalleryAsset[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
   const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
@@ -268,6 +251,29 @@ function MainApp() {
   const [editingGalleryImage, setEditingGalleryImage] = useState<{ filename: string, url: string } | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<any>(null);
+
+  const { user } = useAuth();
+  const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set([user?.username || 'admin']));
+
+  const toggleUserExpand = (username: string) => {
+    setExpandedUsers(prev => {
+      const next = new Set(prev);
+      if (next.has(username)) next.delete(username);
+      else next.add(username);
+      return next;
+    });
+  };
+
+  const groupByUser = <T extends { username?: string }>(items: T[]) => {
+    const defaultUser = user?.username || 'Unknown';
+    const groups: Record<string, T[]> = {};
+    items.forEach(item => {
+      const uname = item.username || defaultUser;
+      if (!groups[uname]) groups[uname] = [];
+      groups[uname].push(item);
+    });
+    return groups;
+  };
 
   useEffect(() => {
     // Initialize SpeechRecognition if available
@@ -1261,34 +1267,83 @@ function MainApp() {
                   </div>
                 </div>
               ))}
-              {jobs.map(job => (
-                <JobItem 
-                  key={job.id}
-                  job={job}
-                  isSelected={selectedJobs.has(job.id)}
-                  isExpanded={expandedJobs.has(job.id)}
-                  onToggleSelect={(id, checked) => {
-                    const newSet = new Set(selectedJobs);
-                    if (checked) newSet.add(id);
-                    else newSet.delete(id);
-                    setSelectedJobs(newSet);
-                  }}
-                  onToggleExpand={(id) => {
-                    const newSet = new Set(expandedJobs);
-                    if (newSet.has(id)) newSet.delete(id);
-                    else newSet.add(id);
-                    setExpandedJobs(newSet);
-                  }}
-                  onViewImage={setViewingImage}
-                  onImportTask={(t) => {
-                    const newTask = { id: Date.now().toString(), prompt: t.prompt, images: t.images || [], count: 1, download: true };
-                    setTasks([...tasks, newTask]);
-                    setActiveTaskId(newTask.id);
-                    setActiveTab('tasks');
-                  }}
-                  galleryUpdateToken={galleryUpdateToken}
-                />
-              ))}
+              {user?.role === 'admin' ? (
+                Object.entries(groupByUser(jobs)).map(([uname, userJobs]) => (
+                  <div key={uname} className="mb-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                    <div 
+                      onClick={() => toggleUserExpand(uname)}
+                      className="bg-gray-50 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-200 hover:bg-gray-100 transition"
+                    >
+                      <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                        <span>👤 {uname}</span>
+                        <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full font-bold">{userJobs.length} 条记录</span>
+                      </h3>
+                      {expandedUsers.has(uname) ? <ChevronUp size={20} className="text-gray-500" /> : <ChevronDown size={20} className="text-gray-500" />}
+                    </div>
+                    {expandedUsers.has(uname) && (
+                      <div className="p-4 space-y-4 bg-gray-50/50">
+                        {userJobs.map(job => (
+                          <JobItem 
+                            key={job.id}
+                            job={job}
+                            isSelected={selectedJobs.has(job.id)}
+                            isExpanded={expandedJobs.has(job.id)}
+                            onToggleSelect={(id, checked) => {
+                              const newSet = new Set(selectedJobs);
+                              if (checked) newSet.add(id);
+                              else newSet.delete(id);
+                              setSelectedJobs(newSet);
+                            }}
+                            onToggleExpand={(id) => {
+                              const newSet = new Set(expandedJobs);
+                              if (newSet.has(id)) newSet.delete(id);
+                              else newSet.add(id);
+                              setExpandedJobs(newSet);
+                            }}
+                            onViewImage={setViewingImage}
+                            onImportTask={(t) => {
+                              const newTask = { id: Date.now().toString(), prompt: t.prompt, images: t.images || [], count: 1, download: true };
+                              setTasks([...tasks, newTask]);
+                              setActiveTaskId(newTask.id);
+                              setActiveTab('tasks');
+                            }}
+                            galleryUpdateToken={galleryUpdateToken}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))
+              ) : (
+                jobs.map(job => (
+                  <JobItem 
+                    key={job.id}
+                    job={job}
+                    isSelected={selectedJobs.has(job.id)}
+                    isExpanded={expandedJobs.has(job.id)}
+                    onToggleSelect={(id, checked) => {
+                      const newSet = new Set(selectedJobs);
+                      if (checked) newSet.add(id);
+                      else newSet.delete(id);
+                      setSelectedJobs(newSet);
+                    }}
+                    onToggleExpand={(id) => {
+                      const newSet = new Set(expandedJobs);
+                      if (newSet.has(id)) newSet.delete(id);
+                      else newSet.add(id);
+                      setExpandedJobs(newSet);
+                    }}
+                    onViewImage={setViewingImage}
+                    onImportTask={(t) => {
+                      const newTask = { id: Date.now().toString(), prompt: t.prompt, images: t.images || [], count: 1, download: true };
+                      setTasks([...tasks, newTask]);
+                      setActiveTaskId(newTask.id);
+                      setActiveTab('tasks');
+                    }}
+                    galleryUpdateToken={galleryUpdateToken}
+                  />
+                ))
+              )}
             </>
           )}
         </div>
@@ -1376,63 +1431,98 @@ function MainApp() {
               <p className="text-sm mt-2">执行带有开启下载选项的任务后，图片会显示在这里</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {Array.from({ length: uploadingCount }).map((_, i) => (
-                <div key={`uploading-${i}`} className="group relative bg-white p-2 rounded-xl border border-blue-200 shadow-sm animate-pulse">
-                  <div className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-50 flex items-center justify-center">
-                    <div className="flex flex-col items-center gap-2">
-                      <Clock className="w-8 h-8 text-blue-400 animate-spin" />
-                      <span className="text-[10px] text-blue-500 font-bold">正在上传...</span>
-                    </div>
-                  </div>
-                  <div className="mt-3 h-4 bg-gray-100 rounded w-2/3 mx-auto"></div>
-                </div>
-              ))}
-              {galleryImages.map(img => (
-                <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
-                  <div onClick={() => !processingGalleryImages.has(img) && setViewingImage(`/downloads/${img}?t=${galleryUpdateToken}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
-                    <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} alt={img} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" loading="lazy" />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                      <ImageIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
-                    </div>
-                    {processingGalleryImages.has(img) && (
-                      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-2 z-10">
-                        <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2"></div>
-                        <span className="text-[10px] text-white font-bold">正在去水印...</span>
+            <div className="flex flex-col gap-6 w-full">
+              {uploadingCount > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                  {Array.from({ length: uploadingCount }).map((_, i) => (
+                    <div key={`uploading-${i}`} className="group relative bg-white p-2 rounded-xl border border-blue-200 shadow-sm animate-pulse">
+                      <div className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-50 flex items-center justify-center">
+                        <div className="flex flex-col items-center gap-2">
+                          <Clock className="w-8 h-8 text-blue-400 animate-spin" />
+                          <span className="text-[10px] text-blue-500 font-bold">正在上传...</span>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                  <div className="mt-3 flex items-center justify-between px-1">
-                    <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img}</span>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => !processingGalleryImages.has(img) && setEditingGalleryImage({ filename: img, url: `/downloads/${img}?t=${galleryUpdateToken}` })}
-                        disabled={processingGalleryImages.has(img)}
-                        className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-purple-500 hover:bg-purple-50'}`}
-                        title="智能填充 (手动去水印)"
-                      >
-                        <Paintbrush className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => !processingGalleryImages.has(img) && handleOneClickWatermark(img)}
-                        disabled={processingGalleryImages.has(img)}
-                        className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
-                        title="一键去水印"
-                      >
-                        <Scissors className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => !processingGalleryImages.has(img) && deleteGalleryImage(img)}
-                        disabled={processingGalleryImages.has(img)}
-                        className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-red-500 hover:bg-red-50'}`}
-                        title="彻底删除源文件"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="mt-3 h-4 bg-gray-100 rounded w-2/3 mx-auto"></div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-              ))}
+              )}
+              {(() => {
+                const renderGalleryItem = (imgData: GalleryAsset) => {
+                  const img = imgData.path;
+                  return (
+                    <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
+                      <div onClick={() => !processingGalleryImages.has(img) && setViewingImage(`/downloads/${img}?t=${galleryUpdateToken}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
+                        <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} alt={img} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" loading="lazy" />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                          <ImageIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                        </div>
+                        {processingGalleryImages.has(img) && (
+                          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-2 z-10">
+                            <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2"></div>
+                            <span className="text-[10px] text-white font-bold">正在去水印...</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-3 flex items-center justify-between px-1">
+                        <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img.split('/').pop()}</span>
+                        <div className="flex gap-1">
+                          <button
+                            onClick={() => !processingGalleryImages.has(img) && setEditingGalleryImage({ filename: img, url: `/downloads/${img}?t=${galleryUpdateToken}` })}
+                            disabled={processingGalleryImages.has(img)}
+                            className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-purple-500 hover:bg-purple-50'}`}
+                            title="智能填充 (手动去水印)"
+                          >
+                            <Paintbrush className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => !processingGalleryImages.has(img) && handleOneClickWatermark(img)}
+                            disabled={processingGalleryImages.has(img)}
+                            className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
+                            title="一键去水印"
+                          >
+                            <Scissors className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => !processingGalleryImages.has(img) && deleteGalleryImage(img)}
+                            disabled={processingGalleryImages.has(img)}
+                            className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-red-500 hover:bg-red-50'}`}
+                            title="彻底删除源文件"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                };
+
+                return user?.role === 'admin' ? (
+                  Object.entries(groupByUser(galleryImages)).map(([uname, imgs]) => (
+                    <div key={uname} className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden mb-4">
+                      <div 
+                        onClick={() => toggleUserExpand(uname + '_gallery')}
+                        className="bg-gray-50 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-200 hover:bg-gray-100 transition"
+                      >
+                        <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                          <span>👤 {uname}</span>
+                          <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full font-bold">{imgs.length} 张图片</span>
+                        </h3>
+                        {expandedUsers.has(uname + '_gallery') ? <ChevronUp size={20} className="text-gray-500" /> : <ChevronDown size={20} className="text-gray-500" />}
+                      </div>
+                      {expandedUsers.has(uname + '_gallery') && (
+                        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 bg-gray-50/50">
+                          {imgs.map(renderGalleryItem)}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    {galleryImages.map(renderGalleryItem)}
+                  </div>
+                );
+              })()}
             </div>
           )}
           </div>
@@ -1470,7 +1560,105 @@ function MainApp() {
                   </div>
                 </div>
               ))}
-              {videoJobs.map(job => (
+              {user?.role === 'admin' ? Object.entries(groupByUser(videoJobs)).map(([uname, jobs]) => (
+                <div key={uname} className="mb-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                  <div 
+                    onClick={() => toggleUserExpand(uname + '_video')}
+                    className="bg-gray-50 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-200 hover:bg-gray-100 transition"
+                  >
+                    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                      <span>👤 {uname}</span>
+                      <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full font-bold">{jobs.length} 条记录</span>
+                    </h3>
+                    {expandedUsers.has(uname + '_video') ? <ChevronUp size={20} className="text-gray-500" /> : <ChevronDown size={20} className="text-gray-500" />}
+                  </div>
+                  {expandedUsers.has(uname + '_video') && (
+                    <div className="p-4 space-y-4 bg-gray-50/50">
+                      {jobs.map(job => (
+                        <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                          <div className="flex justify-between items-center mb-3">
+                            <div className="flex items-center gap-3">
+                              <span className="font-bold text-gray-900 text-lg">{new Date(job.timestamp).toLocaleString()}</span>
+                              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
+                                job.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                                job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
+                                job.status === 'error' ? 'bg-red-100 text-red-700' :
+                                'bg-yellow-100 text-yellow-700'
+                              }`}>
+                                {job.status === 'completed' && <CheckCircle2 size={14} />}
+                                {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
+                                {job.status === 'pending' && <Clock size={14} />}
+                                {job.status === 'error' && <X size={14} />}
+                                {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
+                              </span>
+                            </div>
+                            <button 
+                              onClick={async () => {
+                                if (confirm('确定要删除这条视频渲染记录吗？')) {
+                                  try {
+                                    const res = await fetch(`/api/video/jobs/${job.id}`, { method: 'DELETE' });
+                                    if (res.ok) fetchVideoJobs();
+                                  } catch (e) {
+                                    console.error('Failed to delete video job', e);
+                                  }
+                                }
+                              }}
+                              className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
+                              title="删除记录"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                          
+                          {job.status === 'running' && (
+                            <div className="w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden border border-gray-200">
+                              <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
+                                <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                              </div>
+                            </div>
+                          )}
+
+                          {job.status === 'error' && (
+                            <div className="text-red-500 text-sm mb-3 bg-red-50 p-3 rounded-lg">
+                              视频渲染失败
+                            </div>
+                          )}
+                          
+                          <div className="flex justify-between items-center">
+                            <div className="text-sm text-gray-600">
+                              包含 {job.data.storyboards?.length || 0} 个分镜
+                            </div>
+                            <button 
+                              onClick={() => setViewingVideoJobDetails(job)}
+                              className="text-sm text-blue-600 font-medium hover:underline"
+                            >
+                              查看详情
+                            </button>
+                          </div>
+
+                          {((job.status === 'completed' && job.data.outputVideo) || (job.status === 'completed' && job.resultFiles && job.resultFiles.length > 0)) && (
+                            <div className="mt-4 flex gap-3">
+                              <button 
+                                onClick={() => setViewingVideo(`/downloads/videos/${job.data.outputVideo || job.resultFiles[0]}`)}
+                                className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg font-medium hover:bg-blue-100 transition"
+                              >
+                                <PlayCircle size={16}/> 预览视频
+                              </button>
+                              <a 
+                                href={`/downloads/videos/${job.data.outputVideo || job.resultFiles[0]}`} 
+                                download
+                                className="flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg font-medium hover:bg-gray-100 transition border border-gray-200"
+                              >
+                                <Download size={16}/> 下载视频
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )) : videoJobs.map(job => (
                 <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
                   <div className="flex justify-between items-center mb-3">
                     <div className="flex items-center gap-3">
@@ -1570,9 +1758,10 @@ function MainApp() {
               <Film className="w-16 h-16 mx-auto mb-4 text-gray-300" />
               <p className="text-lg font-medium text-gray-600">暂无视频</p>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {videoGallery.map(vid => (
+          ) : (() => {
+            const renderVideoItem = (vidData: GalleryAsset) => {
+              const vid = vidData.path;
+              return (
                 <div key={vid} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
                   <div onClick={() => setViewingVideo(`/downloads/videos/${vid}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
                     <img src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} alt={vid} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
@@ -1581,7 +1770,7 @@ function MainApp() {
                     </div>
                   </div>
                   <div className="mt-3 flex items-center justify-between px-1">
-                    <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid}</span>
+                    <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid.split('/').pop()}</span>
                     <button
                       onClick={async () => {
                         if (!window.confirm('确定要删除这个视频吗？')) return;
@@ -1595,9 +1784,37 @@ function MainApp() {
                     </button>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+              );
+            };
+
+            return user?.role === 'admin' ? (
+              <div className="flex flex-col gap-6 w-full">
+                {Object.entries(groupByUser(videoGallery)).map(([uname, vids]) => (
+                  <div key={uname} className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                    <div 
+                      onClick={() => toggleUserExpand(uname + '_videoGallery')}
+                      className="bg-gray-50 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-200 hover:bg-gray-100 transition"
+                    >
+                      <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                        <span>👤 {uname}</span>
+                        <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full font-bold">{vids.length} 个视频</span>
+                      </h3>
+                      {expandedUsers.has(uname + '_videoGallery') ? <ChevronUp size={20} className="text-gray-500" /> : <ChevronDown size={20} className="text-gray-500" />}
+                    </div>
+                    {expandedUsers.has(uname + '_videoGallery') && (
+                      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 bg-gray-50/50">
+                        {vids.map(renderVideoItem)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {videoGallery.map(renderVideoItem)}
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1807,7 +2024,9 @@ function MainApp() {
                 </div>
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                  {galleryImages.map(img => (
+                  {galleryImages.map(imgData => {
+                    const img = imgData.path;
+                    return (
                     <div 
                       key={img} 
                       onClick={() => {
@@ -1825,7 +2044,7 @@ function MainApp() {
                         </div>
                       )}
                     </div>
-                  ))}
+                  )})}
                 </div>
               )}
             </div>
