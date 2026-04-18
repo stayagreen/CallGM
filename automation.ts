@@ -47,6 +47,18 @@ let lastHeartbeat = Date.now();
 export const jobProgress = new Map<string, { completed: number, total: number, status: string, message?: string }>();
 export const processingImages = new Set<string>();
 
+// 安全解析配置数值
+function parseConfigNumber(value: any, defaultValue: number): number {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+        const rangeMatch = value.match(/(\d+)\s*-\s*(\d+)/);
+        if (rangeMatch) return parseInt(rangeMatch[2], 10); // 取范围最大值
+        const numMatch = value.match(/(\d+)/);
+        return numMatch ? parseInt(numMatch[0], 10) : defaultValue;
+    }
+    return defaultValue;
+}
+
 const getRandomTime = (min: number, max: number) => {
     return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
 };
@@ -634,7 +646,7 @@ async function executeWithCDP(tasks: any[], filename: string) {
                             
                             // 实际的文件移动逻辑
                             const config = await getAutomationConfig();
-                            const timeoutSeconds = config.downloadTimeout || 35; // 默认缩短到 35 秒
+                            const timeoutSeconds = parseConfigNumber(config.downloadTimeout, 35); // 默认缩短到 35 秒
                             const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
                             const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, downloadDir, timeoutSeconds);
                             
@@ -1215,7 +1227,9 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string) {
             const injectTime = Date.now();
             
             // 使用配置的超时时间
-            const timeoutSeconds = Math.floor(getRandomTime(config.downloadMin, config.downloadMax) / 1000);
+            const min = parseConfigNumber(config.downloadMin, 180);
+            const max = parseConfigNumber(config.downloadMax, 200);
+            const timeoutSeconds = Math.floor(getRandomTime(min, max) / 1000);
             
             // 给足等待图片生成和下载
             const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, downloadDir, timeoutSeconds);
