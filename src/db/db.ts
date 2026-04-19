@@ -9,6 +9,7 @@ if (!fs.existsSync(dataDir)) {
 }
 
 const dbPath = path.join(dataDir, 'app.db');
+console.log('dbPath is:', dbPath);
 const db = new Database(dbPath);
 
 // Enable WAL mode for better concurrency

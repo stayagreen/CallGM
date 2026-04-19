@@ -83,20 +83,20 @@ export function startVideoAutomationWatcher(getConcurrency: () => number) {
                 });
             }
             
-            for (const { path: filePath, filename } of taskFiles) {
+            for (const { path: filePath, filename: baseFilename } of taskFiles) {
                 if (activeVideoJobs >= maxConcurrency) break;
                 
+                const jobId = baseFilename.replace('.json', '');
                 // Check if already processing
-                const relKey = path.relative(videoTaskDir, filePath).replace(/\\/g, '/');
-                if (videoJobProgress.has(relKey) && videoJobProgress.get(relKey)?.status === 'running') continue;
+                if (videoJobProgress.has(jobId) && videoJobProgress.get(jobId)?.status === 'running') continue;
 
                 activeVideoJobs++;
-                videoJobProgress.set(relKey, { progress: 0, status: 'running' });
+                videoJobProgress.set(jobId, { progress: 0, status: 'running' });
                 
                 // Process async without blocking the loop
-                processVideoTask(filePath, relKey).catch(err => {
-                    console.error(`❌ 视频任务 ${filename} 失败:`, err);
-                    videoJobProgress.set(relKey, { progress: 0, status: 'error', error: err.message });
+                processVideoTask(filePath, jobId).catch(err => {
+                    console.error(`❌ 视频任务 ${baseFilename} 失败:`, err);
+                    videoJobProgress.set(jobId, { progress: 0, status: 'error', error: err.message });
                     // Move to history even on error to keep record
                     try {
                         const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
@@ -109,7 +109,7 @@ export function startVideoAutomationWatcher(getConcurrency: () => number) {
                         const targetHistoryDir = path.join(videoHistoryDir, relativeSubDir);
                         if (!fs.existsSync(targetHistoryDir)) fs.mkdirSync(targetHistoryDir, { recursive: true });
 
-                        fs.writeFileSync(path.join(targetHistoryDir, filename), JSON.stringify(taskData, null, 2));
+                        fs.writeFileSync(path.join(targetHistoryDir, baseFilename), JSON.stringify(taskData, null, 2));
                         fs.unlinkSync(filePath);
                     } catch (e) {
                         console.error('Failed to move error task to history', e);
@@ -240,7 +240,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     // Update DB: Final Status, Data and Asset registration
     const relativeAssetPath = userId ? `${userId}/${outputFilename}` : outputFilename;
     try {
-        db.prepare('UPDATE tasks SET status = ?, progress = 100, data = ?, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+        db.prepare('UPDATE tasks SET status = ?, progress = ?, data = ?, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
             'completed',
             100,
             JSON.stringify(taskData),
