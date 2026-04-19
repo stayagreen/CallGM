@@ -3,18 +3,18 @@ import { useAuth } from '../context/AuthContext';
 import { Lock, User, Sparkles } from 'lucide-react';
 
 export const Login: React.FC = () => {
-  const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState('');
-  const { login, register } = useAuth();
+  const { login } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
-    const result = isLogin ? await login({ username, password }) : await register({ username, password });
+    const result = await login({ username, password, remember });
     setIsLoading(false);
     if (result.error) {
       setError(result.error);
@@ -28,8 +28,8 @@ export const Login: React.FC = () => {
           <div className="bg-blue-600 p-3 rounded-2xl mb-4 shadow-lg shadow-blue-200">
             <Sparkles className="text-white w-8 h-8" />
           </div>
-          <h2 className="text-2xl font-bold text-gray-900">{isLogin ? '欢迎回来' : '创建账号'}</h2>
-          <p className="text-gray-500 text-sm mt-1">{isLogin ? '登录以继续您的工作' : '开始您的创意之旅'}</p>
+          <h2 className="text-2xl font-bold text-gray-900">欢迎回来</h2>
+          <p className="text-gray-500 text-sm mt-1">登录以继续您的工作</p>
         </div>
         
         {error && <div className="bg-red-50 text-red-600 text-xs p-3 rounded-lg mb-4 text-center">{error}</div>}
@@ -57,17 +57,26 @@ export const Login: React.FC = () => {
               required
             />
           </div>
+          
+          <div className="flex items-center gap-2 mt-4 px-1">
+            <input 
+              id="remember"
+              type="checkbox" 
+              checked={remember}
+              onChange={e => setRemember(e.target.checked)}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="remember" className="text-sm font-medium text-gray-600 cursor-pointer select-none">
+              记住登录状态
+            </label>
+          </div>
         </div>
 
         <button 
           className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition mt-6 shadow-lg shadow-blue-200 disabled:opacity-50"
           disabled={isLoading}
         >
-          {isLoading ? '处理中...' : (isLogin ? '登录' : '注册')}
-        </button>
-        
-        <button type="button" className="w-full text-blue-600 text-sm mt-6 font-medium hover:text-blue-700 transition" onClick={() => setIsLogin(!isLogin)}>
-          {isLogin ? '没有账号？去注册' : '已有账号？去登录'}
+          {isLoading ? '处理中...' : '登录'}
         </button>
       </form>
     </div>

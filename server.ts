@@ -34,7 +34,10 @@ async function startServer() {
     secret: 'secure-random-key-change-this',
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false } // Set to true in production with HTTPS
+    cookie: { 
+      secure: false,
+      maxAge: 24 * 60 * 60 * 1000 // Default 1 day
+    } 
   }));
 
   // Auth Middleware
@@ -46,26 +49,85 @@ async function startServer() {
     }
   };
 
+  const requireAdmin = (req: any, res: any, next: any) => {
+    if (req.session.user && req.session.user.role === 'admin') {
+      next();
+    } else {
+      res.status(403).json({ error: 'Forbidden' });
+    }
+  };
+
   // Auth routes
-  app.post('/api/register', async (req, res) => {
-    const { username, password } = req.body;
+  app.get('/api/me', (req, res) => {
+    res.json({ user: req.session.user || null });
+  });
+
+  app.post('/api/login', async (req, res) => {
+    const { username, password, remember } = req.body;
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
+    if (user && await bcrypt.compare(password, user.password)) {
+      req.session.user = { id: user.id, username: user.username, role: user.role };
+      
+      if (remember) {
+        // Session lasts 30 days if remembered
+        req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000;
+      } else {
+        // Session lasts only until browser closes
+        req.session.cookie.maxAge = undefined;
+      }
+      
+      res.json({ message: 'Logged in', user: req.session.user });
+    } else {
+      res.status(401).json({ error: 'Invalid credentials' });
+    }
+  });
+
+  // User Management Routes (Admin Only)
+  app.get('/api/admin/users', requireAdmin, (req, res) => {
+    const users = db.prepare('SELECT id, username, role FROM users').all();
+    res.json(users);
+  });
+
+  app.post('/api/admin/users', requireAdmin, async (req, res) => {
+    const { username, password, role } = req.body;
+    if (!username || !password || !role) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
     const hashedPassword = await bcrypt.hash(password, 10);
     try {
-      db.prepare('INSERT INTO users (username, password) VALUES (?, ?)').run(username, hashedPassword);
-      res.json({ message: 'User registered' });
+      db.prepare('INSERT INTO users (username, password, role) VALUES (?, ?, ?)').run(username, hashedPassword, role);
+      res.json({ message: 'User created' });
     } catch (e) {
       res.status(400).json({ error: 'User already exists' });
     }
   });
 
-  app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
-    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
-    if (user && await bcrypt.compare(password, user.password)) {
-      req.session.user = { id: user.id, username: user.username, role: user.role };
-      res.json({ message: 'Logged in', user: req.session.user });
-    } else {
-      res.status(401).json({ error: 'Invalid credentials' });
+  app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
+    const { id } = req.params;
+    const { username, password, role } = req.body;
+    try {
+      if (password) {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        db.prepare('UPDATE users SET username = ?, password = ?, role = ? WHERE id = ?').run(username, hashedPassword, role, id);
+      } else {
+        db.prepare('UPDATE users SET username = ?, role = ? WHERE id = ?').run(username, role, id);
+      }
+      res.json({ message: 'User updated' });
+    } catch (e) {
+      res.status(400).json({ error: 'Update failed' });
+    }
+  });
+
+  app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+    const { id } = req.params;
+    if (parseInt(id) === req.session.user?.id) {
+      return res.status(400).json({ error: 'Cannot delete current user' });
+    }
+    try {
+      db.prepare('DELETE FROM users WHERE id = ?').run(id);
+      res.json({ message: 'User deleted' });
+    } catch (e) {
+      res.status(400).json({ error: 'Delete failed' });
     }
   });
 

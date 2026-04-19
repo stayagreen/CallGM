@@ -207,6 +207,173 @@ export default function AppContent() {
   );
 }
 
+function UserManagement() {
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<any>(null);
+  const [formData, setFormData] = useState({ username: '', password: '', role: 'user' });
+
+  const fetchUsers = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/admin/users');
+      const data = await res.json();
+      setUsers(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const url = editingUser ? `/api/admin/users/${editingUser.id}` : '/api/admin/users';
+    const method = editingUser ? 'PUT' : 'POST';
+    
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+      if (res.ok) {
+        setShowModal(false);
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        alert(data.error || '操作失败');
+      }
+    } catch (e) {
+      alert('发生错误');
+    }
+  };
+
+  const deleteUser = async (id: number) => {
+    if (!confirm('确定要删除该用户吗？')) return;
+    try {
+      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+      if (res.ok) fetchUsers();
+      else {
+        const data = await res.json();
+        alert(data.error || '删除失败');
+      }
+    } catch (e) {
+      alert('发生错误');
+    }
+  };
+
+  return (
+    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-gray-800">用户管理</h2>
+        <button 
+          onClick={() => {
+            setEditingUser(null);
+            setFormData({ username: '', password: '', role: 'user' });
+            setShowModal(true);
+          }}
+          className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-blue-700 transition"
+        >
+          新增用户
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-gray-400">加载中...</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-gray-100">
+                <th className="py-3 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">用户名</th>
+                <th className="py-3 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider">权限</th>
+                <th className="py-3 px-4 text-xs font-bold text-gray-400 uppercase tracking-wider text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50 transition">
+                  <td className="py-4 px-4 font-medium text-gray-800">{u.username}</td>
+                  <td className="py-4 px-4 text-sm">
+                    <span className={`px-2 py-1 rounded text-xs font-bold ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {u.role === 'admin' ? '管理员' : '普通用户'}
+                    </span>
+                  </td>
+                  <td className="py-4 px-4 text-right space-x-2">
+                    <button 
+                      onClick={() => {
+                        setEditingUser(u);
+                        setFormData({ username: u.username, password: '', role: u.role });
+                        setShowModal(true);
+                      }}
+                      className="text-blue-600 hover:text-blue-800 text-sm font-bold"
+                    >编辑</button>
+                    <button 
+                      onClick={() => deleteUser(u.id)}
+                      className="text-red-600 hover:text-red-800 text-sm font-bold"
+                    >删除</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showModal && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
+          <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm">
+            <h3 className="text-xl font-bold mb-6">{editingUser ? '编辑用户' : '新增用户'}</h3>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">用户名</label>
+                <input 
+                  type="text" 
+                  value={formData.username}
+                  onChange={e => setFormData({ ...formData, username: e.target.value })}
+                  className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">密码 {editingUser && '(留空代表不修改)'}</label>
+                <input 
+                  type="password" 
+                  value={formData.password}
+                  onChange={e => setFormData({ ...formData, password: e.target.value })}
+                  className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500"
+                  required={!editingUser}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">权限</label>
+                <select 
+                  value={formData.role}
+                  onChange={e => setFormData({ ...formData, role: e.target.value })}
+                  className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="user">普通用户</option>
+                  <option value="admin">管理员</option>
+                </select>
+              </div>
+              <div className="flex gap-4 pt-4">
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-gray-600 hover:bg-gray-200">取消</button>
+                <button type="submit" className="flex-1 py-3 bg-blue-600 rounded-xl font-bold text-white hover:bg-blue-700">提交</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Rename original App to MainApp to keep existing functionality intact
 function MainApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -216,8 +383,8 @@ function MainApp() {
   const [showAddTaskMenu, setShowAddTaskMenu] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery'>('tasks');
-  const [showNavDropdown, setShowNavDropdown] = useState<'tasks' | 'records' | 'gallery' | null>(null);
+  const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery' | 'users'>('tasks');
+  const [showNavDropdown, setShowNavDropdown] = useState<'tasks' | 'records' | 'gallery' | 'admin' | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [systemConfig, setSystemConfig] = useState({ 
     systemDownloadsDir: '', 
@@ -870,6 +1037,27 @@ function MainApp() {
               </div>
             )}
           </div>
+          {/* Admin Dropdown */}
+          {user?.role === 'admin' && (
+            <div className="relative">
+              <button 
+                onClick={() => setShowNavDropdown(showNavDropdown === 'admin' ? null : 'admin')} 
+                className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['users'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+              >
+                管理员 <ChevronDown size={16}/>
+              </button>
+              {showNavDropdown === 'admin' && (
+                <div className="absolute top-full left-0 mt-1 w-32 bg-white border border-gray-100 shadow-lg rounded-xl overflow-hidden z-50">
+                  <button 
+                    onClick={() => { setActiveTab('users'); setShowNavDropdown(null); }}
+                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'users' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
+                  >
+                    用户管理
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <button 
           onClick={() => setShowConfigModal(true)} 
@@ -1832,6 +2020,10 @@ function MainApp() {
             );
           })()}
         </div>
+      )}
+
+      {activeTab === 'users' && user?.role === 'admin' && (
+        <UserManagement />
       )}
 
       {editingGalleryImage && (

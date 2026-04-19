@@ -13,11 +13,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const taskDir = path.join(__dirname, 'task');
 const historyDir = path.join(taskDir, 'history');
 const downloadDir = path.join(__dirname, 'download');
+const debugDir = path.join(__dirname, 'debug_screenshots');
 
 // Ensure directories exist
 if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true });
 if (!fs.existsSync(historyDir)) fs.mkdirSync(historyDir, { recursive: true });
 if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
+if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
 
 function copyImageToClipboard(imagePath: string, isMac: boolean) {
     try {
@@ -351,6 +353,18 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                 let client: any = null;
 
                 try {
+                    // 0. 强力清理：在开启每一个新任务标签页前，先强制关闭所有已存在的页面标签，确保环境纯净
+                    try {
+                        const targets = await CDP.List({ port: 9222 });
+                        for (const t of targets) {
+                            if (t.type === 'page') {
+                                await CDP.Close({ id: t.id, port: 9222 });
+                            }
+                        }
+                    } catch (e) {
+                        // 忽略清理阶段可能的连接报错
+                    }
+
                     // 1. 创建并连接新标签页
                     currentTarget = await CDP.New({ url: 'https://gemini.google.com/', port: 9222 });
                     client = await CDP({ target: currentTarget.id, port: 9222 });
@@ -570,7 +584,8 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                              console.log(`${stepPrefix} 🔦 [监控中] 标题: "${stateRes.result?.value?.title || '未知'}" | ${attempts}/80`);
                              await Runtime.evaluate({ expression: 'window.scrollTo(0, document.body.scrollHeight)' });
                              const loopSnap = await Page.captureScreenshot({ format: 'png' });
-                             fs.writeFileSync(path.join(__dirname, `debug_${filename}_${i + 1}.png`), Buffer.from(loopSnap.data, 'base64'));
+                             const debugPath = path.join(debugDir, `debug_${filename}_${i + 1}_at_${Date.now()}.png`);
+                             fs.writeFileSync(debugPath, Buffer.from(loopSnap.data, 'base64'));
                              await simulateIdleMovement(Input);
                         }
 
@@ -774,6 +789,55 @@ async function executeBatch(input: any, filename: string, userId?: string | numb
     }
 }
 
+let lastCleanupDay = -1;
+
+function cleanOldDebugScreenshots() {
+    try {
+        const now = new Date();
+        const currentDay = now.getDate();
+        const hours = now.getHours();
+
+        // 每天中午 12 点清理昨天及更早的截图
+        if (hours === 12 && lastCleanupDay !== currentDay) {
+            lastCleanupDay = currentDay;
+            const yesterdayEnd = new Date(now);
+            yesterdayEnd.setDate(now.getDate() - 1);
+            yesterdayEnd.setHours(23, 59, 59, 999);
+            
+            // 1. 清理新目录
+            if (fs.existsSync(debugDir)) {
+                console.log('🧹 [Cleanup] 正在清理专用目录中的调试截图...');
+                const files = fs.readdirSync(debugDir);
+                deleteFilesOlderThan(files, debugDir, yesterdayEnd);
+            }
+
+            // 2. 顺便清理根目录下的遗留截图（过渡期清理）
+            console.log('🧹 [Cleanup] 正在扫描根目录遗留截图...');
+            const rootFiles = fs.readdirSync(__dirname).filter(f => f.startsWith('debug_') && f.endsWith('.png'));
+            deleteFilesOlderThan(rootFiles, __dirname, yesterdayEnd);
+        }
+    } catch (e) {
+        console.error('❌ 清理调试截图失败:', e);
+    }
+}
+
+function deleteFilesOlderThan(files: string[], baseDir: string, threshold: Date) {
+    let deletedCount = 0;
+    for (const file of files) {
+        const filePath = path.join(baseDir, file);
+        try {
+            const stats = fs.statSync(filePath);
+            if (stats.mtime < threshold) {
+                fs.unlinkSync(filePath);
+                deletedCount++;
+            }
+        } catch (e) {}
+    }
+    if (deletedCount > 0) {
+        console.log(`🗑️ [Cleanup] 从 ${baseDir} 已删除 ${deletedCount} 张过期截图。`);
+    }
+}
+
 export function startAutomationWatcher() {
   console.log('\n====================================================');
   console.log('🚀 CallGM 自动化引擎已成功启动！');
@@ -783,6 +847,7 @@ export function startAutomationWatcher() {
   
   // Simple polling to avoid fs.watch cross-platform quirks
   setInterval(async () => {
+    cleanOldDebugScreenshots();
     if (isRunning) return; // 防止并发冲突
     isRunning = true;
 
