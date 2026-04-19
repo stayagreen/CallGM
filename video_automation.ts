@@ -254,7 +254,10 @@ async function processVideoTask(filePath: string, jobKey: string) {
             'video',
             relativeAssetPath
         );
-    } catch(e) {}
+        console.log(`✅ [Database] Updated video job ${jobId} status to completed`);
+    } catch(e) {
+        console.error(`❌ [Database] Failed to update video job ${jobId}`, e);
+    }
 
     videoJobProgress.set(jobKey, { progress: 100, status: 'completed' });
     
@@ -547,19 +550,20 @@ async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: 
     }
 }
 
-function generateThumbnail(videoPath: string, thumbPath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-        ffmpeg(videoPath)
-            .screenshots({
-                timestamps: ['00:00:01.000'],
-                filename: path.basename(thumbPath),
-                folder: path.dirname(thumbPath),
-                size: '320x240'
-            })
-            .on('end', () => resolve())
-            .on('error', (err) => {
-                console.error('Thumbnail error:', err);
-                resolve(); // Don't fail the whole job
-            });
-    });
+async function generateThumbnail(videoPath: string, thumbPath: string): Promise<void> {
+    try {
+        const args = [
+            '-ss', '00:00:01.000',
+            '-i', videoPath,
+            '-vframes', '1',
+            '-q:v', '2', // High quality jpeg
+            '-y',
+            thumbPath
+        ];
+        console.log(`[FFmpeg] Generating Thumbnail: ${FFMPEG_PATH} ${args.join(' ')}`);
+        await execa(FFMPEG_PATH, args);
+    } catch (err: any) {
+        console.error('❌ Thumbnail error:', err.stderr || err.message);
+        // Don't throw, let the job complete even if thumbnail fails
+    }
 }

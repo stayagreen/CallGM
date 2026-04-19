@@ -186,8 +186,11 @@ async function startServer() {
     try {
         // Fix existing broken gallery images by converting 'uploads/...' records to 'upload' type instead of 'image'
         db.prepare("UPDATE assets SET type = 'upload' WHERE file_path LIKE 'uploads/%' AND type = 'image'").run();
+        
+        // Fix stuck running tasks on reboot
+        db.prepare("UPDATE tasks SET status = 'error' WHERE status = 'running'").run();
     } catch(e) {
-        console.error("Failed to migrate asset types", e);
+        console.error("Failed to migrate asset types or fix stuck tasks", e);
     }
 
     console.log('✅ DB sync complete.');

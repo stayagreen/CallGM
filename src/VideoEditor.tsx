@@ -168,7 +168,8 @@ export default function VideoEditor({
 
     for (const imgData of selectedGalleryGrids) {
       const imgPath = typeof imgData === 'string' ? imgData : (imgData as any).path;
-      const imgUrl = getBustedUrl(`/downloads/${imgPath}`);
+      const finalImageUrl = imgPath.startsWith('uploads/') ? `/${imgPath}` : `/downloads/${imgPath}`;
+      const imgUrl = getBustedUrl(finalImageUrl);
       
       const newImages = await new Promise<string[]>((resolve) => {
         const image = new Image();
@@ -691,14 +692,15 @@ export default function VideoEditor({
                           prev.includes(img) ? prev.filter(p => p !== img) : [...prev, img]
                         );
                       } else {
+                        const finalImageUrl = img.startsWith('uploads/') ? `/${img}` : `/downloads/${img}`;
                         // Find first empty storyboard or append
                         const emptyIndex = task.storyboards.findIndex(sb => !sb.image);
                         if (emptyIndex !== -1) {
-                          updateStoryboard(task.storyboards[emptyIndex].id, { image: `/downloads/${img}` });
+                          updateStoryboard(task.storyboards[emptyIndex].id, { image: finalImageUrl });
                         } else {
                           const newSb = {
                             id: Date.now().toString() + Math.random().toString(36).substring(7),
-                            image: `/downloads/${img}`,
+                            image: finalImageUrl,
                             animation: 'none',
                             transition: 'none',
                             text: '',
@@ -714,7 +716,12 @@ export default function VideoEditor({
                     }}
                     className={`relative aspect-square rounded-lg overflow-hidden border-4 cursor-pointer transition-all ${galleryMode === '4grid' && selectedGalleryGrids.includes(img) ? 'border-blue-500 shadow-md' : 'border-gray-200 hover:border-blue-300'}`}
                   >
-                    <img src={`/api/thumbnails/downloads/${img}${galleryUpdateToken ? `?t=${galleryUpdateToken}` : ''}`} className="w-full h-full object-cover" loading="lazy" />
+                    <img 
+                      src={`/api/thumbnails/${img.startsWith('uploads/') ? 'uploads' : 'downloads'}/${img.replace(/^uploads\//, '')}${galleryUpdateToken ? `?t=${galleryUpdateToken}` : ''}`} 
+                      className="w-full h-full object-cover" 
+                      loading="lazy" 
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
                     {galleryMode === '4grid' && selectedGalleryGrids.includes(img) && (
                       <div className="absolute top-2 right-2 w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold shadow-sm border-2 border-white">
                         <CheckCircle2 size={14} />

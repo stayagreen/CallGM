@@ -2037,7 +2037,12 @@ function MainApp() {
                       }}
                       className={`relative aspect-[9/16] rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${selectedGalleryImages.has(img) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300'}`}
                     >
-                      <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} className="w-full h-full object-contain" loading="lazy" />
+                      <img 
+                        src={`/api/thumbnails/${img.startsWith('uploads/') ? 'uploads' : 'downloads'}/${img.replace(/^uploads\//, '')}?t=${galleryUpdateToken}`} 
+                        className="w-full h-full object-contain" 
+                        loading="lazy" 
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
                       {selectedGalleryImages.has(img) && (
                         <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
                           <CheckCircle2 className="text-white drop-shadow-md" size={32} />
