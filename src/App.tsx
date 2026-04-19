@@ -1639,13 +1639,21 @@ function MainApp() {
                           {((job.status === 'completed' && job.data.outputVideo) || (job.status === 'completed' && job.resultFiles && job.resultFiles.length > 0)) && (
                             <div className="mt-4 flex gap-3">
                               <button 
-                                onClick={() => setViewingVideo(`/downloads/videos/${job.data.outputVideo || job.resultFiles[0]}`)}
+                                onClick={() => {
+                                  let videoPath = job.resultFiles?.[0] || job.data.outputVideo;
+                                  if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                                  setViewingVideo(videoPath);
+                                }}
                                 className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg font-medium hover:bg-blue-100 transition"
                               >
                                 <PlayCircle size={16}/> 预览视频
                               </button>
                               <a 
-                                href={`/downloads/videos/${job.data.outputVideo || job.resultFiles[0]}`} 
+                                href={(() => {
+                                  let videoPath = job.resultFiles?.[0] || job.data.outputVideo;
+                                  if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                                  return videoPath;
+                                })()} 
                                 download
                                 className="flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg font-medium hover:bg-gray-100 transition border border-gray-200"
                               >
@@ -1723,13 +1731,21 @@ function MainApp() {
                   {((job.status === 'completed' && job.data.outputVideo) || (job.status === 'completed' && job.resultFiles && job.resultFiles.length > 0)) && (
                     <div className="mt-4 flex gap-3">
                       <button 
-                        onClick={() => setViewingVideo(`/downloads/videos/${job.data.outputVideo || job.resultFiles[0]}`)}
+                        onClick={() => {
+                          let videoPath = job.resultFiles?.[0] || job.data.outputVideo;
+                          if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                          setViewingVideo(videoPath);
+                        }}
                         className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg font-medium hover:bg-blue-100 transition"
                       >
                         <PlayCircle size={16}/> 预览视频
                       </button>
                       <a 
-                        href={`/downloads/videos/${job.data.outputVideo || job.resultFiles[0]}`} 
+                        href={(() => {
+                          let videoPath = job.resultFiles?.[0] || job.data.outputVideo;
+                          if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                          return videoPath;
+                        })()} 
                         download
                         className="flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg font-medium hover:bg-gray-100 transition border border-gray-200"
                       >

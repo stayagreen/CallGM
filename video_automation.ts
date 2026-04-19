@@ -226,19 +226,17 @@ async function processVideoTask(filePath: string, jobKey: string) {
     if (fs.existsSync(concatPath)) fs.unlinkSync(concatPath);
 
     // Move task to history
-    taskData.outputVideo = outputFilename;
+    const relativeAssetPath = userId ? `${userId}/${outputFilename}` : outputFilename;
+    taskData.outputVideo = relativeAssetPath;
     fs.writeFileSync(filePath, JSON.stringify(taskData, null, 2));
-    
-    // 确定正确的 history 目录
+
     const fileDir = path.dirname(filePath);
     const relativeSubDir = path.relative(videoTaskDir, fileDir);
     const targetHistoryDir = path.join(videoHistoryDir, relativeSubDir);
     if (!fs.existsSync(targetHistoryDir)) fs.mkdirSync(targetHistoryDir, { recursive: true });
-
     fs.renameSync(filePath, path.join(targetHistoryDir, filename));
     
     // Update DB: Final Status, Data and Asset registration
-    const relativeAssetPath = userId ? `${userId}/${outputFilename}` : outputFilename;
     try {
         db.prepare('UPDATE tasks SET status = ?, progress = ?, data = ?, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
             'completed',
