@@ -226,11 +226,13 @@ async function processVideoTask(filePath: string, jobKey: string) {
 
     fs.renameSync(filePath, path.join(targetHistoryDir, filename));
     
-    // Update DB: Final Status and Asset registration
+    // Update DB: Final Status, Data and Asset registration
     const relativeAssetPath = userId ? `${userId}/${outputFilename}` : outputFilename;
     try {
-        db.prepare('UPDATE tasks SET status = ?, progress = 100, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+        db.prepare('UPDATE tasks SET status = ?, progress = 100, data = ?, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
             'completed',
+            100,
+            JSON.stringify(taskData),
             JSON.stringify([relativeAssetPath]),
             jobId
         );

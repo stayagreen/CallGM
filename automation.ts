@@ -856,14 +856,17 @@ export function startAutomationWatcher() {
             }
         }
 
-        // Update DB: Final Status
+        // Update DB: Final Status and Data (to persist results like downloadedFiles)
         try {
-            db.prepare('UPDATE tasks SET status = ?, progress = 100, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+            db.prepare('UPDATE tasks SET status = ?, progress = 100, data = ?, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
                 finalStatus,
+                JSON.stringify(updatedTaskData || taskData),
                 JSON.stringify(resultFiles),
                 jobId
             );
-        } catch(e) {}
+        } catch(e) {
+            console.error(`Failed to update DB for job ${jobId}`, e);
+        }
         
         // Move to history - 需要确保子目录对应的 history 文件夹存在
         const fileDir = path.dirname(filePath);

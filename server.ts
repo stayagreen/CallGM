@@ -896,8 +896,9 @@ async function startServer() {
         fs.writeFileSync(path.join(userStoragePath, filename), buffer);
         
         try {
-            const relativePath = path.join(user.id.toString(), filename).replace(/\\/g, '/');
-            db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'image', relativePath);
+            const userId = req.session.user.id;
+            const relativePath = path.join(userId.toString(), filename).replace(/\\/g, '/');
+            db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(userId, 'image', relativePath);
         } catch(e) {}
         
         savedFiles.push(filename);

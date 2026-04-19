@@ -164,11 +164,11 @@ const JobItem = React.memo(({
                     <Plus size={14}/> 导入此任务
                   </button>
                   
-                  {t.downloadedFiles && t.downloadedFiles.length > 0 && (
+                  {(t.downloadedFiles || (job.status === 'completed' && idx === 0 ? job.resultFiles : [])) && (t.downloadedFiles?.length || (job.status === 'completed' && idx === 0 ? job.resultFiles?.length : 0)) > 0 && (
                     <div className="mt-4">
-                      <p className="text-xs font-bold text-green-600 mb-2 flex items-center gap-1"><Download size={14}/> 生成的图片 ({t.downloadedFiles.length}):</p>
+                      <p className="text-xs font-bold text-green-600 mb-2 flex items-center gap-1"><Download size={14}/> 生成的图片 ({(t.downloadedFiles || (idx === 0 ? job.resultFiles : [])).length}):</p>
                       <div className="flex gap-2 flex-wrap">
-                        {t.downloadedFiles.map((img: string, i: number) => (
+                        {(t.downloadedFiles || (idx === 0 ? job.resultFiles : [])).map((img: string, i: number) => (
                           <div key={i} onClick={() => onViewImage(`/downloads/${img}`)} className="block w-20 h-20 rounded-lg border border-gray-300 overflow-hidden hover:border-blue-500 transition-colors shadow-sm relative group cursor-pointer">
                             <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} className="w-full h-full object-cover" loading="lazy" />
                           </div>
@@ -1268,7 +1268,7 @@ function MainApp() {
                 </div>
               ))}
               {user?.role === 'admin' ? (
-                Object.entries(groupByUser(jobs)).map(([uname, userJobs]) => (
+                Object.entries(groupByUser(jobs)).map(([uname, userJobs]: [string, any[]]) => (
                   <div key={uname} className="mb-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
                     <div 
                       onClick={() => toggleUserExpand(uname)}
@@ -1282,7 +1282,7 @@ function MainApp() {
                     </div>
                     {expandedUsers.has(uname) && (
                       <div className="p-4 space-y-4 bg-gray-50/50">
-                        {userJobs.map(job => (
+                        {userJobs.map((job: any) => (
                           <JobItem 
                             key={job.id}
                             job={job}
@@ -1453,7 +1453,7 @@ function MainApp() {
                   return (
                     <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
                       <div onClick={() => !processingGalleryImages.has(img) && setViewingImage(`/downloads/${img}?t=${galleryUpdateToken}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
-                        <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} alt={img} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" loading="lazy" />
+                        <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
                           <ImageIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                         </div>
@@ -1560,7 +1560,7 @@ function MainApp() {
                   </div>
                 </div>
               ))}
-              {user?.role === 'admin' ? Object.entries(groupByUser(videoJobs)).map(([uname, jobs]) => (
+              {user?.role === 'admin' ? Object.entries(groupByUser(videoJobs)).map(([uname, jobs]: [string, any[]]) => (
                 <div key={uname} className="mb-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
                   <div 
                     onClick={() => toggleUserExpand(uname + '_video')}
@@ -1574,7 +1574,7 @@ function MainApp() {
                   </div>
                   {expandedUsers.has(uname + '_video') && (
                     <div className="p-4 space-y-4 bg-gray-50/50">
-                      {jobs.map(job => (
+                      {jobs.map((job: any) => (
                         <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
                           <div className="flex justify-between items-center mb-3">
                             <div className="flex items-center gap-3">
@@ -1764,7 +1764,7 @@ function MainApp() {
               return (
                 <div key={vid} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
                   <div onClick={() => setViewingVideo(`/downloads/videos/${vid}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
-                    <img src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} alt={vid} className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                    <img src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} alt={vid} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                     <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center">
                       <PlayCircle className="w-12 h-12 text-white opacity-80 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                     </div>

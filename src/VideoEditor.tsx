@@ -81,6 +81,12 @@ const showToast = (message: string, type: 'success' | 'error' | 'loading' = 'suc
   return toast;
 };
 
+interface GalleryAsset {
+  path: string;
+  userId: number;
+  username: string;
+}
+
 export default function VideoEditor({ 
   task,
   onChange,
@@ -89,7 +95,7 @@ export default function VideoEditor({
 }: { 
   task: VideoTask,
   onChange: (task: VideoTask) => void,
-  galleryImages: string[],
+  galleryImages: GalleryAsset[],
   galleryUpdateToken?: number
 }) {
   const [bgmList, setBgmList] = useState<string[]>([]);
@@ -160,8 +166,9 @@ export default function VideoEditor({
 
     const allQuadrants: string[] = [];
 
-    for (const img of selectedGalleryGrids) {
-      const imgUrl = getBustedUrl(`/downloads/${img}`);
+    for (const imgData of selectedGalleryGrids) {
+      const imgPath = typeof imgData === 'string' ? imgData : (imgData as any).path;
+      const imgUrl = getBustedUrl(`/downloads/${imgPath}`);
       
       const newImages = await new Promise<string[]>((resolve) => {
         const image = new Image();
@@ -191,7 +198,7 @@ export default function VideoEditor({
           resolve(res);
         };
         image.onerror = () => {
-          showToast(`图片加载失败: ${img}`, 'error');
+          showToast(`图片加载失败: ${imgPath}`, 'error');
           resolve([]);
         };
         image.src = imgUrl;
@@ -671,7 +678,9 @@ export default function VideoEditor({
                 </div>
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                  {galleryImages.map(img => (
+                  {galleryImages.map(imgData => {
+                    const img = typeof imgData === 'string' ? imgData : imgData.path;
+                    return (
                     <div 
                       key={img} 
                     onClick={() => {
@@ -712,7 +721,7 @@ export default function VideoEditor({
                       </div>
                     )}
                   </div>
-                ))}
+                )})}
               </div>
               )}
             </div>
