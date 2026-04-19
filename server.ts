@@ -340,11 +340,18 @@ async function startServer() {
     const sourceDir = type === 'downloads' ? downloadDir : uploadsDir;
     const thumbDir = type === 'downloads' ? thumbDownloadsDir : thumbUploadsDir;
 
-    const sourcePath = path.join(sourceDir, filename);
-    const thumbPath = path.join(thumbDir, filename);
+    let sourcePath = path.join(sourceDir, filename);
+    let thumbPath = path.join(thumbDir, filename);
 
     if (!fs.existsSync(sourcePath)) {
-      return res.status(404).send('Image not found');
+      // Fallback for historical bug where admin files were saved in root instead of user dir
+      const fallbackSourcePath = path.join(sourceDir, path.basename(filename));
+      if (fs.existsSync(fallbackSourcePath)) {
+        sourcePath = fallbackSourcePath;
+        thumbPath = path.join(thumbDir, path.basename(filename));
+      } else {
+        return res.status(404).send('Image not found');
+      }
     }
 
     if (fs.existsSync(thumbPath)) {
@@ -952,11 +959,20 @@ async function startServer() {
     const copiedUrls: string[] = [];
     filenames.forEach((filename: string) => {
       let sourcePath = '';
+      let baseDir = '';
       if (filename.startsWith('uploads/')) {
-        // Strip the "uploads/" prefix to find it in uploadsDir
+        baseDir = uploadsDir;
         sourcePath = path.join(uploadsDir, filename.replace(/^uploads\//, ''));
       } else {
+        baseDir = downloadDir;
         sourcePath = path.join(downloadDir, filename);
+      }
+      
+      if (!fs.existsSync(sourcePath)) {
+        const fallbackSourcePath = path.join(baseDir, path.basename(filename));
+        if (fs.existsSync(fallbackSourcePath)) {
+          sourcePath = fallbackSourcePath;
+        }
       }
       
       const baseName = path.basename(filename); // Extract just the file name (no directories)

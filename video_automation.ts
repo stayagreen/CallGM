@@ -160,11 +160,22 @@ async function processVideoTask(filePath: string, jobKey: string) {
                 metadata = await sharp(buffer).metadata();
             } else {
                 let localPath = firstImgPath;
+                let fallbackDir = '';
                 if (firstImgPath.startsWith('/uploads/')) {
                     localPath = path.join(__dirname, 'uploads', firstImgPath.replace('/uploads/', ''));
+                    fallbackDir = path.join(__dirname, 'uploads');
                 } else if (firstImgPath.startsWith('/downloads/')) {
                     localPath = path.join(__dirname, 'download', firstImgPath.replace('/downloads/', ''));
+                    fallbackDir = path.join(__dirname, 'download');
                 }
+                
+                if (fallbackDir && !fs.existsSync(localPath)) {
+                    const fallbackPath = path.join(fallbackDir, path.basename(firstImgPath));
+                    if (fs.existsSync(fallbackPath)) {
+                        localPath = fallbackPath;
+                    }
+                }
+                
                 metadata = await sharp(localPath).metadata();
             }
             

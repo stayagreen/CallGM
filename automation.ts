@@ -429,13 +429,23 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
 
                         for (const imgUrl of task.images) {
                             let localPath = '';
+                            let fallbackDir = '';
                             if (imgUrl.startsWith('/uploads/')) {
                                 localPath = path.join(__dirname, 'uploads', imgUrl.replace('/uploads/', ''));
+                                fallbackDir = path.join(__dirname, 'uploads');
                             } else if (imgUrl.startsWith('/downloads/')) {
                                 localPath = path.join(__dirname, 'download', imgUrl.replace('/downloads/', ''));
+                                fallbackDir = path.join(__dirname, 'download');
                             } else {
                                 const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
                                 localPath = path.resolve(__dirname, relativeUrl);
+                            }
+                            
+                            if (fallbackDir && !fs.existsSync(localPath)) {
+                                const fallbackPath = path.join(fallbackDir, path.basename(imgUrl));
+                                if (fs.existsSync(fallbackPath)) {
+                                    localPath = fallbackPath;
+                                }
                             }
                             
                             if (fs.existsSync(localPath)) {
@@ -1144,7 +1154,22 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
                 
                 // 修复路径拼接问题：如果 imgUrl 以 / 开头，path.join 可能会将其视为绝对路径（在某些系统上）
                 const relativeUrl = imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl;
-                const localPath = path.join(__dirname, relativeUrl);
+                let localPath = path.join(__dirname, relativeUrl);
+                
+                if (!fs.existsSync(localPath)) {
+                    // Fallback to base directory root search for historical paths
+                    let fallbackDir = '';
+                    if (relativeUrl.startsWith('uploads/')) fallbackDir = path.join(__dirname, 'uploads');
+                    else if (relativeUrl.startsWith('download/')) fallbackDir = path.join(__dirname, 'download');
+                    else if (relativeUrl.startsWith('downloads/')) fallbackDir = path.join(__dirname, 'download');
+                    
+                    if (fallbackDir) {
+                        const fallbackPath = path.join(fallbackDir, path.basename(relativeUrl));
+                        if (fs.existsSync(fallbackPath)) {
+                            localPath = fallbackPath;
+                        }
+                    }
+                }
                 
                 console.log(`正在查找参考图文件: ${localPath}`);
                 if (fs.existsSync(localPath)) {

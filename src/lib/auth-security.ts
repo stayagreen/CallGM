@@ -24,9 +24,6 @@ export const getUserStoragePath = (req: any, basePath: string) => {
   const user = req.session.user;
   if (!user) throw new Error('Unauthorized');
   
-  // 管理员访问的是全部数据的根
-  if (user.role === 'admin') return basePath;
-  
-  // 返回相对于根路径加上用户ID
+  // 必须返回带有用户ID的相对路径，否则在保存到数据库和文件系统时路径将错配
   return path.join(basePath, user.id.toString());
 };
