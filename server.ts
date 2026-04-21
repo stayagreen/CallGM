@@ -10,6 +10,7 @@ import session from "express-session";
 import { checkAccess, getUserStoragePath } from "./src/lib/auth-security.js";
 import bcrypt from "bcryptjs";
 import db from "./src/db/db.js";
+import { proxyService } from "./src/services/proxyService.js";
 
 declare module 'express-session' {
   interface SessionData {
@@ -135,6 +136,18 @@ async function startServer() {
     req.session.destroy(() => {
       res.json({ message: 'Logged out' });
     });
+  });
+
+  // Proxy Admin Routes
+  app.get('/api/admin/proxy/status', requireAdmin, (req, res) => {
+    res.json(proxyService.getStatus());
+  });
+
+  app.post('/api/admin/proxy/config', requireAdmin, async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
+    await proxyService.updateConfig(username, password);
+    res.json({ message: 'Proxy config updated' });
   });
 
   const taskDir = path.join(__dirname, "task");
@@ -1141,6 +1154,9 @@ async function startServer() {
       return 3;
     }
   });
+
+  // Start Proxy Service
+  proxyService.start();
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {

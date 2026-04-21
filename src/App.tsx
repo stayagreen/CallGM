@@ -374,6 +374,145 @@ function UserManagement() {
   );
 }
 
+function ProxyManagement() {
+  const [status, setStatus] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [formData, setFormData] = useState({ username: '', password: '' });
+  const [isSaving, setIsSaving] = useState(false);
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch('/api/admin/proxy/status');
+      const data = await res.json();
+      setStatus(data);
+      setFormData(prev => ({ ...prev, username: data.username }));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStatus();
+    const interval = setInterval(fetchStatus, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    try {
+      const res = await fetch('/api/admin/proxy/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+      if (res.ok) {
+        alert('配置已更新，下次连接时生效');
+        fetchStatus();
+      }
+    } catch (e) {
+      alert('保存失败');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800">远程加速 (P2P 打洞代理)</h2>
+          <p className="text-sm text-gray-500 mt-1">无需公网IP，iPhone 直连服务器，延迟更低</p>
+        </div>
+        <div className={`px-3 py-1 rounded-full text-xs font-bold ${status?.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+          {status?.isActive ? '服务运行中' : '服务已停止'}
+        </div>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-8">
+        <div className="space-y-6">
+          <div className="bg-blue-50 p-6 rounded-2xl border border-blue-100">
+            <h3 className="text-sm font-bold text-blue-800 mb-4 flex items-center gap-2">
+              <ExternalLink size={16} /> iPhone 接入信息
+            </h3>
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-blue-600 font-medium">代理服务器 (Server)</p>
+                <p className="text-lg font-mono font-bold text-gray-900 select-all">{status?.publicIp || '获取中...'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-blue-600 font-medium">端口 (Port)</p>
+                <p className="text-lg font-mono font-bold text-gray-900 select-all">{status?.publicPort || '获取中...'}</p>
+              </div>
+              <div className="pt-2">
+                <p className="text-[10px] text-blue-500">※ 提示：如果公网IP为空，请检查服务器网络。手机与电脑需开启 UDP 通信。</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100">
+            <h3 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <Settings size={16} /> 认证设置
+            </h3>
+            <form onSubmit={handleSave} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">代理用户名</label>
+                <input 
+                  type="text" 
+                  value={formData.username}
+                  onChange={e => setFormData({ ...formData, username: e.target.value })}
+                  className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 mb-1">代理密码</label>
+                <input 
+                  type="password" 
+                  value={formData.password}
+                  placeholder="******"
+                  onChange={e => setFormData({ ...formData, password: e.target.value })}
+                  className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  required
+                />
+              </div>
+              <button 
+                type="submit" 
+                disabled={isSaving}
+                className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition shadow-md disabled:opacity-50"
+              >
+                {isSaving ? '正在保存...' : '更新认证信息'}
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="prose prose-sm text-gray-600">
+            <h4 className="text-gray-900 font-bold mb-2">使用教程 (iPhone):</h4>
+            <ol className="list-decimal list-inside space-y-2 text-sm">
+              <li>确保 iPhone 已连接网络（4G/5G 或任意 WiFi）。</li>
+              <li>打开 <strong>设置</strong> → <strong>WLAN</strong>。</li>
+              <li>点击当前连接的 WiFi 旁边的 <strong>(i)</strong>。</li>
+              <li>拉到最下面点击 <strong>配置代理</strong> → <strong>手动</strong>。</li>
+              <li><strong>服务器：</strong> 填写左侧显示的公网 IP。</li>
+              <li><strong>端口：</strong> 填写左侧显示的端口号。</li>
+              <li><strong>认证：</strong> 开启开关。</li>
+              <li><strong>用户名/密码：</strong> 填写你上方设置的信息。</li>
+              <li>保存后，即可直连办公室内网。</li>
+            </ol>
+            <div className="mt-6 p-4 bg-yellow-50 rounded-xl border border-yellow-100 italic text-xs text-yellow-800">
+              提示：STUN 打洞受限于路由器 NAT 类型。如果打洞失败或地址无法访问，建议在路由器中开启 UPnP 功能。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Rename original App to MainApp to keep existing functionality intact
 function MainApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -383,7 +522,7 @@ function MainApp() {
   const [showAddTaskMenu, setShowAddTaskMenu] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery' | 'users'>('tasks');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery' | 'users' | 'proxy'>('tasks');
   const [showNavDropdown, setShowNavDropdown] = useState<'tasks' | 'records' | 'gallery' | 'admin' | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [systemConfig, setSystemConfig] = useState({ 
@@ -1053,6 +1192,12 @@ function MainApp() {
                     className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'users' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
                   >
                     用户管理
+                  </button>
+                  <button 
+                    onClick={() => { setActiveTab('proxy'); setShowNavDropdown(null); }}
+                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'proxy' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
+                  >
+                    远程加速 (P2P)
                   </button>
                 </div>
               )}
@@ -2024,6 +2169,10 @@ function MainApp() {
 
       {activeTab === 'users' && user?.role === 'admin' && (
         <UserManagement />
+      )}
+
+      {activeTab === 'proxy' && user?.role === 'admin' && (
+        <ProxyManagement />
       )}
 
       {editingGalleryImage && (
