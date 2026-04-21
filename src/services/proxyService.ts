@@ -28,11 +28,7 @@ class ProxyService {
     };
 
     private stunServers = [
-        'stun:stun.miwifi.com:3478',
-        'stun:stun.yy.com:3478',
-        'stun:stun.chat.bilibili.com:3478',
-        'stun:stun.cloudflare.com:3478',
-        'stun:stun1.l.google.com:19302'
+        'stun:stun.qq.com:3478'
     ];
 
     constructor() {
