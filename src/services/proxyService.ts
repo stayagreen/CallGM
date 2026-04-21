@@ -28,7 +28,7 @@ class ProxyService {
     };
 
     private stunServers = [
-        'stun:stun.qq.com:3478'
+        'stun.qq.com:3478'
     ];
 
     constructor() {
