@@ -446,6 +446,12 @@ function ProxyManagement() {
                 <p className="text-xs text-blue-600 font-medium">端口 (Port)</p>
                 <p className="text-lg font-mono font-bold text-gray-900 select-all">{status?.publicPort || '获取中...'}</p>
               </div>
+              <div className="pt-2 border-t border-blue-100 mt-2">
+                <p className="text-[10px] text-blue-400 font-bold uppercase mb-1">Debug 信息:</p>
+                <div className="bg-blue-900/10 p-2 rounded text-[11px] font-mono text-blue-700 break-all leading-tight">
+                  {status?.debugInfo || '等待中...'}
+                </div>
+              </div>
               <div className="pt-2">
                 <p className="text-[10px] text-blue-500">※ 提示：如果公网IP为空，请检查服务器网络。手机与电脑需开启 UDP 通信。</p>
               </div>

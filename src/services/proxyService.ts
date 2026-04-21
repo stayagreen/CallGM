@@ -11,6 +11,7 @@ interface ProxyStatus {
     username: string;
     authEnabled: boolean;
     lastUpdate: number;
+    debugInfo: string;
 }
 
 class ProxyService {
@@ -22,13 +23,16 @@ class ProxyService {
         publicPort: null,
         username: 'admin',
         authEnabled: true,
-        lastUpdate: Date.now()
+        lastUpdate: Date.now(),
+        debugInfo: 'Initializing...'
     };
 
     private stunServers = [
-        'stun:stun.qq.com:3478',
-        'stun:stun.aliyun.com:3478',
-        'stun:stun.l.google.com:19302'
+        'stun:stun.miwifi.com:3478',
+        'stun:stun.yy.com:3478',
+        'stun:stun.chat.bilibili.com:3478',
+        'stun:stun.cloudflare.com:3478',
+        'stun:stun1.l.google.com:19302'
     ];
 
     constructor() {
@@ -60,6 +64,7 @@ class ProxyService {
         const password = (db.prepare('SELECT value FROM system_config WHERE key = ?').get('proxy_pass') as any)?.value || '123456';
 
         try {
+            this.status.debugInfo = 'Starting proxy server...';
             this.server = new ProxyChain.Server({
                 port: port,
                 prepareRequestFunction: ({ username, password }) => {
@@ -86,11 +91,13 @@ class ProxyService {
             await this.server.listen();
             this.status.isActive = true;
             this.status.localPort = port;
+            this.status.debugInfo = 'Proxy server listening. Starting STUN...';
             console.log(`🚀 Proxy server is listening on port ${port}`);
 
             // Start STUN polling
             this.startStunPolling();
-        } catch (error) {
+        } catch (error: any) {
+            this.status.debugInfo = `Server start error: ${error.message}`;
             console.error('❌ Failed to start proxy server:', error);
         }
     }
@@ -99,21 +106,31 @@ class ProxyService {
         const poll = async () => {
             if (!this.status.isActive) return;
 
+            let success = false;
+            let errors: string[] = [];
+
             for (const server of this.stunServers) {
                 try {
+                    this.status.debugInfo = `Requesting STUN from ${server}...`;
                     const res = await stun.request(server);
                     const mappedAddress = res.getXorAddress();
                     if (mappedAddress) {
                         this.status.publicIp = mappedAddress.address;
                         this.status.publicPort = mappedAddress.port;
                         this.status.lastUpdate = Date.now();
-                        // console.log(`🌍 STUN: Current Public Address is ${this.status.publicIp}:${this.status.publicPort}`);
+                        this.status.debugInfo = `Connected via STUN server: ${server}`;
+                        success = true;
                         break;
                     }
-                } catch (e) {
-                    // Try next server
+                } catch (e: any) {
+                    errors.push(`${server.split(':')[1]}: ${e.message}`);
                 }
             }
+
+            if (!success) {
+                this.status.debugInfo = `STUN failed. Errors: ${errors.join(', ')}`;
+            }
+
             setTimeout(poll, 30000); // 30 seconds
         };
         poll();
