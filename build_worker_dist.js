@@ -10,6 +10,7 @@ if (!fs.existsSync(path.join(dist, 'src', 'db'))) fs.mkdirSync(path.join(dist, '
 fs.copyFileSync('automation.ts', path.join(dist, 'automation.ts'));
 if (fs.existsSync('video_automation.ts')) fs.copyFileSync('video_automation.ts', path.join(dist, 'video_automation.ts'));
 if (fs.existsSync('watermarkRemover.ts')) fs.copyFileSync('watermarkRemover.ts', path.join(dist, 'watermarkRemover.ts'));
+fs.copyFileSync('worker/worker.ts', path.join(dist, 'worker.ts'));
 
 // Mock DB to prevent SQLite native bindings making the worker heavy
 fs.writeFileSync(path.join(dist, 'src', 'db', 'db.js'), `

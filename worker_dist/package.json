@@ -1,0 +1,15 @@
+{
+  "name": "ai-studio-worker-light",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "tsx worker.ts"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.5",
+    "chrome-remote-interface": "^0.34.0",
+    "tsx": "^4.21.0",
+    "sharp": "^0.33.3",
+    "puppeteer": "^24.40.0",
+    "opencv-wasm": "^4.3.0"
+  }
+}
