@@ -123,7 +123,7 @@ socket.on("disconnect", () => {
 });
 
 // 处理主服务器发来的管理员远程指令
-socket.on("admin_command", (cmd: { action: string }) => {
+socket.on("admin_command", async (cmd: { action: string }) => {
   if (cmd.action === 'restart') {
       console.log("\n[管理员要求] 重启节点...");
       process.exit(0); // 退出码 0 表示被外部 bat 脚本自动重启
@@ -131,17 +131,52 @@ socket.on("admin_command", (cmd: { action: string }) => {
       console.log("\n[管理员要求] 永久停止节点!");
       process.exit(99); // 退出码 99 触发批处理结束
   } else if (cmd.action === 'update') {
-      console.log("\n[管理员要求] 从 GitHub 拉取更新并重启...");
+      console.log("\n[管理员要求] 尝试拉取更新并重启...");
       try {
           const cp = require('child_process');
-          console.log("执行: git pull");
-          cp.execSync('git pull', { stdio: 'inherit' });
+          let updated = false;
+
+          // 1. 尝试 Git 更新
+          if (fs.existsSync('.git')) {
+              try {
+                  console.log("检测到 Git 仓库，执行: git pull");
+                  cp.execSync('git pull', { stdio: 'inherit' });
+                  updated = true;
+              } catch (gitErr: any) {
+                  console.error("Git pull 失败:", gitErr.message);
+              }
+          }
+
+          // 2. 如果不是 Git 仓库或 Git 失败，尝试从主服务器 HTTP 下载 (适合 worker_dist 模式)
+          if (!updated) {
+              console.log("准备从主服务器 HTTP 下载更新文件...");
+              const filesToUpdate = ['worker.ts', 'automation.ts', 'video_automation.ts', 'watermarkRemover.ts', 'package.json'];
+              for (const f of filesToUpdate) {
+                  try {
+                      const fileUrl = `${SERVER_URL}/worker-files/${f}`;
+                      console.log(`正在获取: ${fileUrl}`);
+                      const res = await fetch(fileUrl);
+                      if (res.ok) {
+                          const content = await res.text();
+                          if (content && content.length > 0) {
+                              fs.writeFileSync(path.join(process.cwd(), f), content);
+                              console.log(`✅ 已更新: ${f}`);
+                          }
+                      } else {
+                          console.warn(`⚠️ 无法获取 ${f} (状态: ${res.status})`);
+                      }
+                  } catch (fetchErr: any) {
+                      console.error(`❌ 下载文件 ${f} 失败:`, fetchErr.message);
+                  }
+              }
+          }
+
           console.log("执行: npm install");
           cp.execSync('npm install', { stdio: 'inherit' });
           console.log("更新完成，立即重启应用新代码...");
           process.exit(0);
       } catch (err: any) {
-          console.error("更新失败:", err.message);
+          console.error("更新总流程失败:", err.message);
       }
   }
 });

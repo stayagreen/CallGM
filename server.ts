@@ -1364,6 +1364,9 @@ async function startServer() {
   // Start Proxy Service
   proxyService.start();
 
+  // Expose worker_dist for remote updates
+  app.use('/worker-files', express.static(path.join(__dirname, 'worker_dist')));
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
