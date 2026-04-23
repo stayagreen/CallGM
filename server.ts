@@ -1102,46 +1102,58 @@ async function startServer() {
   // Delete a video job record
   app.delete('/api/video/jobs/:id', (req, res) => {
     const id = req.params.id;
-    const historyPath = path.join(videoHistoryDir, id);
-    const pendingPath = path.join(videoTaskDir, id);
     
     try {
-      let deleted = false;
-      let taskData = null;
+      // 1. Get task data from DB first to get userId and handle files
+      const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as any;
       
-      if (fs.existsSync(historyPath)) {
-        taskData = JSON.parse(fs.readFileSync(historyPath, 'utf-8'));
-        fs.unlinkSync(historyPath);
-        deleted = true;
-      } else if (fs.existsSync(pendingPath)) {
-        taskData = JSON.parse(fs.readFileSync(pendingPath, 'utf-8'));
-        fs.unlinkSync(pendingPath);
-        deleted = true;
+      let taskData: any = null;
+      let userId: string | null = null;
+      
+      if (task) {
+        try { taskData = JSON.parse(task.data); } catch(e) {}
+        userId = String(task.user_id);
       }
-      
-      if (deleted) {
-        // Also delete from DB
-        try {
-          db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
-          db.prepare('DELETE FROM assets WHERE job_id = ?').run(id);
-        } catch(e) {}
 
-        // Also delete the generated video file if it exists
-        if (taskData && taskData.outputVideo) {
-          const videoPath = path.join(videoDownloadDir, taskData.outputVideo);
-          const thumbPath = path.join(videoThumbDir, taskData.outputVideo.replace(/\.[^/.]+$/, ".jpg"));
-          if (fs.existsSync(videoPath)) {
-            try { fs.unlinkSync(videoPath); } catch (e) { console.error('Failed to delete video file:', e); }
-          }
-          if (fs.existsSync(thumbPath)) {
-            try { fs.unlinkSync(thumbPath); } catch (e) { console.error('Failed to delete video thumbnail:', e); }
-          }
-        }
-        return res.json({ success: true });
+      // 2. Database deletion (Pre-emptive)
+      db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+      db.prepare('DELETE FROM assets WHERE job_id = ?').run(id);
+
+      // 3. File searches and deletion
+      const filename = id.endsWith('.json') ? id : `${id}.json`;
+      const searchPaths = [
+        path.join(videoTaskDir, filename),
+        path.join(videoHistoryDir, filename)
+      ];
+
+      if (userId) {
+        searchPaths.push(path.join(videoTaskDir, userId, filename));
+        searchPaths.push(path.join(videoHistoryDir, userId, filename));
       }
+
+      for (const p of searchPaths) {
+        if (fs.existsSync(p)) {
+          if (!taskData) {
+            try { taskData = JSON.parse(fs.readFileSync(p, 'utf-8')); } catch(e) {}
+          }
+          try { fs.unlinkSync(p); } catch(e) {}
+        }
+      }
+
+      // 4. Delete associated media files
+      const possibleOutputs = [];
+      if (taskData?.outputVideo) possibleOutputs.push(taskData.outputVideo);
       
-      res.status(404).json({ error: 'Job not found' });
+      for (const output of possibleOutputs) {
+        const videoPath = path.join(videoDownloadDir, output);
+        const thumbPath = path.join(videoThumbDir, output.replace(/\.[^/.]+$/, ".jpg"));
+        if (fs.existsSync(videoPath)) try { fs.unlinkSync(videoPath); } catch(e) {}
+        if (fs.existsSync(thumbPath)) try { fs.unlinkSync(thumbPath); } catch(e) {}
+      }
+
+      res.json({ success: true });
     } catch (err) {
+      console.error('[VideoDelete] Error:', err);
       res.status(500).json({ error: 'Failed to delete job' });
     }
   });
@@ -1371,14 +1383,21 @@ async function startServer() {
 
   // Register/Update Local Server node
   try {
-    // Delete potential corrupt/incomplete local records
+    // 1. Delete potential corrupt/incomplete local records
     db.prepare("DELETE FROM workers WHERE token = 'local-server' OR id IS NULL").run();
     
     db.prepare('INSERT INTO workers (id, name, token, status, capabilities, ip_address) VALUES (?, ?, ?, ?, ?, ?)')
       .run('local-server-id', 'Local Server (Built-in)', 'local-server', 'idle', JSON.stringify(['gemini_image', 'gemini_video']), '127.0.0.1');
     console.log('[Worker] Local Server node registered successfully.');
+
+    // 2. Reset stale local running tasks (tasks with running status but no worker_id)
+    // This handles tasks that were interrupted by a server restart
+    const resetCount = db.prepare("UPDATE tasks SET status = 'pending', progress = 0 WHERE status = 'running' AND (worker_id IS NULL OR worker_id = 'local-server-id')").run();
+    if (resetCount.changes > 0) {
+        console.log(`[Startup] Reset ${resetCount.changes} stale local running tasks to pending.`);
+    }
   } catch(e) {
-    console.error('Failed to register local server node:', e);
+    console.error('Failed to initialize local server node or reset tasks:', e);
   }
 
   // Start the automation watcher

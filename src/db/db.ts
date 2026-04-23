@@ -60,7 +60,19 @@ db.exec(`
     last_seen DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS system_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
+
+// Bootstrap initial config
+const configExists = db.prepare('SELECT * FROM system_config WHERE key = ?').get('app_config');
+if (!configExists) {
+    const defaultConfig = { dispatchStrategy: 'server', globalConcurrency: 3, videoConcurrency: 3 };
+    db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run('app_config', JSON.stringify(defaultConfig));
+}
 
 // Simple auto-migration for legacy databases
 try { db.exec('ALTER TABLE tasks ADD COLUMN type TEXT NOT NULL DEFAULT "image";'); } catch (e) {}
