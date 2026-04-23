@@ -11,6 +11,8 @@ import { checkAccess, getUserStoragePath } from "./src/lib/auth-security.js";
 import bcrypt from "bcryptjs";
 import db from "./src/db/db.js";
 import { proxyService } from "./src/services/proxyService.js";
+import { dispatcherService } from "./src/services/dispatcherService.js";
+import { createServer } from "http";
 
 declare module 'express-session' {
   interface SessionData {
@@ -18,8 +20,8 @@ declare module 'express-session' {
   }
 }
 
-import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages } from "./automation.js";
-import { startVideoAutomationWatcher, videoJobProgress } from "./video_automation.js";
+import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages, cancelledJobs } from "./automation.js";
+import { startVideoAutomationWatcher, videoJobProgress, cancelledVideoJobs } from "./video_automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -148,6 +150,108 @@ async function startServer() {
     if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
     await proxyService.updateConfig(username, password);
     res.json({ message: 'Proxy config updated' });
+  });
+
+  // Worker Management Routes (Admin Only)
+  app.get('/api/admin/workers', requireAdmin, (req, res) => {
+    try {
+      const workers = db.prepare('SELECT * FROM workers').all();
+      res.json(workers);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/admin/workers', requireAdmin, (req, res) => {
+    const { name, concurrency, capabilities, config } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name is required' });
+    
+    // Generate UUID and Token using random
+    const id = Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+    const token = 'wk-' + Math.random().toString(36).substring(2, 12) + Math.random().toString(36).substring(2, 12);
+    
+    try {
+      db.prepare('INSERT INTO workers (id, name, token, concurrency, capabilities, config) VALUES (?, ?, ?, ?, ?, ?)').run(
+        id, name, token, concurrency || 1, JSON.stringify(capabilities || ['gemini_image']), JSON.stringify(config || {})
+      );
+      res.json({ message: 'Worker created', worker: { id, name, token } });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put('/api/admin/workers/:id', requireAdmin, (req, res) => {
+    const { name, concurrency, capabilities, config } = req.body;
+    try {
+      db.prepare('UPDATE workers SET name = ?, concurrency = ?, capabilities = ?, config = ? WHERE id = ?').run(
+        name, concurrency, JSON.stringify(capabilities || []), JSON.stringify(config || {}), req.params.id
+      );
+      res.json({ message: 'Worker updated' });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete('/api/admin/workers/:id', requireAdmin, (req, res) => {
+    try {
+      db.prepare('DELETE FROM workers WHERE id = ?').run(req.params.id);
+      res.json({ message: 'Worker deleted' });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/admin/workers/:id/command', requireAdmin, (req, res) => {
+    const { action } = req.body;
+    try {
+      const workerRow = db.prepare('SELECT token FROM workers WHERE id = ?').get(req.params.id) as any;
+      if (!workerRow) return res.status(404).json({ error: 'Worker not found' });
+      
+      // Tell dispatcher to send command
+      dispatcherService.sendCommandToWorker(workerRow.token, action);
+      res.json({ message: 'Command sent' });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Worker API
+  app.post('/api/worker/upload-result', async (req, res) => {
+    const { token, jobId, base64Data, filename } = req.body;
+    if (!token || !jobId || !base64Data || !filename) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
+
+    // Verify token
+    const worker = db.prepare('SELECT id FROM workers WHERE token = ?').get(token) as any;
+    if (!worker) return res.status(401).json({ error: 'Invalid worker token' });
+
+    try {
+      const task = db.prepare('SELECT user_id, type FROM tasks WHERE id = ?').get(jobId) as any;
+      if (!task) return res.status(404).json({ error: 'Task not found' });
+
+      // Build target dir based on type
+      let targetDir = task.type === 'video' ? path.join(__dirname, 'video_download') : path.join(__dirname, 'download');
+      
+      const userDownloadDir = path.join(targetDir, String(task.user_id));
+      if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
+
+      const filePath = path.join(userDownloadDir, filename);
+      fs.writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+
+      // Log asset to db
+      const relativePath = `${task.user_id}/${filename}`;
+      db.prepare('INSERT OR IGNORE INTO assets (user_id, type, job_id, file_path) VALUES (?, ?, ?, ?)').run(task.user_id, task.type, jobId, relativePath);
+
+      // The worker finished executing since it's uploading. We can set it to completed in DB.
+      // Wait, is it completed if there are multiple images? The socket handles progress.
+      // Let's at least mark progress = 100 via logic if we wanted. But worker socket handles that.
+      db.prepare('UPDATE tasks SET status = ?, progress = 100, result_files = json_insert(ifnull(result_files, "[]"), "$[#]", ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('completed', relativePath, jobId);
+
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   const taskDir = path.join(__dirname, "task");
@@ -325,7 +429,8 @@ async function startServer() {
     if (!fs.existsSync(userVideoTaskDir)) fs.mkdirSync(userVideoTaskDir, { recursive: true });
 
     const finalTaskData = { ...taskData, userId: user.id, id: jobId };
-    fs.writeFileSync(path.join(userVideoTaskDir, filename), JSON.stringify(finalTaskData, null, 2));
+    // File writing moved to dispatcherService to allow remote distribution logic
+    // fs.writeFileSync(path.join(userVideoTaskDir, filename), JSON.stringify(finalTaskData, null, 2));
 
     // Register job in DB
     db.prepare('INSERT INTO tasks (id, user_id, type, data, status) VALUES (?, ?, ?, ?, ?)').run(
@@ -569,7 +674,9 @@ async function startServer() {
     if (!fs.existsSync(userTaskDir)) fs.mkdirSync(userTaskDir, { recursive: true });
     const filePath = path.join(userTaskDir, filename);
     const taskData = { ...req.body, userId: user.id, id: jobId };
-    fs.writeFileSync(filePath, JSON.stringify(taskData, null, 2));
+    
+    // File writing moved to dispatcherService to allow remote distribution logic
+    // fs.writeFileSync(filePath, JSON.stringify(taskData, null, 2));
 
     // Register job in DB
     db.prepare('INSERT INTO tasks (id, user_id, type, data, status) VALUES (?, ?, ?, ?, ?)').run(
@@ -645,6 +752,14 @@ async function startServer() {
 
       // Helper to find file in root or subdirs
       const findAndDelete = (baseDir: string, targetFile: string) => {
+          // If the job is running, signal cancellation
+          if (jobProgress.has(jobId)) {
+            cancelledJobs.add(jobId);
+          }
+          if (videoJobProgress.has(jobId)) {
+            cancelledVideoJobs.add(jobId);
+          }
+
           const rootPath = path.join(baseDir, targetFile);
           if (fs.existsSync(rootPath)) {
               fs.unlinkSync(rootPath);
@@ -742,7 +857,9 @@ async function startServer() {
     downloadCheckDelay: 1,
     downloadRetries: 3,
     imageQuality: 'performance',
-    videoConcurrency: 3
+    videoConcurrency: 3,
+    dispatchStrategy: 'server',
+    globalConcurrency: 3
   };
 
   app.get('/api/config', (req, res) => {
@@ -1173,7 +1290,10 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const httpServer = createServer(app);
+  dispatcherService.attach(httpServer);
+
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

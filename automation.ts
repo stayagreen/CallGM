@@ -50,6 +50,7 @@ let lastHeartbeat = Date.now();
 
 export const jobProgress = new Map<string, { completed: number, total: number, status: string, message?: string }>();
 export const processingImages = new Set<string>();
+export const cancelledJobs = new Set<string>();
 
 // 安全解析配置数值
 function parseConfigNumber(value: any, defaultValue: number): number {
@@ -339,10 +340,12 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
 
     try {
         for (const task of tasks) {
+            if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
             task.download = true;
             if (!task.downloadedFiles) task.downloadedFiles = [];
             
             for (let i = 0; i < (parseInt(task.count) || 1); i++) {
+                if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                 const stepPrefix = `[TASK-${filename}][Loop-${i + 1}]`;
                 console.log(`\n${stepPrefix} 🚀 准备开启新标签页执行任务: "${task.prompt}"`);
                 
@@ -590,6 +593,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                         }
 
                         const resultDetect = await Runtime.evaluate({ expression: checkResultScript, returnByValue: true });
+                        if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                         const resValue = resultDetect.result?.value;
 
                         // 监控过程中微量增加进度，让进度条看起来在“动”
@@ -729,8 +733,13 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
         }
     } catch (err: any) {
         const errorMsg = err.message || String(err);
-        console.error('❌ CDP 引擎发生异常中断:', errorMsg);
-        jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'failed', message: `❌ 发生异常: ${errorMsg.slice(0, 30)}` });
+        if (errorMsg === 'CANCELLED') {
+            console.log(`🛑 [TASK-${filename}] 任务已被手动取消`);
+            jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'failed', message: `🛑 任务已手动取消` });
+        } else {
+            console.error('❌ CDP 引擎发生异常中断:', errorMsg);
+            jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'failed', message: `❌ 发生异常: ${errorMsg.slice(0, 30)}` });
+        }
         
         // 尝试诊断
         if (errorMsg.includes('Target crashed')) {
@@ -760,12 +769,13 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
             if (t.status !== 'completed') t.status = 'failed';
         });
     } finally {
+        cancelledJobs.delete(filename);
         // jobProgress.delete(filename); // 移动到执行循环外，确保归档后才清理状态
     }
     return tasks;
 }
 
-async function executeBatch(input: any, filename: string, userId?: string | number) {
+export async function executeBatch(input: any, filename: string, userId?: string | number) {
     const tasks = Array.isArray(input) ? input : (input.tasks || []);
     if (!Array.isArray(tasks) || tasks.length === 0) {
         console.log(`⚠️ 批次 ${filename} 中没有可执行的任务任务。`);
@@ -900,8 +910,10 @@ export function startAutomationWatcher() {
         const updatedTaskData = await executeBatch(taskData, jobId, taskData.userId);
         
         // Update the file with downloadedFiles info before moving
-        if (updatedTaskData) {
-            fs.writeFileSync(filePath, JSON.stringify(updatedTaskData, null, 2));
+        if (updatedTaskData && fs.existsSync(filePath)) {
+            try {
+                fs.writeFileSync(filePath, JSON.stringify(updatedTaskData, null, 2));
+            } catch(e) {}
         }
 
         // Determine final status
@@ -944,14 +956,22 @@ export function startAutomationWatcher() {
         }
         
         // Move to history - 需要确保子目录对应的 history 文件夹存在
-        const fileDir = path.dirname(filePath);
-        const relativeSubDir = path.relative(taskDir, fileDir);
-        const targetHistoryDir = path.join(historyDir, relativeSubDir);
-        if (!fs.existsSync(targetHistoryDir)) fs.mkdirSync(targetHistoryDir, { recursive: true });
-        
-        const historyPath = path.join(targetHistoryDir, filename);
-        fs.renameSync(filePath, historyPath);
-        console.log(`✅ 任务文件 ${filename} 已全部执行完毕，并归档到 ${targetHistoryDir}。`);
+        if (fs.existsSync(filePath)) {
+            const fileDir = path.dirname(filePath);
+            const relativeSubDir = path.relative(taskDir, fileDir);
+            const targetHistoryDir = path.join(historyDir, relativeSubDir);
+            if (!fs.existsSync(targetHistoryDir)) fs.mkdirSync(targetHistoryDir, { recursive: true });
+            
+            const historyPath = path.join(targetHistoryDir, filename);
+            try {
+                fs.renameSync(filePath, historyPath);
+                console.log(`✅ 任务文件 ${filename} 已全部执行完毕，并归档到 ${targetHistoryDir}。`);
+            } catch(e) {
+                console.error(`Failed to move ${filename} to history:`, e.message);
+            }
+        } else {
+            console.log(`ℹ️ 任务文件 ${filename} 在执行过程中已由外部(如用户删除)清理。`);
+        }
         
         // 核心优化：延迟清理内存状态，给 UI 缓冲时间
         setTimeout(() => {
@@ -1203,8 +1223,10 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     await new Promise(r => setTimeout(r, 8000));
 
     for (const task of tasks) {
+      if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
       if (!task.downloadedFiles) task.downloadedFiles = [];
       for (let i = 0; i < task.count; i++) {
+        if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
         jobProgress.set(filename, { completed: completedLoops + 0.1, total: totalLoops, status: 'running' });
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
         
@@ -1483,12 +1505,18 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     console.log('\n🎉 所有任务物理模拟执行完毕！');
     return tasks;
   } catch (error: any) {
-    console.error('\n❌ 自动化执行过程中发生严重错误:');
-    console.error(error.message || error);
-    if (error.stack) {
+    const errorMsg = error.message || String(error);
+    if (errorMsg === 'CANCELLED') {
+      console.log(`🛑 [PHYSICAL-TASK-${filename}] 任务已被手动取消`);
+      jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'failed', message: `🛑 任务已手动取消` });
+    } else {
+      console.error('\n❌ 自动化执行过程中发生严重错误:');
+      console.error(errorMsg);
+      if (error.stack) {
         console.error('详细堆栈:', error.stack);
+      }
+      console.log('\n(提示: 如果上方报错提示找不到模块，请在本地运行 npm install @nut-tree-fork/nut-js open)');
     }
-    console.log('\n(提示: 如果上方报错提示找不到模块，请在本地运行 npm install @nut-tree-fork/nut-js open)');
     
     // 把所有未完成的任务都标记为 failed，确保写入历史记录时能体现出报错
     if (tasks && Array.isArray(tasks)) {
@@ -1500,6 +1528,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     }
     return tasks;
   } finally {
+    cancelledJobs.delete(filename);
     try {
         // 只有当加载了 nutjs 且环境支持时才尝试关闭
         const nutjs = await import('@nut-tree-fork/nut-js');

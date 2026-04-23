@@ -1,0 +1,129 @@
+import io from "socket.io-client";
+import fs from "fs";
+import path from "path";
+import { jobProgress, executeBatch } from "../automation.js";
+
+// ========= 配置区域 =========
+const SERVER_URL = "http://192.168.1.100:4000"; // 替换为主服务器局域网IP
+const WORKER_TOKEN = "wk-YOUR_TOKEN_HERE";      // 替换为后台生成的 Token
+// ==========================
+
+console.log("启动 Worker 工作节点...");
+
+const socket = io(SERVER_URL);
+
+socket.on("connect", () => {
+  console.log("成功连接到主服务器! 等待鉴权...");
+  socket.emit("register", { token: WORKER_TOKEN });
+});
+
+socket.on("auth_error", (msg) => {
+  console.error("鉴权失败:", msg);
+  process.exit(1);
+});
+
+socket.on("registered", (info) => {
+  console.log(`鉴权成功! 节点名称: ${info.name}. 就绪等待任务...`);
+  setInterval(() => {
+    socket.emit("heartbeat");
+  }, 30000); // 30秒发一次心跳
+  
+  // 定期上报本地内存中的执行进度
+  setInterval(() => {
+    for (const [jobId, progress] of jobProgress.entries()) {
+      socket.emit("task_status", { jobId, progress, status: progress.status });
+    }
+  }, 2000);
+});
+
+async function uploadResult(token: string, jobId: string, filePath: string) {
+  try {
+    const filename = path.basename(filePath);
+    const base64Data = fs.readFileSync(filePath, { encoding: 'base64' });
+    
+    // We send to the primary server endpoint
+    const response = await fetch(`${SERVER_URL}/api/worker/upload-result`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            token,
+            jobId,
+            filename,
+            base64Data
+        })
+    });
+    const resText = await response.text();
+    if (!response.ok) {
+        console.error(`[Worker] 上传失败: ${resText}`);
+    } else {
+        console.log(`[Worker] 成功上传: ${filename}`);
+    }
+  } catch (err) {
+    console.error(`[Worker] Upload error:`, err);
+  }
+}
+
+socket.on("run_task", async (taskData) => {
+  console.log("-----------------------------------------");
+  console.log(`[新任务] 收到生图任务: ${taskData.id}`);
+  try {
+     // Execute native automation script
+     // executeBatch takes (input, filename, userId)
+     const updatedTaskData = await executeBatch(taskData, taskData.id, taskData.userId || 1);
+     
+     console.log(`[完成] 任务 ${taskData.id} 本地执行处理完毕. 等待传输文件...`);
+     
+     // Look for result files
+     let resultFiles: string[] = [];
+     if (updatedTaskData) {
+         const tasks = Array.isArray(updatedTaskData) ? updatedTaskData : (updatedTaskData.tasks || []);
+         tasks.forEach((t: any) => {
+             if (t.downloadedFiles) resultFiles.push(...t.downloadedFiles);
+         });
+     }
+
+     for (const filePath of resultFiles) {
+         if (fs.existsSync(filePath)) {
+             console.log(`[传输] 向服务器发送结果文件 -> ${filePath}`);
+             await uploadResult(WORKER_TOKEN, taskData.id, filePath);
+         }
+     }
+     
+     // 汇报完全结束 (The main server should update the status to completed)
+     // Also clear local map
+     jobProgress.delete(taskData.id);
+     
+     console.log(`[完全结束] 任务 ${taskData.id} 全部完成及传送.`);
+  } catch (error: any) {
+     console.error(`[失败] 任务报错:`, error.message);
+     jobProgress.set(taskData.id, { completed: 0, total: 1, status: 'failed', message: error.message });
+  }
+});
+
+socket.on("disconnect", () => {
+  console.log("与主服务器断开连接...");
+});
+
+// 处理主服务器发来的管理员远程指令
+socket.on("admin_command", (cmd: { action: string }) => {
+  if (cmd.action === 'restart') {
+      console.log("\n[管理员要求] 重启节点...");
+      process.exit(0); // 退出码 0 表示被外部 bat 脚本自动重启
+  } else if (cmd.action === 'stop') {
+      console.log("\n[管理员要求] 永久停止节点!");
+      process.exit(99); // 退出码 99 触发批处理结束
+  } else if (cmd.action === 'update') {
+      console.log("\n[管理员要求] 从 GitHub 拉取更新并重启...");
+      try {
+          const cp = require('child_process');
+          console.log("执行: git pull");
+          cp.execSync('git pull', { stdio: 'inherit' });
+          console.log("执行: npm install");
+          cp.execSync('npm install', { stdio: 'inherit' });
+          console.log("更新完成，立即重启应用新代码...");
+          process.exit(0);
+      } catch (err: any) {
+          console.error("更新失败:", err.message);
+      }
+  }
+});

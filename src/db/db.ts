@@ -47,6 +47,19 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS workers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    ip_address TEXT,
+    status TEXT DEFAULT 'offline',
+    concurrency INTEGER DEFAULT 1,
+    capabilities TEXT DEFAULT '["gemini_image"]',
+    config TEXT DEFAULT '{}',
+    last_seen DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Simple auto-migration for legacy databases

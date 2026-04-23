@@ -374,6 +374,207 @@ function UserManagement() {
   );
 }
 
+function WorkersManagement() {
+  const [workers, setWorkers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editingWorker, setEditingWorker] = useState<any>(null);
+  const [formData, setFormData] = useState({ name: '', concurrency: 1, capabilities: ['gemini_image'], config: {} });
+
+  const fetchWorkers = async () => {
+    try {
+      const res = await fetch('/api/admin/workers');
+      const data = await res.json();
+      if (Array.isArray(data)) setWorkers(data);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchWorkers();
+    const interval = setInterval(fetchWorkers, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const url = editingWorker ? `/api/admin/workers/${editingWorker.id}` : '/api/admin/workers';
+      const method = editingWorker ? 'PUT' : 'POST';
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+      if (res.ok) {
+        setShowModal(false);
+        fetchWorkers();
+      } else {
+        alert('保存失败');
+      }
+    } catch (e) {
+      alert('保存失败');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm('确定要删除此节点吗？')) return;
+    try {
+      const res = await fetch(`/api/admin/workers/${id}`, { method: 'DELETE' });
+      if (res.ok) fetchWorkers();
+    } catch (e) {
+      alert('删除失败');
+    }
+  };
+
+  return (
+    <div className="bg-white p-6 justify-between flex flex-col rounded-2xl shadow-sm border border-gray-100 min-h-[500px]">
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800">分布式节点管理</h2>
+          <p className="text-sm text-gray-500 mt-1">局域网分布式任务执行器监控与配制</p>
+        </div>
+        <button 
+          onClick={() => { setEditingWorker(null); setFormData({ name: '', concurrency: 1, capabilities: ['gemini_image'], config: { downloadDir: '' } }); setShowModal(true); }}
+          className="bg-blue-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-blue-700 transition"
+        >
+          添加节点
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-gray-500">加载中...</div>
+      ) : workers.length === 0 ? (
+        <div className="text-gray-500 py-12 text-center bg-gray-50 rounded-xl border border-dashed border-gray-300">暂无节点记录</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
+                <th className="p-4 font-bold border-b rounded-tl-xl">节点名称</th>
+                <th className="p-4 font-bold border-b">Token密钥</th>
+                <th className="p-4 font-bold border-b">IP地址</th>
+                <th className="p-4 font-bold border-b">状态</th>
+                <th className="p-4 font-bold border-b">配置额度</th>
+                <th className="p-4 font-bold border-b text-right rounded-tr-xl">操作</th>
+              </tr>
+            </thead>
+            <tbody className="text-sm">
+              {workers.map((worker: any) => (
+                 <tr key={worker.id} className="border-b border-gray-100 hover:bg-gray-50/50">
+                    <td className="p-4 font-bold text-gray-800">{worker.name}</td>
+                    <td className="p-4 font-mono text-xs text-blue-600 max-w-[120px] truncate select-all">{worker.token}</td>
+                    <td className="p-4 text-gray-600">{worker.ip_address || '-'}</td>
+                    <td className="p-4">
+                      {worker.status === 'running' ? <span className="text-blue-600 bg-blue-50 px-2 py-1 rounded-md text-xs font-bold border border-blue-200">执行中</span> : 
+                       worker.status === 'idle' ? <span className="text-green-600 bg-green-50 px-2 py-1 rounded-md text-xs font-bold border border-green-200">空闲</span> : 
+                       <span className="text-gray-500 bg-gray-100 px-2 py-1 rounded-md text-xs font-bold border border-gray-200">离线</span>}
+                    </td>
+                    <td className="p-4 text-gray-600">{worker.concurrency} 并发</td>
+                    <td className="p-4 text-right flex justify-end items-center gap-3">
+                      {worker.status !== 'offline' && (
+                        <>
+                          <button onClick={async () => {
+                              try {
+                                  await fetch(`/api/admin/workers/${worker.id}/command`, { 
+                                      method: 'POST', 
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ action: 'update' })
+                                  });
+                                  alert('已发送更新并重启指令');
+                              } catch(e) { alert('发送失败'); }
+                          }} className="text-purple-600 hover:text-purple-800 font-bold text-xs transition-colors" title="从 GitHub 拉取代码并强制重启">拉取更新</button>
+                          
+                          <button onClick={async () => {
+                              try {
+                                  await fetch(`/api/admin/workers/${worker.id}/command`, { 
+                                      method: 'POST', 
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ action: 'restart' })
+                                  });
+                                  alert('已发送重启指令');
+                              } catch(e) { alert('发送失败'); }
+                          }} className="text-orange-500 hover:text-orange-700 font-bold text-xs transition-colors">重启</button>
+                          
+                          <button onClick={async () => {
+                              if (!window.confirm('这会导致虚拟机上的接单进程被永久强制关闭！确定？')) return;
+                              try {
+                                  await fetch(`/api/admin/workers/${worker.id}/command`, { 
+                                      method: 'POST', 
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ action: 'stop' })
+                                  });
+                                  alert('已发送永久停止指令');
+                              } catch(e) { alert('发送失败'); }
+                          }} className="text-red-500 hover:text-red-700 font-bold text-xs transition-colors mr-2">停止守护</button>
+                        </>
+                      )}
+                      <button onClick={() => { setEditingWorker(worker); setFormData({ name: worker.name, concurrency: worker.concurrency, capabilities: JSON.parse(worker.capabilities || '[]'), config: JSON.parse(worker.config || '{}') }); setShowModal(true); }} className="text-blue-600 hover:text-blue-800 font-bold transition-colors">设置</button>
+                      <button onClick={() => handleDelete(worker.id)} className="text-gray-400 hover:text-red-700 font-bold transition-colors">删除</button>
+                    </td>
+                 </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="bg-gray-50 p-4 border-b border-gray-100 flex justify-between items-center">
+              <h3 className="font-bold text-gray-800 text-lg">{editingWorker ? '编辑节点' : '添加节点'}</h3>
+              <button type="button" onClick={() => setShowModal(false)} className="text-gray-400 hover:text-gray-600"><X size={20}/></button>
+            </div>
+            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">节点名称</label>
+                <input type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">并发执行数</label>
+                <input type="number" min="1" value={formData.concurrency} onChange={e => setFormData({ ...formData, concurrency: parseInt(e.target.value) || 1 })} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">自定义配置 (选填)</label>
+                <textarea 
+                  placeholder='{"downloadDir": "C:\\Downloads\\"}' 
+                  value={Object.keys(formData.config).length > 0 ? JSON.stringify(formData.config, null, 2) : ''} 
+                  onChange={e => {
+                    try {
+                      setFormData({ ...formData, config: e.target.value ? JSON.parse(e.target.value) : {} });
+                    } catch (err) {}
+                  }} 
+                  className="w-full p-3 text-xs font-mono border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 h-24" 
+                />
+                <p className="text-xs text-gray-500 mt-1">请使用严格的 JSON 格式。</p>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-2">能力配置</label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={formData.capabilities.includes('gemini_image')} onChange={e => {
+                    if (e.target.checked) setFormData({ ...formData, capabilities: [...formData.capabilities, 'gemini_image'] });
+                    else setFormData({ ...formData, capabilities: formData.capabilities.filter(c => c !== 'gemini_image') });
+                  }} />
+                  <span className="text-sm font-medium">Gemini 自动化生图</span>
+                </label>
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-gray-600 hover:bg-gray-200">取消</button>
+                <button type="submit" className="flex-1 py-3 bg-blue-600 rounded-xl font-bold text-white hover:bg-blue-700">提交</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProxyManagement() {
   const [status, setStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -528,10 +729,10 @@ function MainApp() {
   const [showAddTaskMenu, setShowAddTaskMenu] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery' | 'users' | 'proxy'>('tasks');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery' | 'users' | 'proxy' | 'workers'>('tasks');
   const [showNavDropdown, setShowNavDropdown] = useState<'tasks' | 'records' | 'gallery' | 'admin' | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
-  const [systemConfig, setSystemConfig] = useState({ 
+  const [systemConfig, setSystemConfig] = useState<any>({ 
     systemDownloadsDir: '', 
     chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     userDataDir: 'C:\\ChromeDebug',
@@ -546,7 +747,9 @@ function MainApp() {
     downloadCheckDelay: 1,
     downloadRetries: 3,
     videoConcurrency: 3,
-    imageQuality: 'performance'
+    imageQuality: 'performance',
+    dispatchStrategy: 'server',
+    globalConcurrency: 3
   });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
@@ -843,7 +1046,20 @@ function MainApp() {
 
   const deleteSelectedJobs = async () => {
     if (selectedJobs.size === 0) return;
-    if (!window.confirm(`确定要删除选中的 ${selectedJobs.size} 条记录吗？\n(生成的图片不会被删除)`)) return;
+    
+    // Check if any selected jobs are running
+    const runningJobsCount = Array.from(selectedJobs).filter((filename: string) => {
+      const jobId = filename.replace('.json', '');
+      const job = (activeTab === 'video_tasks' ? videoJobs : jobs).find(j => j.id === jobId);
+      return job && job.status === 'running';
+    }).length;
+
+    let confirmMsg = `确定要删除选中的 ${selectedJobs.size} 条记录吗？\n(生成的图片/视频不会被删除)`;
+    if (runningJobsCount > 0) {
+      confirmMsg = `选中的记录中包含 ${runningJobsCount} 条正在执行的任务。\n停止这些正在执行的任务并删除记录，确定继续吗？`;
+    }
+
+    if (!window.confirm(confirmMsg)) return;
     
     try {
       await fetch('/api/jobs/delete', { 
@@ -1187,7 +1403,7 @@ function MainApp() {
             <div className="relative">
               <button 
                 onClick={() => setShowNavDropdown(showNavDropdown === 'admin' ? null : 'admin')} 
-                className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['users'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+                className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['users', 'proxy', 'workers'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
               >
                 管理员 <ChevronDown size={16}/>
               </button>
@@ -1198,6 +1414,12 @@ function MainApp() {
                     className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'users' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
                   >
                     用户管理
+                  </button>
+                  <button 
+                    onClick={() => { setActiveTab('workers'); setShowNavDropdown(null); }}
+                    className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 ${activeTab === 'workers' ? 'text-blue-600 font-bold' : 'text-gray-700'}`}
+                  >
+                    节点管理
                   </button>
                   <button 
                     onClick={() => { setActiveTab('proxy'); setShowNavDropdown(null); }}
@@ -2177,6 +2399,10 @@ function MainApp() {
         <UserManagement />
       )}
 
+      {activeTab === 'workers' && user?.role === 'admin' && (
+        <WorkersManagement />
+      )}
+
       {activeTab === 'proxy' && user?.role === 'admin' && (
         <ProxyManagement />
       )}
@@ -2306,6 +2532,24 @@ function MainApp() {
                   onChange={(e) => setSystemConfig({...systemConfig, systemDownloadsDir: e.target.value})}
                   placeholder="例如: C:\Users\YourName\Downloads"
                 />
+              </div>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">全局任务分配方式:</label>
+                  <select 
+                    className="w-full p-2 border border-gray-200 rounded-lg outline-none bg-white font-medium text-blue-700"
+                    value={systemConfig.dispatchStrategy || 'server'}
+                    onChange={(e) => setSystemConfig({...systemConfig, dispatchStrategy: e.target.value})}
+                  >
+                    <option value="server">本地服务器执行</option>
+                    <option value="worker">仅节点虚拟机执行</option>
+                    <option value="all">所有设备通过抢单执行</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block mb-1 font-semibold text-gray-700">全局任务最大并发数:</label>
+                  <input type="number" min="1" className="w-full p-2 border border-gray-200 rounded-lg outline-none font-medium text-gray-800" value={systemConfig.globalConcurrency || 3} onChange={(e) => setSystemConfig({...systemConfig, globalConcurrency: parseInt(e.target.value) || 1})} />
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

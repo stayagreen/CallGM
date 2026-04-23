@@ -54,6 +54,7 @@ const bgmDir = path.join(__dirname, 'bgm');
 });
 
 export const videoJobProgress = new Map<string, { progress: number, status: string, error?: string }>();
+export const cancelledVideoJobs = new Set<string>();
 
 let activeVideoJobs = 0;
 
@@ -197,6 +198,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     // 1. Generate individual clips
     const clipPaths: string[] = [];
     for (let i = 0; i < storyboards.length; i++) {
+        if (cancelledVideoJobs.has(jobId)) throw new Error('CANCELLED');
         const sb = storyboards[i];
         const clipPath = path.join(videoTaskDir, `temp_${filename}_clip_${i}.mp4`);
         await generateClip(sb, clipPath, targetWidth, targetHeight);
@@ -205,6 +207,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     }
 
     // 2. Concatenate clips with transitions
+    if (cancelledVideoJobs.has(jobId)) throw new Error('CANCELLED');
     const concatPath = path.join(videoTaskDir, `temp_${filename}_concat.mp4`);
     let finalDuration = 0;
     await concatenateClips(clipPaths, storyboards, concatPath, (p) => {
@@ -214,6 +217,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     });
 
     // 3. Add BGM and Intro/Outro
+    if (cancelledVideoJobs.has(jobId)) throw new Error('CANCELLED');
     await addBgmAndFinalize(concatPath, finalDuration, bgm, introAnimation, outroAnimation, outputPath, (p) => {
         videoJobProgress.set(jobKey, { progress: 80 + Math.floor(p * 0.2), status: 'running' });
     });
@@ -228,13 +232,16 @@ async function processVideoTask(filePath: string, jobKey: string) {
     // Move task to history
     const relativeAssetPath = userId ? `${userId}/${outputFilename}` : outputFilename;
     taskData.outputVideo = relativeAssetPath;
-    fs.writeFileSync(filePath, JSON.stringify(taskData, null, 2));
-
-    const fileDir = path.dirname(filePath);
-    const relativeSubDir = path.relative(videoTaskDir, fileDir);
-    const targetHistoryDir = path.join(videoHistoryDir, relativeSubDir);
-    if (!fs.existsSync(targetHistoryDir)) fs.mkdirSync(targetHistoryDir, { recursive: true });
-    fs.renameSync(filePath, path.join(targetHistoryDir, filename));
+    if (fs.existsSync(filePath)) {
+        try {
+            fs.writeFileSync(filePath, JSON.stringify(taskData, null, 2));
+            const fileDir = path.dirname(filePath);
+            const relativeSubDir = path.relative(videoTaskDir, fileDir);
+            const targetHistoryDir = path.join(videoHistoryDir, relativeSubDir);
+            if (!fs.existsSync(targetHistoryDir)) fs.mkdirSync(targetHistoryDir, { recursive: true });
+            fs.renameSync(filePath, path.join(targetHistoryDir, filename));
+        } catch(e) {}
+    }
     
     // Update DB: Final Status, Data and Asset registration
     try {
@@ -261,6 +268,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     
     // Cleanup progress map after delay
     setTimeout(() => {
+        cancelledVideoJobs.delete(jobId);
         videoJobProgress.delete(jobKey);
         videoJobProgress.delete(filename); // compat
     }, 3000);

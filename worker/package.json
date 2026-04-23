@@ -1,0 +1,15 @@
+{
+  "name": "ai-studio-worker",
+  "version": "1.0.0",
+  "description": "Standalone Worker Node for AI Studio Distributed Automation",
+  "main": "worker.ts",
+  "scripts": {
+    "start": "tsx worker.ts"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.5",
+    "chrome-remote-interface": "^0.34.0",
+    "puppeteer": "^24.40.0",
+    "tsx": "^4.21.0"
+  }
+}
