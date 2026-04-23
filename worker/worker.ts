@@ -89,6 +89,13 @@ socket.on("run_task", async (taskData) => {
          }
      }
      
+     // 发送最终完成状态，通知主服务器将任务状态设为 completed
+     socket.emit("task_status", { 
+         jobId: taskData.id, 
+         progress: { completed: 1, total: 1, status: 'completed' }, 
+         status: 'completed' 
+     });
+
      // 汇报完全结束 (The main server should update the status to completed)
      // Also clear local map
      jobProgress.delete(taskData.id);
@@ -96,7 +103,9 @@ socket.on("run_task", async (taskData) => {
      console.log(`[完全结束] 任务 ${taskData.id} 全部完成及传送.`);
   } catch (error: any) {
      console.error(`[失败] 任务报错:`, error.message);
-     jobProgress.set(taskData.id, { completed: 0, total: 1, status: 'failed', message: error.message });
+     const errStatus = { completed: 0, total: 1, status: 'error', message: error.message };
+     jobProgress.set(taskData.id, errStatus);
+     socket.emit("task_status", { jobId: taskData.id, progress: errStatus, status: 'error' });
   }
 });
 

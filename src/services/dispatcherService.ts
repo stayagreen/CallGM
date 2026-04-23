@@ -44,7 +44,19 @@ export class DispatcherService {
         // Here we pipe updates to the global jobProgress which the UI reads
         // Need to import jobProgress dynamically to avoid circular dependencies if any
         import("../../automation.js").then(({ jobProgress }) => {
-             jobProgress.set(data.jobId, data.progress);
+             if (data.status === 'completed' || data.status === 'error' || data.status === 'failed') {
+                 // update db and remove from map
+                 try {
+                     if (data.status !== 'completed') {
+                         db.prepare('UPDATE tasks SET status = ?, status_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(data.status, data.progress.message || '', data.jobId);
+                     } else {
+                         db.prepare('UPDATE tasks SET status = ?, progress = 100, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(data.status, data.jobId);
+                     }
+                 } catch (e) {}
+                 jobProgress.delete(data.jobId);
+             } else {
+                 jobProgress.set(data.jobId, data.progress);
+             }
         }).catch(err => {
              console.error("[Dispatcher] Failed to pass jobProgress", err);
         });
