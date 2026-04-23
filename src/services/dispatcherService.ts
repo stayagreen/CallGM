@@ -44,13 +44,26 @@ export class DispatcherService {
         // Here we pipe updates to the global jobProgress which the UI reads
         // Need to import jobProgress dynamically to avoid circular dependencies if any
         import("../../automation.js").then(({ jobProgress }) => {
-             if (data.status === 'completed' || data.status === 'error' || data.status === 'failed') {
+              if (data.status === 'completed' || data.status === 'error' || data.status === 'failed') {
                  // update db and remove from map
                  try {
-                     if (data.status !== 'completed') {
-                         db.prepare('UPDATE tasks SET status = ?, status_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(data.status, data.progress.message || '', data.jobId);
+                     const task = db.prepare('SELECT status, worker_id FROM tasks WHERE id = ?').get(data.jobId) as any;
+                     
+                     // If the task was manually paused, keep it paused in the DB
+                     const finalStatus = (task && task.status === 'paused') ? 'paused' : data.status;
+
+                     if (finalStatus !== 'completed') {
+                         db.prepare('UPDATE tasks SET status = ?, status_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(finalStatus, data.progress.message || '', data.jobId);
                      } else {
-                         db.prepare('UPDATE tasks SET status = ?, progress = 100, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(data.status, data.jobId);
+                         db.prepare('UPDATE tasks SET status = ?, progress = 100, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(finalStatus, data.jobId);
+                     }
+
+                     // Reset worker status to idle if it has no other running tasks
+                     if (task && task.worker_id) {
+                        const otherRunning = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE worker_id = ? AND status = ? AND id != ?').get(task.worker_id, 'running', data.jobId) as any;
+                        if (!otherRunning || otherRunning.count === 0) {
+                            db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('idle', task.worker_id);
+                        }
                      }
                  } catch (e) {}
                  jobProgress.delete(data.jobId);

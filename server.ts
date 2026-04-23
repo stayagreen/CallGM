@@ -838,16 +838,34 @@ async function startServer() {
 
       for (const id of taskIds) {
         if (action === 'pause' || action === 'pause_delete') {
-            const task = db.prepare('SELECT type FROM tasks WHERE id = ?').get(id) as any;
+            const task = db.prepare('SELECT type, worker_id FROM tasks WHERE id = ?').get(id) as any;
             db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('paused', id);
             dispatcherService.cancelTask(id);
             cancelledJobs.add(id);
             cancelledVideoJobs.add(id);
             if (task) renameFile(id, task.type === 'video', true);
+
+            // Release worker
+            if (task && task.worker_id) {
+               const otherRunning = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE worker_id = ? AND status = ? AND id != ?').get(task.worker_id, 'running', id) as any;
+               if (!otherRunning || otherRunning.count === 0) {
+                   db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('idle', task.worker_id);
+               }
+            }
         }
 
         if (action === 'delete' || action === 'pause_delete') {
+            // Need worker_id before delete
+            const task = db.prepare('SELECT worker_id FROM tasks WHERE id = ?').get(id) as any;
             db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+
+            // Release worker
+            if (task && task.worker_id) {
+               const otherRunning = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE worker_id = ? AND status = ? AND id != ?').get(task.worker_id, 'running', id) as any;
+               if (!otherRunning || otherRunning.count === 0) {
+                   db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('idle', task.worker_id);
+               }
+            }
         }
       }
       res.json({ success: true });
