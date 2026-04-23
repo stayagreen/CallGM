@@ -116,7 +116,7 @@ export class DispatcherService {
     try {
       // 1. Read global config
       const configRow = db.prepare('SELECT value FROM system_config WHERE key = ?').get('app_config') as any;
-      let config = { dispatchStrategy: 'server', globalConcurrency: 3 };
+      let config = { dispatchStrategy: 'server', globalConcurrency: 3, videoConcurrency: 3 };
       if (configRow) {
         try { config = JSON.parse(configRow.value); } catch(e) {}
       } else {
@@ -134,18 +134,24 @@ export class DispatcherService {
           return;
       }
 
-      // 3. Count current running jobs
-      const runningCountRow = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE status = ?').get('running') as any;
-      let runningCount = runningCountRow ? runningCountRow.count : 0;
-      const maxGlobal = config.globalConcurrency || 10; // Default to a more reasonable 10 if not set
+      // 3. Count current running jobs separately
+      const counts = db.prepare('SELECT type, COUNT(*) as count FROM tasks WHERE status = ? GROUP BY type').all('running') as any[];
+      let runningImageCount = 0;
+      let runningVideoCount = 0;
+      counts.forEach(c => {
+          if (c.type === 'video') runningVideoCount = c.count;
+          else runningImageCount = c.count;
+      });
+
+      const maxImage = config.globalConcurrency || 10;
+      const maxVideo = config.videoConcurrency || 3;
 
       for (const task of pendingTasks) {
-         // If we are at global capacity, we only pick up tasks if it's a specialized case or we have more nodes
-         if (runningCount >= maxGlobal) {
-             // Continue scanning in case there's something we can dispatch differently, 
-             // but normally we should respect the global limit to prevent overwhelming the server
-             continue; 
-         }
+         const isVideo = task.type === 'video';
+         
+         // Respect individual type limits
+         if (isVideo && runningVideoCount >= maxVideo) continue;
+         if (!isVideo && runningImageCount >= maxImage) continue;
 
          let dispatched = false;
          const taskData = JSON.parse(task.data);
@@ -185,7 +191,8 @@ export class DispatcherService {
                     this.io!.to(targetSocketId).emit('run_task', taskData);
                     console.log(`[Dispatcher] Dispatched ${task.type} task ${task.id} to worker ${matchedWorker.name}`);
                     dispatched = true;
-                    runningCount++;
+                    if (isVideo) runningVideoCount++;
+                    else runningImageCount++;
                 }
             }
          }
@@ -204,7 +211,8 @@ export class DispatcherService {
                 db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('running', task.id);
                 console.log(`[Dispatcher] Queued ${task.type} task ${task.id} to local server watcher (${baseDirName}).`);
                 dispatched = true;
-                runningCount++;
+                if (isVideo) runningVideoCount++;
+                else runningImageCount++;
              } catch(e: any) {
                 console.error(`[Dispatcher] Failed to dispatch locally: ${e.message}`);
              }

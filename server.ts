@@ -1352,6 +1352,17 @@ async function startServer() {
     }
   });
 
+  // Register/Update Local Server node
+  try {
+    const serverNode = db.prepare('SELECT id FROM workers WHERE token = ?').get('local-server') as any;
+    if (!serverNode) {
+        db.prepare('INSERT INTO workers (name, token, status, capabilities, ip_address) VALUES (?, ?, ?, ?, ?)')
+          .run('Local Server (Built-in)', 'local-server', 'idle', JSON.stringify(['gemini_image', 'gemini_video']), '127.0.0.1');
+    } else {
+        db.prepare('UPDATE workers SET status = ?, last_seen = CURRENT_TIMESTAMP WHERE token = ?').run('idle', 'local-server');
+    }
+  } catch(e) {}
+
   // Start the automation watcher
   startAutomationWatcher();
   
