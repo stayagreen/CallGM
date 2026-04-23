@@ -179,8 +179,8 @@ export class DispatcherService {
              try {
                 const reqUserId = task.user_id;
                 const isVideo = task.type === 'video';
-                const baseDirName = isVideo ? 'video_task' : 'task';
-                const userTaskDir = path.join(process.cwd(), 'data', baseDirName, String(reqUserId));
+                const baseDirName = isVideo ? 'task_video' : 'task';
+                const userTaskDir = path.join(process.cwd(), baseDirName, String(reqUserId));
                 
                 if (!fs.existsSync(userTaskDir)) fs.mkdirSync(userTaskDir, { recursive: true });
                 const filename = `${task.id}.json`;
