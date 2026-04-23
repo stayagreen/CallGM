@@ -159,10 +159,6 @@ export class DispatcherService {
          // Resolve Worker vs Server based on dispatchStrategy
          const strategy = config.dispatchStrategy || 'server';
 
-         // Video tasks typically go to the server if strategy is all or server,
-         // unless specifically configured to ONLY use workers.
-         const isVideo = task.type === 'video';
-
          if (strategy === 'worker' || strategy === 'all') {
             // Find an idle worker with the right capabilities
             const requiredCapability = isVideo ? 'gemini_video' : 'gemini_image';
