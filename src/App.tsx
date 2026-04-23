@@ -489,45 +489,51 @@ function WorkersManagement() {
                     </td>
                     <td className="p-4 text-gray-600">{worker.concurrency} 并发</td>
                     <td className="p-4 text-right flex justify-end items-center gap-3">
-                      {worker.status !== 'offline' && (
+                      {worker.id !== 'local-server-id' ? (
                         <>
-                          <button onClick={async () => {
-                              try {
-                                  await fetch(`/api/admin/workers/${worker.id}/command`, { 
-                                      method: 'POST', 
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ action: 'update' })
-                                  });
-                                  alert('已发送更新并重启指令');
-                              } catch(e) { alert('发送失败'); }
-                          }} className="text-purple-600 hover:text-purple-800 font-bold text-xs transition-colors" title="从 GitHub 拉取代码并强制重启">拉取更新</button>
-                          
-                          <button onClick={async () => {
-                              try {
-                                  await fetch(`/api/admin/workers/${worker.id}/command`, { 
-                                      method: 'POST', 
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ action: 'restart' })
-                                  });
-                                  alert('已发送重启指令');
-                              } catch(e) { alert('发送失败'); }
-                          }} className="text-orange-500 hover:text-orange-700 font-bold text-xs transition-colors">重启</button>
-                          
-                          <button onClick={async () => {
-                              if (!window.confirm('这会导致虚拟机上的接单进程被永久强制关闭！确定？')) return;
-                              try {
-                                  await fetch(`/api/admin/workers/${worker.id}/command`, { 
-                                      method: 'POST', 
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ action: 'stop' })
-                                  });
-                                  alert('已发送永久停止指令');
-                              } catch(e) { alert('发送失败'); }
-                          }} className="text-red-500 hover:text-red-700 font-bold text-xs transition-colors mr-2">停止守护</button>
+                          {worker.status !== 'offline' && (
+                            <>
+                              <button onClick={async () => {
+                                  try {
+                                      await fetch(`/api/admin/workers/${worker.id}/command`, { 
+                                          method: 'POST', 
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ action: 'update' })
+                                      });
+                                      alert('已发送更新并重启指令');
+                                  } catch(e) { alert('发送失败'); }
+                              }} className="text-purple-600 hover:text-purple-800 font-bold text-xs transition-colors" title="从 GitHub 拉取代码并强制重启">拉取更新</button>
+                              
+                              <button onClick={async () => {
+                                  try {
+                                      await fetch(`/api/admin/workers/${worker.id}/command`, { 
+                                          method: 'POST', 
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ action: 'restart' })
+                                      });
+                                      alert('已发送重启指令');
+                                  } catch(e) { alert('发送失败'); }
+                              }} className="text-orange-500 hover:text-orange-700 font-bold text-xs transition-colors">重启</button>
+                              
+                              <button onClick={async () => {
+                                  if (!window.confirm('这会导致虚拟机上的接单进程被永久强制关闭！确定？')) return;
+                                  try {
+                                      await fetch(`/api/admin/workers/${worker.id}/command`, { 
+                                          method: 'POST', 
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ action: 'stop' })
+                                      });
+                                      alert('已发送永久停止指令');
+                                  } catch(e) { alert('发送失败'); }
+                              }} className="text-red-500 hover:text-red-700 font-bold text-xs transition-colors mr-2">停止守护</button>
+                            </>
+                          )}
+                          <button onClick={() => { setEditingWorker(worker); setFormData({ name: worker.name, concurrency: worker.concurrency, capabilities: JSON.parse(worker.capabilities || '[]'), config: JSON.parse(worker.config || '{}') }); setShowModal(true); }} className="text-blue-600 hover:text-blue-800 font-bold transition-colors">设置</button>
+                          <button onClick={() => handleDelete(worker.id)} className="text-gray-400 hover:text-red-700 font-bold transition-colors">删除</button>
                         </>
+                      ) : (
+                        <span className="text-xs font-bold text-gray-400 italic">系统专属节点 (只读)</span>
                       )}
-                      <button onClick={() => { setEditingWorker(worker); setFormData({ name: worker.name, concurrency: worker.concurrency, capabilities: JSON.parse(worker.capabilities || '[]'), config: JSON.parse(worker.config || '{}') }); setShowModal(true); }} className="text-blue-600 hover:text-blue-800 font-bold transition-colors">设置</button>
-                      <button onClick={() => handleDelete(worker.id)} className="text-gray-400 hover:text-red-700 font-bold transition-colors">删除</button>
                     </td>
                  </tr>
               ))}

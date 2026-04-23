@@ -129,7 +129,9 @@ export class DispatcherService {
 
       // 2. Find pending tasks. Increase limit to allow scanning past blocked tasks.
       const pendingTasks = db.prepare('SELECT * FROM tasks WHERE status = ? ORDER BY created_at ASC LIMIT 50').all('pending') as any[];
-      if (pendingTasks.length === 0) {
+      if (pendingTasks.length > 0) {
+          console.log(`[Dispatcher] Found ${pendingTasks.length} pending tasks to process.`);
+      } else {
           this.isDispatching = false;
           return;
       }
@@ -145,19 +147,28 @@ export class DispatcherService {
 
       const maxImage = config.globalConcurrency || 10;
       const maxVideo = config.videoConcurrency || 3;
+      
+      console.log(`[Dispatcher] Current running: Image=${runningImageCount}/${maxImage}, Video=${runningVideoCount}/${maxVideo}`);
 
       for (const task of pendingTasks) {
          const isVideo = task.type === 'video';
          
          // Respect individual type limits
-         if (isVideo && runningVideoCount >= maxVideo) continue;
-         if (!isVideo && runningImageCount >= maxImage) continue;
+         if (isVideo && runningVideoCount >= maxVideo) {
+             console.log(`[Dispatcher] Skipping video task ${task.id} due to concurrency limit.`);
+             continue;
+         }
+         if (!isVideo && runningImageCount >= maxImage) {
+             console.log(`[Dispatcher] Skipping image task ${task.id} due to concurrency limit.`);
+             continue;
+         }
 
          let dispatched = false;
          const taskData = JSON.parse(task.data);
 
          // Resolve Worker vs Server based on dispatchStrategy
          const strategy = config.dispatchStrategy || 'server';
+         console.log(`[Dispatcher] Processing ${task.type} task ${task.id} with strategy ${strategy}`);
 
          if (strategy === 'worker' || strategy === 'all') {
             // Find an idle worker with the right capabilities

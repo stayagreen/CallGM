@@ -182,6 +182,12 @@ async function startServer() {
 
   app.put('/api/admin/workers/:id', requireAdmin, (req, res) => {
     const { name, concurrency, capabilities, config } = req.body;
+    
+    // Protect built-in nodes
+    if (req.params.id === 'local-server-id') {
+        return res.status(403).json({ error: 'System nodes cannot be modified via API' });
+    }
+
     try {
       db.prepare('UPDATE workers SET name = ?, concurrency = ?, capabilities = ?, config = ? WHERE id = ?').run(
         name, concurrency, JSON.stringify(capabilities || []), JSON.stringify(config || {}), req.params.id
@@ -193,6 +199,11 @@ async function startServer() {
   });
 
   app.delete('/api/admin/workers/:id', requireAdmin, (req, res) => {
+    // Protect built-in nodes
+    if (req.params.id === 'local-server-id') {
+        return res.status(403).json({ error: 'System nodes cannot be deleted' });
+    }
+    
     try {
       db.prepare('DELETE FROM workers WHERE id = ?').run(req.params.id);
       res.json({ message: 'Worker deleted' });
@@ -1109,6 +1120,12 @@ async function startServer() {
       }
       
       if (deleted) {
+        // Also delete from DB
+        try {
+          db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+          db.prepare('DELETE FROM assets WHERE job_id = ?').run(id);
+        } catch(e) {}
+
         // Also delete the generated video file if it exists
         if (taskData && taskData.outputVideo) {
           const videoPath = path.join(videoDownloadDir, taskData.outputVideo);
@@ -1354,14 +1371,15 @@ async function startServer() {
 
   // Register/Update Local Server node
   try {
-    const serverNode = db.prepare('SELECT id FROM workers WHERE token = ?').get('local-server') as any;
-    if (!serverNode) {
-        db.prepare('INSERT INTO workers (name, token, status, capabilities, ip_address) VALUES (?, ?, ?, ?, ?)')
-          .run('Local Server (Built-in)', 'local-server', 'idle', JSON.stringify(['gemini_image', 'gemini_video']), '127.0.0.1');
-    } else {
-        db.prepare('UPDATE workers SET status = ?, last_seen = CURRENT_TIMESTAMP WHERE token = ?').run('idle', 'local-server');
-    }
-  } catch(e) {}
+    // Delete potential corrupt/incomplete local records
+    db.prepare("DELETE FROM workers WHERE token = 'local-server' OR id IS NULL").run();
+    
+    db.prepare('INSERT INTO workers (id, name, token, status, capabilities, ip_address) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('local-server-id', 'Local Server (Built-in)', 'local-server', 'idle', JSON.stringify(['gemini_image', 'gemini_video']), '127.0.0.1');
+    console.log('[Worker] Local Server node registered successfully.');
+  } catch(e) {
+    console.error('Failed to register local server node:', e);
+  }
 
   // Start the automation watcher
   startAutomationWatcher();
