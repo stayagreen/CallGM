@@ -745,6 +745,9 @@ async function startServer() {
     for (const file of filenames) {
       const jobId = file.replace('.json', '');
       
+      // Notify dispatcher if it was running on a worker
+      dispatcherService.cancelTask(jobId);
+
       // Delete from DB
       try {
         db.prepare('DELETE FROM tasks WHERE id = ?').run(jobId);
@@ -761,28 +764,96 @@ async function startServer() {
           }
 
           const rootPath = path.join(baseDir, targetFile);
-          if (fs.existsSync(rootPath)) {
-              fs.unlinkSync(rootPath);
-              return true;
-          }
+          const rootPaused = rootPath + '.paused';
+          if (fs.existsSync(rootPath)) fs.unlinkSync(rootPath);
+          if (fs.existsSync(rootPaused)) fs.unlinkSync(rootPaused);
+
           // Scan subdirs
           try {
-              const subs = fs.readdirSync(baseDir).filter(f => fs.statSync(path.join(baseDir, f)).isDirectory());
-              for (const sub of subs) {
-                  const subPath = path.join(baseDir, sub, targetFile);
-                  if (fs.existsSync(subPath)) {
-                      fs.unlinkSync(subPath);
-                      return true;
+              const items = fs.readdirSync(baseDir);
+              for (const item of items) {
+                  const subPath = path.join(baseDir, item);
+                  if (fs.statSync(subPath).isDirectory()) {
+                      const f = path.join(subPath, targetFile);
+                      const p = f + '.paused';
+                      if (fs.existsSync(f)) fs.unlinkSync(f);
+                      if (fs.existsSync(p)) fs.unlinkSync(p);
                   }
               }
           } catch(e) {}
-          return false;
+          return true;
       };
 
       findAndDelete(historyDir, file);
+      findAndDelete(videoHistoryDir, file);
       findAndDelete(taskDir, file);
+      findAndDelete(videoTaskDir, file);
     }
     res.json({ success: true });
+  });
+
+  // Batch action (pause, delete)
+  app.post("/api/jobs/batch-action", requireAuth, checkAccess, (req: any, res) => {
+    const { taskIds, action } = req.body;
+    if (!Array.isArray(taskIds) || !['pause', 'pause_delete', 'delete'].includes(action)) {
+      return res.status(400).json({ error: 'Invalid request' });
+    }
+
+    try {
+      const renameFile = (id: string, isVideo: boolean, pause: boolean) => {
+          const baseName = isVideo ? 'task_video' : 'task';
+          const historyBase = isVideo ? 'task_video/history' : 'task/history';
+          const filename = `${id}.json`;
+          
+          // Helper to rename if exists
+          const doRename = (dir: string) => {
+              const fullPath = path.join(process.cwd(), dir, filename);
+              const pausedPath = fullPath + '.paused';
+              if (pause) {
+                  if (fs.existsSync(fullPath)) fs.renameSync(fullPath, pausedPath);
+              } else {
+                  // resume (not requested yet but good to know)
+                  if (fs.existsSync(pausedPath)) fs.renameSync(pausedPath, fullPath);
+              }
+          };
+
+          doRename(baseName);
+          doRename(historyBase);
+          // Also check user subdirs if any
+          const searchDirs = [path.join(process.cwd(), baseName), path.join(process.cwd(), historyBase)];
+          searchDirs.forEach(sd => {
+              if (fs.existsSync(sd)) {
+                  fs.readdirSync(sd).forEach(sub => {
+                      const subPath = path.join(sd, sub);
+                      if (fs.statSync(subPath).isDirectory()) {
+                          const f = path.join(subPath, filename);
+                          const p = f + '.paused';
+                          if (pause && fs.existsSync(f)) fs.renameSync(f, p);
+                          else if (!pause && fs.existsSync(p)) fs.renameSync(p, f);
+                      }
+                  });
+              }
+          });
+      };
+
+      for (const id of taskIds) {
+        if (action === 'pause' || action === 'pause_delete') {
+            const task = db.prepare('SELECT type FROM tasks WHERE id = ?').get(id) as any;
+            db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('paused', id);
+            dispatcherService.cancelTask(id);
+            cancelledJobs.add(id);
+            cancelledVideoJobs.add(id);
+            if (task) renameFile(id, task.type === 'video', true);
+        }
+
+        if (action === 'delete' || action === 'pause_delete') {
+            db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
+        }
+      }
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   const dataDir = path.join(__dirname, "data");

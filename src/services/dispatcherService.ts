@@ -153,7 +153,7 @@ export class DispatcherService {
                 if (targetSocketId) {
                     // Mark worker as busy temporarily until it acks? Or just trust it.
                     db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('running', matchedWorker.id);
-                    db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('running', task.id);
+                    db.prepare('UPDATE tasks SET status = ?, worker_id = ? WHERE id = ?').run('running', matchedWorker.id, task.id);
                     this.io!.to(targetSocketId).emit('run_task', taskData);
                     console.log(`[Dispatcher] Dispatched task ${task.id} to worker ${matchedWorker.name}`);
                     dispatched = true;
@@ -186,6 +186,27 @@ export class DispatcherService {
     } finally {
        this.isDispatching = false;
     }
+  }
+  public cancelTask(taskId: string) {
+      if (!this.io) return;
+      try {
+          const task = db.prepare('SELECT worker_id FROM tasks WHERE id = ?').get(taskId) as any;
+          if (task && task.worker_id) {
+              const worker = db.prepare('SELECT token FROM workers WHERE id = ?').get(task.worker_id) as any;
+              if (worker) {
+                  let targetSid: string | null = null;
+                  for (const [sid, t] of this.connectedWorkers.entries()) {
+                      if (t === worker.token) { targetSid = sid; break; }
+                  }
+                  if (targetSid) {
+                      console.log(`[Dispatcher] Sending cancel_task for ${taskId} to worker ${task.worker_id}`);
+                      this.io.to(targetSid).emit('cancel_task', { jobId: taskId });
+                  }
+              }
+          }
+      } catch (e) {
+          console.error(`[Dispatcher] Cancel Task Error for ${taskId}:`, e);
+      }
   }
 }
 

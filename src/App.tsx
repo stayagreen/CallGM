@@ -14,14 +14,14 @@ interface Task {
   download: boolean;
   downloadedFiles?: string[];
   executor?: 'js' | 'cdp';
-  status?: 'pending' | 'running' | 'completed' | 'failed' | 'error';
+  status?: 'pending' | 'running' | 'completed' | 'failed' | 'error' | 'paused';
 }
 
 interface Job {
   id: string;
   timestamp: number;
   tasks: Task[];
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'error';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'error' | 'paused';
   progress: number;
   statusMessage?: string;
   resultFiles?: string[];
@@ -90,14 +90,16 @@ const JobItem = React.memo(({
                 <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
                   job.status === 'completed' ? 'bg-green-100 text-green-700' : 
                   job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
+                  job.status === 'paused' ? 'bg-orange-100 text-orange-700 border border-orange-200' :
                   job.status === 'failed' ? 'bg-red-100 text-red-700' :
                   'bg-yellow-100 text-yellow-700'
                 }`}>
                   {job.status === 'completed' && <CheckCircle2 size={14} />}
                   {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
+                  {job.status === 'paused' && <Clock size={14} />}
                   {job.status === 'pending' && <Clock size={14} />}
                   {job.status === 'failed' && <X size={14} />}
-                  {job.status === 'completed' ? '已完成' : job.status === 'running' ? '执行中' : job.status === 'failed' ? '执行失败' : '待执行'}
+                  {job.status === 'completed' ? '已完成' : job.status === 'running' ? '执行中' : job.status === 'paused' ? '已暂停' : job.status === 'failed' ? '执行失败' : '待执行'}
                 </span>
               </div>
               <div className="text-sm text-gray-500 font-medium flex items-center gap-1">
@@ -816,6 +818,7 @@ function MainApp() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
+  const [showBatchDropdown, setShowBatchDropdown] = useState(false);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [galleryImages, setGalleryImages] = useState<GalleryAsset[]>([]);
   const [videoGallery, setVideoGallery] = useState<GalleryAsset[]>([]);
@@ -1105,6 +1108,36 @@ function MainApp() {
     if (activeTab === 'gallery' || activeTab === 'video_tasks') fetchGallery();
     if (activeTab === 'video_gallery') fetchVideoGallery();
   }, [activeTab]);
+
+  const handleBatchAction = async (action: 'pause' | 'pause_delete' | 'delete') => {
+    if (selectedJobs.size === 0) return;
+    
+    const taskIds = Array.from(selectedJobs).map((f: string) => f.replace('.json', ''));
+    
+    let actionName = action === 'pause' ? '批量暂停' : action === 'delete' ? '批量删除' : '批量暂停并删除';
+    let confirmMsg = `确定要执行 ${actionName} (${selectedJobs.size} 条记录) 吗？`;
+    
+    if (action === 'delete' || action === 'pause_delete') {
+      confirmMsg += '\n注意：记录删除后将无法恢复。';
+    }
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await fetch('/api/jobs/batch-action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskIds, action })
+      });
+      setSelectedJobs(new Set());
+      fetchJobs();
+      if (activeTab === 'video_tasks') fetchVideoJobs();
+      setShowBatchDropdown(false);
+    } catch (error) {
+      console.error('Batch action failed:', error);
+      alert('批量操作失败，请重试');
+    }
+  };
 
   const deleteSelectedJobs = async () => {
     if (selectedJobs.size === 0) return;
@@ -1843,14 +1876,44 @@ function MainApp() {
               >
                 {selectedJobs.size === jobs.length && jobs.length > 0 ? '取消全选' : '全选'}
               </button>
-              <button 
-                onClick={deleteSelectedJobs} 
-                disabled={selectedJobs.size === 0} 
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-100 rounded-lg hover:bg-red-100 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-              >
-                <Trash2 size={16} />
-                批量删除 ({selectedJobs.size})
-              </button>
+              
+              <div className="relative">
+                <button 
+                  onClick={() => setShowBatchDropdown(!showBatchDropdown)}
+                  disabled={selectedJobs.size === 0} 
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-50 text-red-600 border border-red-100 rounded-lg hover:bg-red-100 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                >
+                  <Trash2 size={16} />
+                  批量操作 ({selectedJobs.size})
+                  <ChevronDown size={14} className={`transition-transform duration-200 ${showBatchDropdown ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {showBatchDropdown && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowBatchDropdown(false)} />
+                    <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-100 rounded-xl shadow-xl z-20 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                      <button 
+                        onClick={() => handleBatchAction('pause')}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                      >
+                        <Clock size={14} className="text-orange-500" /> 批量暂停任务
+                      </button>
+                      <button 
+                        onClick={() => handleBatchAction('pause_delete')}
+                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2 border-t border-gray-50"
+                      >
+                        <Trash2 size={14} /> 批量暂停并删除
+                      </button>
+                      <button 
+                        onClick={() => handleBatchAction('delete')}
+                        className="w-full text-left px-4 py-2 text-sm text-gray-400 hover:bg-gray-50 flex items-center gap-2 border-t border-gray-50"
+                      >
+                        <Trash2 size={14} /> 仅批量删除记录
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
           

@@ -1,7 +1,7 @@
 import io from "socket.io-client";
 import fs from "fs";
 import path from "path";
-import { jobProgress, executeBatch } from "../automation.js";
+import { jobProgress, executeBatch, cancelledJobs } from "./automation.js";
 
 // ========= 配置区域 =========
 const SERVER_URL = "http://192.168.1.100:4000"; // 替换为主服务器局域网IP
@@ -66,6 +66,10 @@ async function uploadResult(token: string, jobId: string, filePath: string) {
 socket.on("run_task", async (taskData) => {
   console.log("-----------------------------------------");
   console.log(`[新任务] 收到生图任务: ${taskData.id}`);
+  
+  // Reset cancellation for this task if it was previously set (though unlikely)
+  cancelledJobs.delete(taskData.id);
+
   try {
      // Execute native automation script
      // executeBatch takes (input, filename, userId)
@@ -107,6 +111,11 @@ socket.on("run_task", async (taskData) => {
      jobProgress.set(taskData.id, errStatus);
      socket.emit("task_status", { jobId: taskData.id, progress: errStatus, status: 'error' });
   }
+});
+
+socket.on("cancel_task", (data: { jobId: string }) => {
+  console.log(`[取消指令] 接收到任务中止信号: ${data.jobId}`);
+  cancelledJobs.add(data.jobId);
 });
 
 socket.on("disconnect", () => {
