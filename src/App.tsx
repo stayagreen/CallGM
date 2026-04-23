@@ -463,10 +463,22 @@ function WorkersManagement() {
               </tr>
             </thead>
             <tbody className="text-sm">
-              {workers.map((worker: any) => (
+                  {workers.map((worker: any) => (
                  <tr key={worker.id} className="border-b border-gray-100 hover:bg-gray-50/50">
                     <td className="p-4 font-bold text-gray-800">{worker.name}</td>
-                    <td className="p-4 font-mono text-xs text-blue-600 max-w-[120px] truncate select-all">{worker.token}</td>
+                    <td 
+                        className="p-4 font-mono text-xs text-blue-600 max-w-[120px] truncate cursor-pointer hover:text-blue-800 relative group"
+                        title="点击复制"
+                        onClick={(e) => {
+                           navigator.clipboard.writeText(worker.token);
+                           const target = e.currentTarget as HTMLElement;
+                           const original = worker.token;
+                           target.innerText = '已复制!';
+                           setTimeout(() => target.innerText = original, 1500);
+                        }}
+                     >
+                       {worker.token}
+                     </td>
                     <td className="p-4 text-gray-600">{worker.ip_address || '-'}</td>
                     <td className="p-4">
                       {worker.status === 'running' ? <span className="text-blue-600 bg-blue-50 px-2 py-1 rounded-md text-xs font-bold border border-blue-200">执行中</span> : 
@@ -539,28 +551,78 @@ function WorkersManagement() {
                 <input type="number" min="1" value={formData.concurrency} onChange={e => setFormData({ ...formData, concurrency: parseInt(e.target.value) || 1 })} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" required />
               </div>
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1">自定义配置 (选填)</label>
-                <textarea 
-                  placeholder='{"downloadDir": "C:\\Downloads\\"}' 
-                  value={Object.keys(formData.config).length > 0 ? JSON.stringify(formData.config, null, 2) : ''} 
-                  onChange={e => {
-                    try {
-                      setFormData({ ...formData, config: e.target.value ? JSON.parse(e.target.value) : {} });
-                    } catch (err) {}
-                  }} 
-                  className="w-full p-3 text-xs font-mono border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 h-24" 
-                />
-                <p className="text-xs text-gray-500 mt-1">请使用严格的 JSON 格式。</p>
-              </div>
-              <div>
-                <label className="block text-sm font-bold text-gray-700 mb-2">能力配置</label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={formData.capabilities.includes('gemini_image')} onChange={e => {
-                    if (e.target.checked) setFormData({ ...formData, capabilities: [...formData.capabilities, 'gemini_image'] });
-                    else setFormData({ ...formData, capabilities: formData.capabilities.filter(c => c !== 'gemini_image') });
-                  }} />
-                  <span className="text-sm font-medium">Gemini 自动化生图</span>
-                </label>
+                <label className="block text-sm font-bold text-gray-700 mb-2">为该节点启用的功能</label>
+                
+                {/* Gemini 自动化生图 */}
+                <div className="mb-4 border border-gray-100 rounded-xl p-4 bg-gray-50/50">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input 
+                       type="checkbox" 
+                       className="w-4 h-4 text-blue-600 rounded"
+                       checked={formData.capabilities.includes('gemini_image')} 
+                       onChange={e => {
+                         if (e.target.checked) setFormData({ ...formData, capabilities: [...formData.capabilities, 'gemini_image'] });
+                         else setFormData({ ...formData, capabilities: formData.capabilities.filter(c => c !== 'gemini_image') });
+                       }} 
+                    />
+                    <span className="font-bold text-gray-800">🖼️ Gemini 自动化生图</span>
+                  </label>
+                  
+                  {formData.capabilities.includes('gemini_image') && (
+                    <div className="mt-3 pl-7 space-y-3">
+                       <div>
+                         <label className="block text-xs font-bold text-gray-600 mb-1">图片下载回推路径 (选填)</label>
+                         <input 
+                           type="text" 
+                           placeholder="例如: C:\Outputs\Images"
+                           value={(formData.config as any).gemini_download_dir || ''}
+                           onChange={e => setFormData({ ...formData, config: { ...formData.config, gemini_download_dir: e.target.value } })}
+                           className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-blue-500" 
+                         />
+                         <p className="text-[10px] text-gray-500 mt-1">留空则图片生成后将只传回主服务器数据库中</p>
+                       </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 视频提取 */}
+                <div className="mb-4 border border-gray-100 rounded-xl p-4 bg-gray-50/50">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input 
+                       type="checkbox" 
+                       className="w-4 h-4 text-blue-600 rounded"
+                       checked={formData.capabilities.includes('video_automation')} 
+                       onChange={e => {
+                         if (e.target.checked) setFormData({ ...formData, capabilities: [...formData.capabilities, 'video_automation'] });
+                         else setFormData({ ...formData, capabilities: formData.capabilities.filter(c => c !== 'video_automation') });
+                       }} 
+                    />
+                    <span className="font-bold text-gray-800">🎬 视频自动化截取与提取</span>
+                  </label>
+
+                  {formData.capabilities.includes('video_automation') && (
+                    <div className="mt-3 pl-7 space-y-3">
+                       <div>
+                         <label className="block text-xs font-bold text-gray-600 mb-1">视频挂载目录 (选填)</label>
+                         <input 
+                           type="text" 
+                           placeholder="例如: D:\Data\Videos"
+                           value={(formData.config as any).video_mount_dir || ''}
+                           onChange={e => setFormData({ ...formData, config: { ...formData.config, video_mount_dir: e.target.value } })}
+                           className="w-full text-sm p-2 border border-gray-200 rounded-lg outline-none focus:border-blue-500" 
+                         />
+                       </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 功能扩充桩 */}
+                <div className="border border-gray-100 rounded-xl p-4 bg-gray-50/50 opacity-60">
+                  <label className="flex items-center gap-3 cursor-pointer cursor-not-allowed">
+                    <input type="checkbox" disabled className="w-4 h-4 rounded" />
+                    <span className="font-bold text-gray-500">✨ AI 无痕去水印 (开发中...)</span>
+                  </label>
+                </div>
               </div>
 
               <div className="flex gap-4 pt-4">
