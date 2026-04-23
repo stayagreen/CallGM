@@ -86,7 +86,12 @@ export class DispatcherService {
     });
 
     // A background loop trying to match jobs with available workers / servers
-    setInterval(() => this.dispatchLoop(), 5000);
+    setInterval(() => this.dispatchLoop(), 2000);
+  }
+
+  public poke() {
+      // Eager dispatch
+      this.dispatchLoop();
   }
 
   public sendCommandToWorker(token: string, action: string) {
@@ -122,28 +127,39 @@ export class DispatcherService {
         }
       }
 
-      // 2. Count current running jobs
-      const runningCountRow = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE status = ?').get('running') as any;
-      const runningCount = runningCountRow ? runningCountRow.count : 0;
-
-      if (runningCount >= (config.globalConcurrency || 3)) {
-         this.isDispatching = false;
-         return; // Queue is full globally
+      // 2. Find pending tasks. Increase limit to allow scanning past blocked tasks.
+      const pendingTasks = db.prepare('SELECT * FROM tasks WHERE status = ? ORDER BY created_at ASC LIMIT 50').all('pending') as any[];
+      if (pendingTasks.length === 0) {
+          this.isDispatching = false;
+          return;
       }
 
-      // 3. Find pending tasks. We order by created_at.
-      const pendingTasks = db.prepare('SELECT * FROM tasks WHERE status = ? ORDER BY created_at ASC LIMIT ?').all('pending', (config.globalConcurrency || 3) - runningCount) as any[];
+      // 3. Count current running jobs
+      const runningCountRow = db.prepare('SELECT COUNT(*) as count FROM tasks WHERE status = ?').get('running') as any;
+      let runningCount = runningCountRow ? runningCountRow.count : 0;
+      const maxGlobal = config.globalConcurrency || 10; // Default to a more reasonable 10 if not set
 
       for (const task of pendingTasks) {
+         // If we are at global capacity, we only pick up tasks if it's a specialized case or we have more nodes
+         if (runningCount >= maxGlobal) {
+             // Continue scanning in case there's something we can dispatch differently, 
+             // but normally we should respect the global limit to prevent overwhelming the server
+             continue; 
+         }
+
          let dispatched = false;
          const taskData = JSON.parse(task.data);
 
          // Resolve Worker vs Server based on dispatchStrategy
          const strategy = config.dispatchStrategy || 'server';
 
+         // Video tasks typically go to the server if strategy is all or server,
+         // unless specifically configured to ONLY use workers.
+         const isVideo = task.type === 'video';
+
          if (strategy === 'worker' || strategy === 'all') {
             // Find an idle worker with the right capabilities
-            const requiredCapability = task.type === 'video' ? 'gemini_video' : 'gemini_image'; // or similar mapping
+            const requiredCapability = isVideo ? 'gemini_video' : 'gemini_image';
             
             const idleWorkers = db.prepare('SELECT * FROM workers WHERE status = ?').all('idle') as any[];
             const matchedWorker = idleWorkers.find(w => {
@@ -164,12 +180,12 @@ export class DispatcherService {
                 }
 
                 if (targetSocketId) {
-                    // Mark worker as busy temporarily until it acks? Or just trust it.
                     db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('running', matchedWorker.id);
                     db.prepare('UPDATE tasks SET status = ?, worker_id = ? WHERE id = ?').run('running', matchedWorker.id, task.id);
                     this.io!.to(targetSocketId).emit('run_task', taskData);
-                    console.log(`[Dispatcher] Dispatched task ${task.id} to worker ${matchedWorker.name}`);
+                    console.log(`[Dispatcher] Dispatched ${task.type} task ${task.id} to worker ${matchedWorker.name}`);
                     dispatched = true;
+                    runningCount++;
                 }
             }
          }
@@ -178,7 +194,6 @@ export class DispatcherService {
              // Dispatch locally
              try {
                 const reqUserId = task.user_id;
-                const isVideo = task.type === 'video';
                 const baseDirName = isVideo ? 'task_video' : 'task';
                 const userTaskDir = path.join(process.cwd(), baseDirName, String(reqUserId));
                 
@@ -187,7 +202,9 @@ export class DispatcherService {
                 fs.writeFileSync(path.join(userTaskDir, filename), JSON.stringify(taskData, null, 2));
 
                 db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('running', task.id);
-                console.log(`[Dispatcher] Queued task ${task.id} to local server watcher (${baseDirName}).`);
+                console.log(`[Dispatcher] Queued ${task.type} task ${task.id} to local server watcher (${baseDirName}).`);
+                dispatched = true;
+                runningCount++;
              } catch(e: any) {
                 console.error(`[Dispatcher] Failed to dispatch locally: ${e.message}`);
              }

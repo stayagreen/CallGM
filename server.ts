@@ -441,6 +441,8 @@ async function startServer() {
       'pending'
     );
 
+    dispatcherService.poke();
+
     res.json({ status: "ok", message: "Video task queued", filename, jobId });
   });
 
@@ -686,6 +688,8 @@ async function startServer() {
       JSON.stringify(taskData), 
       'pending'
     );
+
+    dispatcherService.poke();
 
     res.json({ status: "ok", message: "Tasks queued", filename, jobId });
   });
