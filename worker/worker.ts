@@ -57,6 +57,15 @@ async function uploadResult(token: string, jobId: string, filePath: string) {
         console.error(`[Worker] 上传失败: ${resText}`);
     } else {
         console.log(`[Worker] 成功上传: ${filename}`);
+        // 回传成功后删除本地文件，节省空间
+        try {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                console.log(`[Worker] 已删除本地临时文件: ${filename}`);
+            }
+        } catch (unlinkErr) {
+            console.error(`[Worker] 删除文件失败:`, unlinkErr);
+        }
     }
   } catch (err) {
     console.error(`[Worker] Upload error:`, err);

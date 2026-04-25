@@ -804,6 +804,10 @@ async function startServer() {
       findAndDelete(taskDir, file);
       findAndDelete(videoTaskDir, file);
     }
+
+    // 任务删除后立即触发调度器，检查是否有排队的任务可以开始
+    dispatcherService.poke();
+
     res.json({ success: true });
   });
 
@@ -883,6 +887,10 @@ async function startServer() {
             }
         }
       }
+
+      // 任务状态刷新（暂停/删除）后立即触发调度器，让排队的任务顶替位置
+      dispatcherService.poke();
+
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
