@@ -21,7 +21,6 @@ declare module 'express-session' {
 }
 
 import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages, cancelledJobs } from "./automation.js";
-import { startVideoAutomationWatcher, videoJobProgress, cancelledVideoJobs } from "./video_automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -290,8 +289,8 @@ async function startServer() {
       const task = db.prepare('SELECT user_id, type FROM tasks WHERE id = ?').get(jobId) as any;
       if (!task) return res.status(404).json({ error: 'Task not found' });
 
-      // Build target dir based on type
-      let targetDir = task.type === 'video' ? path.join(__dirname, 'video_download') : path.join(__dirname, 'download');
+      // Build target dir
+      let targetDir = path.join(__dirname, 'download');
       
       const userDownloadDir = path.join(targetDir, String(task.user_id));
       if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
@@ -329,7 +328,7 @@ async function startServer() {
   const videoThumbDir = path.join(__dirname, "thumbnails", "videos");
   const bgmDir = path.join(__dirname, "bgm");
   
-  const dirs = [taskDir, historyDir, downloadDir, uploadsDir, thumbnailsDir, thumbDownloadsDir, thumbUploadsDir, videoTaskDir, videoHistoryDir, videoDownloadDir, videoThumbDir, bgmDir];
+  const dirs = [taskDir, historyDir, downloadDir, uploadsDir, thumbnailsDir, thumbDownloadsDir, thumbUploadsDir];
   dirs.forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); });
 
   // Sync function to populate DB from existing files
@@ -1476,16 +1475,6 @@ async function startServer() {
 
   // Start the automation watcher
   startAutomationWatcher();
-  
-  // Start the video automation watcher
-  startVideoAutomationWatcher(() => {
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      return config.videoConcurrency || 3;
-    } catch (e) {
-      return 3;
-    }
-  });
 
   // Start Proxy Service
   proxyService.start();

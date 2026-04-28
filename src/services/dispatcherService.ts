@@ -116,7 +116,7 @@ export class DispatcherService {
     try {
       // 1. Read global config
       const configRow = db.prepare('SELECT value FROM system_config WHERE key = ?').get('app_config') as any;
-      let config = { dispatchStrategy: 'server', globalConcurrency: 3, videoConcurrency: 3 };
+      let config = { dispatchStrategy: 'server', globalConcurrency: 3 };
       if (configRow) {
         try { config = JSON.parse(configRow.value); } catch(e) {}
       } else {
@@ -139,26 +139,21 @@ export class DispatcherService {
       // 3. Count current running jobs separately
       const counts = db.prepare('SELECT type, COUNT(*) as count FROM tasks WHERE status = ? GROUP BY type').all('running') as any[];
       let runningImageCount = 0;
-      let runningVideoCount = 0;
       counts.forEach(c => {
-          if (c.type === 'video') runningVideoCount = c.count;
-          else runningImageCount = c.count;
+          if (c.type !== 'video') runningImageCount = c.count;
       });
 
       const maxImage = config.globalConcurrency || 10;
-      const maxVideo = config.videoConcurrency || 3;
       
-      console.log(`[Dispatcher] Current running: Image=${runningImageCount}/${maxImage}, Video=${runningVideoCount}/${maxVideo}`);
+      console.log(`[Dispatcher] Current running: Image=${runningImageCount}/${maxImage}`);
 
       for (const task of pendingTasks) {
-         const isVideo = task.type === 'video';
-         
-         // Respect individual type limits
-         if (isVideo && runningVideoCount >= maxVideo) {
-             console.log(`[Dispatcher] Skipping video task ${task.id} due to concurrency limit.`);
+         // Skip video tasks in worker dispatch if nodes don't handle them
+         if (task.type === 'video' && config.dispatchStrategy !== 'server') {
              continue;
          }
-         if (!isVideo && runningImageCount >= maxImage) {
+         
+         if (task.type !== 'video' && runningImageCount >= maxImage) {
              console.log(`[Dispatcher] Skipping image task ${task.id} due to concurrency limit.`);
              continue;
          }
@@ -171,35 +166,34 @@ export class DispatcherService {
          console.log(`[Dispatcher] Processing ${task.type} task ${task.id} with strategy ${strategy}`);
 
          if (strategy === 'worker' || strategy === 'all') {
-            // Find an idle worker with the right capabilities
-            const requiredCapability = isVideo ? 'gemini_video' : 'gemini_image';
-            
-            const idleWorkers = db.prepare('SELECT * FROM workers WHERE status = ?').all('idle') as any[];
-            const matchedWorker = idleWorkers.find(w => {
-                 try {
-                     const caps = JSON.parse(w.capabilities);
-                     return caps.includes(requiredCapability);
-                 } catch(e) { return false; }
-            });
+            // Only image tasks go to workers
+            if (task.type !== 'video') {
+                const idleWorkers = db.prepare('SELECT * FROM workers WHERE status = ?').all('idle') as any[];
+                const matchedWorker = idleWorkers.find(w => {
+                    try {
+                        const caps = JSON.parse(w.capabilities);
+                        return caps.includes('gemini_image');
+                    } catch(e) { return false; }
+                });
 
-            if (matchedWorker) {
-                // Find socket
-                let targetSocketId: string | null = null;
-                for (const [sid, token] of this.connectedWorkers.entries()) {
-                    if (token === matchedWorker.token) {
-                        targetSocketId = sid;
-                        break;
+                if (matchedWorker) {
+                    // Find socket
+                    let targetSocketId: string | null = null;
+                    for (const [sid, token] of this.connectedWorkers.entries()) {
+                        if (token === matchedWorker.token) {
+                            targetSocketId = sid;
+                            break;
+                        }
                     }
-                }
 
-                if (targetSocketId) {
-                    db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('running', matchedWorker.id);
-                    db.prepare('UPDATE tasks SET status = ?, worker_id = ? WHERE id = ?').run('running', matchedWorker.id, task.id);
-                    this.io!.to(targetSocketId).emit('run_task', taskData);
-                    console.log(`[Dispatcher] Dispatched ${task.type} task ${task.id} to worker ${matchedWorker.name}`);
-                    dispatched = true;
-                    if (isVideo) runningVideoCount++;
-                    else runningImageCount++;
+                    if (targetSocketId) {
+                        db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('running', matchedWorker.id);
+                        db.prepare('UPDATE tasks SET status = ?, worker_id = ? WHERE id = ?').run('running', matchedWorker.id, task.id);
+                        this.io!.to(targetSocketId).emit('run_task', taskData);
+                        console.log(`[Dispatcher] Dispatched ${task.type} task ${task.id} to worker ${matchedWorker.name}`);
+                        dispatched = true;
+                        runningImageCount++;
+                    }
                 }
             }
          }
@@ -208,7 +202,7 @@ export class DispatcherService {
              // Dispatch locally
              try {
                 const reqUserId = task.user_id;
-                const baseDirName = isVideo ? 'task_video' : 'task';
+                const baseDirName = task.type === 'video' ? 'task_video' : 'task';
                 const userTaskDir = path.join(process.cwd(), baseDirName, String(reqUserId));
                 
                 if (!fs.existsSync(userTaskDir)) fs.mkdirSync(userTaskDir, { recursive: true });
@@ -218,8 +212,7 @@ export class DispatcherService {
                 db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('running', task.id);
                 console.log(`[Dispatcher] Queued ${task.type} task ${task.id} to local server watcher (${baseDirName}).`);
                 dispatched = true;
-                if (isVideo) runningVideoCount++;
-                else runningImageCount++;
+                if (task.type !== 'video') runningImageCount++;
              } catch(e: any) {
                 console.error(`[Dispatcher] Failed to dispatch locally: ${e.message}`);
              }

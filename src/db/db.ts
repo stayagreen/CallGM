@@ -71,7 +71,7 @@ db.exec(`
 const configExists = db.prepare('SELECT * FROM system_config WHERE key = ?').get('app_config');
 if (!configExists) {
     const configPath = path.join(dataDir, 'config.json');
-    let initialConfig = { dispatchStrategy: 'server', globalConcurrency: 3, videoConcurrency: 3 };
+    let initialConfig = { dispatchStrategy: 'server', globalConcurrency: 3 };
     
     if (fs.existsSync(configPath)) {
         try {
