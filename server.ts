@@ -1018,7 +1018,7 @@ async function startServer() {
     downloadRetries: 3,
     imageQuality: 'performance',
     videoConcurrency: 3,
-    dispatchStrategy: 'server',
+    dispatchStrategy: 'all',
     globalConcurrency: 3
   };
 
@@ -1037,6 +1037,8 @@ async function startServer() {
 
   app.post('/api/config', (req, res) => {
     try {
+        console.log(`[Config] Received save request:`, req.body);
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
         fs.writeFileSync(configPath, JSON.stringify(req.body, null, 2));
         
         // 同时更新数据库，确保调度器能实时获取最新配置
@@ -1044,8 +1046,10 @@ async function startServer() {
         const exists = db.prepare('SELECT key FROM system_config WHERE key = ?').get('app_config');
         if (exists) {
             db.prepare('UPDATE system_config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?').run(configData, 'app_config');
+            console.log(`[Config] Updated DB config:`, configData);
         } else {
             db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run('app_config', configData);
+            console.log(`[Config] Inserted DB config:`, configData);
         }
         
         // 触发调度器立即检查
@@ -1053,6 +1057,7 @@ async function startServer() {
         
         res.json({ success: true });
     } catch (e: any) {
+        console.error(`[Config] Save failed:`, e);
         res.status(500).json({ error: e.message });
     }
   });

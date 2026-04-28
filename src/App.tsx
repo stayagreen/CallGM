@@ -1391,6 +1391,7 @@ function MainApp() {
   const saveConfig = async () => {
     setIsSavingConfig(true);
     try {
+      console.log('Original config:', systemConfig);
       // Clean up systemDownloadsDir to remove invisible characters (like LRM from Windows Explorer) and trim whitespace
       const cleanedConfig = {
         ...systemConfig,
@@ -1399,20 +1400,31 @@ function MainApp() {
         userDataDir: systemConfig.userDataDir?.trim() || ''
       };
       
-      await fetch('/api/config', {
+      console.log('Sending config to server:', cleanedConfig);
+      
+      const response = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cleanedConfig)
       });
+      
+      if (!response.ok) {
+          throw new Error('Server responded with ' + response.status);
+      }
+      
+      const result = await response.json();
+      console.log('Server response:', result);
+
       setSystemConfig(cleanedConfig);
       
       // Artificial delay so the loading UI is actually visible to users indicating that work was done.
       await new Promise(resolve => setTimeout(resolve, 800));
       
       setShowConfigModal(false);
-    } catch (e) {
+      alert('系统设置已保存！');
+    } catch (e: any) {
       console.error(e);
-      alert('保存失败，请检查网络');
+      alert('保存失败: ' + e.message);
     } finally {
       setIsSavingConfig(false);
     }
