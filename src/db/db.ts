@@ -70,8 +70,17 @@ db.exec(`
 // Bootstrap initial config
 const configExists = db.prepare('SELECT * FROM system_config WHERE key = ?').get('app_config');
 if (!configExists) {
-    const defaultConfig = { dispatchStrategy: 'server', globalConcurrency: 3, videoConcurrency: 3 };
-    db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run('app_config', JSON.stringify(defaultConfig));
+    const configPath = path.join(dataDir, 'config.json');
+    let initialConfig = { dispatchStrategy: 'server', globalConcurrency: 3, videoConcurrency: 3 };
+    
+    if (fs.existsSync(configPath)) {
+        try {
+            const saved = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+            initialConfig = { ...initialConfig, ...saved };
+        } catch (e) {}
+    }
+    
+    db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run('app_config', JSON.stringify(initialConfig));
 }
 
 // Simple auto-migration for legacy databases

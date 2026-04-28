@@ -25,6 +25,8 @@ import { startVideoAutomationWatcher, videoJobProgress, cancelledVideoJobs } fro
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+import AdmZip from "adm-zip";
+
 async function startServer() {
   const app = express();
   // AI Studio sets DISABLE_HMR=true. When running locally outside AI Studio, default to 4000.
@@ -223,6 +225,53 @@ async function startServer() {
       res.json({ message: 'Command sent' });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Fleet update: send 'update' command to all registered workers
+  app.post('/api/admin/workers-fleet/update', requireAdmin, (req, res) => {
+    try {
+      const workers = db.prepare('SELECT token FROM workers').all() as any[];
+      let count = 0;
+      for (const w of workers) {
+        if (w.token === 'server-local-token') continue; // Skip local server
+        dispatcherService.sendCommandToWorker(w.token, 'update');
+        count++;
+      }
+      res.json({ message: `Update command sent to ${count} workers` });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Serve the installation script publicly
+  app.get('/worker_install.ps1', (req, res) => {
+    const psPath = path.join(__dirname, 'worker_install.ps1');
+    if (fs.existsSync(psPath)) {
+        res.setHeader('Content-Type', 'text/plain');
+        res.sendFile(psPath);
+    } else {
+        res.status(404).send('Script not found');
+    }
+  });
+
+  // Worker binary/dist download
+  app.get('/api/worker/download', (req, res) => {
+    try {
+      const workerDist = path.join(__dirname, 'worker_dist');
+      if (!fs.existsSync(workerDist)) {
+          return res.status(404).json({ error: 'worker_dist not found. Run npm run build-worker first.' });
+      }
+
+      const zip = new AdmZip();
+      zip.addLocalFolder(workerDist);
+      const buffer = zip.toBuffer();
+
+      res.set('Content-Type', 'application/zip');
+      res.set('Content-Disposition', 'attachment; filename=worker_dist.zip');
+      res.send(buffer);
+    } catch (e: any) {
+      res.status(500).send(e.message);
     }
   });
 
@@ -988,8 +1037,25 @@ async function startServer() {
   });
 
   app.post('/api/config', (req, res) => {
-    fs.writeFileSync(configPath, JSON.stringify(req.body, null, 2));
-    res.json({ success: true });
+    try {
+        fs.writeFileSync(configPath, JSON.stringify(req.body, null, 2));
+        
+        // 同时更新数据库，确保调度器能实时获取最新配置
+        const configData = JSON.stringify(req.body);
+        const exists = db.prepare('SELECT key FROM system_config WHERE key = ?').get('app_config');
+        if (exists) {
+            db.prepare('UPDATE system_config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?').run(configData, 'app_config');
+        } else {
+            db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run('app_config', configData);
+        }
+        
+        // 触发调度器立即检查
+        dispatcherService.poke();
+        
+        res.json({ success: true });
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
   });
 
   // Get all downloaded images

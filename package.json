@@ -20,6 +20,7 @@
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/socket.io-client": "^1.4.36",
     "@vitejs/plugin-react": "^5.0.4",
+    "adm-zip": "^0.5.17",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.9.0",
     "chrome-remote-interface": "^0.34.0",

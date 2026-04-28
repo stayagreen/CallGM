@@ -72,7 +72,20 @@ async function uploadResult(token: string, jobId: string, filePath: string) {
   }
 }
 
+let isProcessing = false;
+let updatePending = false;
+
+// Helper to check and exit
+function checkUpdateAndExit() {
+    if (updatePending && !isProcessing) {
+        console.log("任务已全部执行完毕，现在执行更新重启...");
+        // Delay slightly for socket to flush logs
+        setTimeout(() => process.exit(0), 1000);
+    }
+}
+
 socket.on("run_task", async (taskData) => {
+  isProcessing = true;
   console.log("-----------------------------------------");
   console.log(`[新任务] 收到生图任务: ${taskData.id}`);
   
@@ -119,6 +132,9 @@ socket.on("run_task", async (taskData) => {
      const errStatus = { completed: 0, total: 1, status: 'error', message: error.message };
      jobProgress.set(taskData.id, errStatus);
      socket.emit("task_status", { jobId: taskData.id, progress: errStatus, status: 'error' });
+  } finally {
+     isProcessing = false;
+     checkUpdateAndExit();
   }
 });
 
@@ -135,57 +151,17 @@ socket.on("disconnect", () => {
 socket.on("admin_command", async (cmd: { action: string }) => {
   if (cmd.action === 'restart') {
       console.log("\n[管理员要求] 重启节点...");
-      process.exit(0); // 退出码 0 表示被外部 bat 脚本自动重启
+      process.exit(0); 
   } else if (cmd.action === 'stop') {
       console.log("\n[管理员要求] 永久停止节点!");
-      process.exit(99); // 退出码 99 触发批处理结束
+      process.exit(99); 
   } else if (cmd.action === 'update') {
-      console.log("\n[管理员要求] 尝试拉取更新并重启...");
-      try {
-          const cp = require('child_process');
-          let updated = false;
-
-          // 1. 尝试 Git 更新
-          if (fs.existsSync('.git')) {
-              try {
-                  console.log("检测到 Git 仓库，执行: git pull");
-                  cp.execSync('git pull', { stdio: 'inherit' });
-                  updated = true;
-              } catch (gitErr: any) {
-                  console.error("Git pull 失败:", gitErr.message);
-              }
-          }
-
-          // 2. 如果不是 Git 仓库或 Git 失败，尝试从主服务器 HTTP 下载 (适合 worker_dist 模式)
-          if (!updated) {
-              console.log("准备从主服务器 HTTP 下载更新文件...");
-              const filesToUpdate = ['worker.ts', 'automation.ts', 'video_automation.ts', 'watermarkRemover.ts', 'package.json'];
-              for (const f of filesToUpdate) {
-                  try {
-                      const fileUrl = `${SERVER_URL}/worker-files/${f}`;
-                      console.log(`正在获取: ${fileUrl}`);
-                      const res = await fetch(fileUrl);
-                      if (res.ok) {
-                          const content = await res.text();
-                          if (content && content.length > 0) {
-                              fs.writeFileSync(path.join(process.cwd(), f), content);
-                              console.log(`✅ 已更新: ${f}`);
-                          }
-                      } else {
-                          console.warn(`⚠️ 无法获取 ${f} (状态: ${res.status})`);
-                      }
-                  } catch (fetchErr: any) {
-                      console.error(`❌ 下载文件 ${f} 失败:`, fetchErr.message);
-                  }
-              }
-          }
-
-          console.log("执行: npm install");
-          cp.execSync('npm install', { stdio: 'inherit' });
-          console.log("更新完成，立即重启应用新代码...");
+      console.log("\n[管理员要求] 节点更新指令已收到。");
+      updatePending = true;
+      if (!isProcessing) {
           process.exit(0);
-      } catch (err: any) {
-          console.error("更新总流程失败:", err.message);
+      } else {
+          console.log("当前正在执行任务，将在任务完成后自动重启更新...");
       }
   }
 });

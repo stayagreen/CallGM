@@ -401,10 +401,14 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                     }
 
                     console.log(`${stepPrefix} 🌐 新标签页已就绪，正在等待页面加载 (8秒)...`);
-                    await new Promise(r => setTimeout(r, 8000));
+                    for (let wait = 0; wait < 8; wait++) {
+                        await new Promise(r => setTimeout(r, 1000));
+                        if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
+                    }
                     await simulateIdleMovement(Input);
 
                     // 2. 诊断登录状态
+                    if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                     const diagRes = await Runtime.evaluate({ expression: '({ title: document.title, url: window.location.href })', returnByValue: true });
                     const diag = diagRes.result?.value || { title: '未知', url: '未知' };
                     if (diag.title.includes('登录') || diag.title.includes('Sign in')) {
@@ -445,6 +449,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                         const { Runtime } = client;
 
                         for (const imgUrl of task.images) {
+                            if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                             let localPath = '';
                             let fallbackDir = '';
                             if (imgUrl.startsWith('/uploads/')) {
@@ -579,7 +584,9 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                     let found = false;
                     let attempts = 0;
                     while (!found && attempts < 80) { 
+                        if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                         await new Promise(r => setTimeout(r, 4000));
+                        if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                         attempts++;
                         
                         if (attempts % 5 === 0) {
@@ -689,7 +696,9 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                             const userDownloadDir = userId ? path.join(downloadDir, userId.toString()) : downloadDir;
                             if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
                             
-                            const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, userDownloadDir, timeoutSeconds);
+                            const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, userDownloadDir, timeoutSeconds, () => {
+                                if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
+                            });
                             
                             if (movedFiles && movedFiles.length > 0) {
                                 // Important: make sure we push the relative path to db (like "1/Gemini_xxx.jpg")
@@ -713,8 +722,11 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                     }
 
                 } catch (taskErr: any) {
-                    console.error(`${stepPrefix} ❌ 任务执行异常:`, taskErr.message || taskErr);
+                    const msg = taskErr.message || taskErr;
+                    console.error(`${stepPrefix} ❌ 任务执行异常:`, msg);
                     task.status = 'failed';
+                    // 如果是手动取消，则不再尝试后续循环，直接向外层抛出
+                    if (msg === 'CANCELLED') throw taskErr;
                 } finally {
                     if (client) {
                         try { await client.close(); } catch(e) {}
@@ -996,13 +1008,14 @@ export function handleBrowserDebug(msg: string) {
     console.log(`  👉 [浏览器内部视角] ${msg.replace(/\\n/g, ' ')}`);
 }
 
-async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string, maxWaitSeconds: number = 130): Promise<string[]> {
+async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string, maxWaitSeconds: number = 130, checkCancel?: () => void): Promise<string[]> {
     console.log(`[DEBUG] waitForAndMoveDownloads called with maxWaitSeconds: ${maxWaitSeconds} seconds`);
     console.log(`\n⏳ 开始死守系统下载目录，等待图片出现: ${systemDownloadsDir}`);
     let attempts = 0;
     const movedFiles: string[] = [];
 
     while (attempts < maxWaitSeconds) {
+        if (checkCancel) checkCancel();
         await new Promise(r => setTimeout(r, 1000));
         attempts++;
 
@@ -1450,7 +1463,9 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
             const userDownloadDir = userId ? path.join(downloadDir, userId.toString()) : downloadDir;
             if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
 
-            const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, userDownloadDir, timeoutSeconds);
+            const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, userDownloadDir, timeoutSeconds, () => {
+                if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
+            });
             if (files && files.length > 0) {
                 const prefixedFiles = userId ? files.map(f => path.join(userId.toString(), f).replace(/\\/g, '/')) : files;
                 task.downloadedFiles.push(...prefixedFiles);
