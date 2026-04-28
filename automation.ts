@@ -12,7 +12,7 @@ import db from './src/db/db.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const taskDir = path.join(__dirname, 'task');
 const historyDir = path.join(taskDir, 'history');
-const downloadDir = path.join(__dirname, 'download');
+export const downloadDir = path.join(__dirname, 'download');
 const debugDir = path.join(__dirname, 'debug_screenshots');
 
 // Ensure directories exist
@@ -507,12 +507,17 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                         (async () => {
                                             try {
                                                 const el = document.querySelector('div[contenteditable="true"], textarea, rich-textarea, main [role="textbox"]') || document.activeElement;
-                                                if (!el) return { success: false, reason: '未找到输入框' };
+                                                if (!el) {
+                                                    console.error('[Inject] 未找到输入框组件');
+                                                    return { success: false, reason: '未找到输入框' };
+                                                }
+                                                console.log('[Inject] 已找到输入框:', el.tagName, el.className);
 
                                                 // 确保目标获取焦点
                                                 el.focus();
 
                                                 // 将 Base64 转换为 Blob -> File
+                                                console.log('[Inject] 正在转换 Base64 数据, 类型: ${mimeType}, 长度: ${base64Data.length}');
                                                 const res = await fetch('data:${mimeType};base64,${base64Data}');
                                                 const blob = await res.blob();
                                                 const file = new File([blob], "${imgName}", { type: "${mimeType}" });
@@ -522,6 +527,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                                 dt.items.add(file);
 
                                                 // 派发 paste 事件
+                                                console.log('[Inject] 正在向目标派发 paste 事件元件...');
                                                 const pasteEvent = new ClipboardEvent('paste', {
                                                     bubbles: true,
                                                     cancelable: true,
@@ -530,12 +536,14 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                                 
                                                 // 某些框架兼容性处理: 如果构造函数不支持 clipboardData，使用 defineProperty 强行覆盖
                                                 if (!pasteEvent.clipboardData || pasteEvent.clipboardData.files.length === 0) {
+                                                    console.log('[Inject] ClipboardEvent 属性热修复 (针对部分浏览器限制)...');
                                                     Object.defineProperty(pasteEvent, 'clipboardData', { value: dt });
                                                 }
 
                                                 el.dispatchEvent(pasteEvent);
                                                 
                                                 // 双重保险：同时触发一个 drop 事件（有些现代化编辑器监听的是 drop）
+                                                console.log('[Inject] 准备触发 drop 事件作为双重保险...');
                                                 const dropEvent = new DragEvent('drop', {
                                                     bubbles: true,
                                                     cancelable: true,
@@ -546,6 +554,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                                 }
                                                 el.dispatchEvent(dropEvent);
 
+                                                console.log('[Inject] 事件派发流程结束');
                                                 return { success: true };
                                             } catch (e) {
                                                 return { success: false, reason: e.toString() };

@@ -1,7 +1,7 @@
 import io from "socket.io-client";
 import fs from "fs";
 import path from "path";
-import { jobProgress, executeBatch, cancelledJobs } from "../automation.js";
+import { jobProgress, executeBatch, cancelledJobs, downloadDir } from "../automation.js";
 
 // ========= 配置加载逻辑 =========
 const configPath = path.join(process.cwd(), "config.json");
@@ -146,10 +146,17 @@ socket.on("run_task", async (taskData) => {
          });
      }
 
-     for (const filePath of resultFiles) {
+     for (let filePath of resultFiles) {
+         // Resolve relative path to absolute path using automation's downloadDir
+         if (!path.isAbsolute(filePath)) {
+             filePath = path.join(downloadDir, filePath);
+         }
+         
          if (fs.existsSync(filePath)) {
              console.log(`[传输] 向服务器发送结果文件 -> ${filePath}`);
              await uploadResult(WORKER_TOKEN, taskData.id, filePath);
+         } else {
+             console.warn(`[传输] 找不到待上传的文件: ${filePath}`);
          }
      }
      
