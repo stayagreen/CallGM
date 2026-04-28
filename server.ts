@@ -279,12 +279,18 @@ async function startServer() {
   app.post('/api/worker/upload-result', async (req, res) => {
     const { token, jobId, base64Data, filename } = req.body;
     if (!token || !jobId || !base64Data || !filename) {
+      console.warn(`[Worker Upload] Missing fields for job ${jobId}:`, { hasToken: !!token, hasJobId: !!jobId, hasData: !!base64Data, hasFilename: !!filename });
       return res.status(400).json({ error: 'Missing fields' });
     }
 
     // Verify token
-    const worker = db.prepare('SELECT id FROM workers WHERE token = ?').get(token) as any;
-    if (!worker) return res.status(401).json({ error: 'Invalid worker token' });
+    const worker = db.prepare('SELECT id, name FROM workers WHERE token = ?').get(token) as any;
+    if (!worker) {
+      console.warn(`[Worker Upload] Unregistered worker tried to upload. Token: ${token.substring(0, 8)}...`);
+      return res.status(401).json({ error: 'Invalid worker token' });
+    }
+
+    console.log(`[Worker Upload] Worker ${worker.name} is uploading ${filename} for Job ${jobId}`);
 
     try {
       const task = db.prepare('SELECT user_id, type FROM tasks WHERE id = ?').get(jobId) as any;

@@ -200,9 +200,21 @@ export class DispatcherService {
                     if (targetSocketId) {
                         const socket = this.io!.sockets.sockets.get(targetSocketId);
                         // Fix image paths for workers - they need full URLs
-                        const protocol = this.io!.engine.opts.cors ? 'https' : 'http';
                         // We use the host from the handshake to determine how the worker reached us
                         const host = socket?.handshake.headers.host || 'localhost:4000';
+                        let protocol = 'http';
+                        
+                        // If it's a domain name (not IP) and not localhost, maybe it's HTTPS (behind proxy)
+                        // But for simplicity and local network workers, default to HTTP unless explicitly HTTPS
+                        if (socket?.handshake.headers['x-forwarded-proto'] === 'https') {
+                            protocol = 'https';
+                        } else if (!host.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+/.test(host.split(':')[0])) {
+                            // If it's not an IP or localhost, and not explicitly marked as HTTPS by proxy, 
+                            // we might still be HTTPS if the main server is HTTPS.
+                            // In AI Studio environments, the reverse proxy usually handles HTTPS.
+                            if (this.io!.engine.opts.cors) protocol = 'https';
+                        }
+
                         const serverUrl = `${protocol}://${host}`;
 
                         console.log(`[Dispatcher] Found task ${task.id}, preparing payload with serverUrl: ${serverUrl}`);
