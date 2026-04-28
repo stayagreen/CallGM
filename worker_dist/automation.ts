@@ -12,7 +12,7 @@ import db from './src/db/db.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const taskDir = path.join(__dirname, 'task');
 const historyDir = path.join(taskDir, 'history');
-export const downloadDir = path.join(__dirname, 'download');
+const downloadDir = path.join(__dirname, 'download');
 const debugDir = path.join(__dirname, 'debug_screenshots');
 
 // Ensure directories exist
@@ -72,11 +72,8 @@ async function getAutomationConfig() {
     const dataDir = path.join(__dirname, 'data');
     const configPath = path.join(dataDir, 'config.json');
     if (fs.existsSync(configPath)) {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        console.log(`[Config] 📂 已加载本地配置文件: ${configPath}`);
-        return config;
+        return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
     }
-    console.warn(`[Config] ⚠️ 找不到配置文件: ${configPath}`);
     return {};
 }
 
@@ -391,7 +388,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                         });
                         
                         const config = await getAutomationConfig();
-                        const sysDir = (task.systemConfig && task.systemConfig.systemDownloadsDir) || config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
+                        const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
                         if (!fs.existsSync(sysDir)) fs.mkdirSync(sysDir, { recursive: true });
 
                         await client.send('Page.setDownloadBehavior', {
@@ -404,14 +401,10 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                     }
 
                     console.log(`${stepPrefix} 🌐 新标签页已就绪，正在等待页面加载 (8秒)...`);
-                    for (let wait = 0; wait < 8; wait++) {
-                        await new Promise(r => setTimeout(r, 1000));
-                        if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
-                    }
+                    await new Promise(r => setTimeout(r, 8000));
                     await simulateIdleMovement(Input);
 
                     // 2. 诊断登录状态
-                    if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                     const diagRes = await Runtime.evaluate({ expression: '({ title: document.title, url: window.location.href })', returnByValue: true });
                     const diag = diagRes.result?.value || { title: '未知', url: '未知' };
                     if (diag.title.includes('登录') || diag.title.includes('Sign in')) {
@@ -447,31 +440,14 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                     const isMac = os.platform() === 'darwin';
                     if (task.images && task.images.length > 0) {
                         console.log(`${stepPrefix} 🖼️ 处理图片上传 (使用底层数据流协议模拟粘贴)...`);
-                        console.log(`${stepPrefix} 📋 待处理参考图列表:`, task.images);
                         jobProgress.set(filename, { completed: completedLoops + 0.15, total: totalLoops, status: 'running', message: '🖼️ 正在上传参考图...' });
                         
                         const { Runtime } = client;
 
                         for (const imgUrl of task.images) {
-                            if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
-                            console.log(`${stepPrefix} 🛠️ 正在分析图片路径: ${imgUrl}`);
                             let localPath = '';
                             let fallbackDir = '';
-                            if (imgUrl.startsWith('http')) {
-                                console.log(`${stepPrefix} 🌐 远程图片 URL: ${imgUrl}`);
-                                try {
-                                    console.log(`${stepPrefix} ⏳ 正在从服务器拉取图片数据...`);
-                                    const imgRes = await fetch(imgUrl);
-                                    if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
-                                    const buffer = await imgRes.arrayBuffer();
-                                    const tempPath = path.join(os.tmpdir(), `ref_${Date.now()}_${path.basename(imgUrl.split('?')[0])}`);
-                                    fs.writeFileSync(tempPath, Buffer.from(buffer));
-                                    localPath = tempPath;
-                                    console.log(`${stepPrefix} ✅ 图片下载并保存至临时目录: ${localPath} (${buffer.byteLength} 字节)`);
-                                } catch (downloadErr: any) {
-                                    console.error(`${stepPrefix} ❌ 下载远程图片失败:`, downloadErr.message);
-                                }
-                            } else if (imgUrl.startsWith('/uploads/')) {
+                            if (imgUrl.startsWith('/uploads/')) {
                                 localPath = path.join(__dirname, 'uploads', imgUrl.replace('/uploads/', ''));
                                 fallbackDir = path.join(__dirname, 'uploads');
                             } else if (imgUrl.startsWith('/downloads/')) {
@@ -503,34 +479,25 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                     else if (ext === '.gif') mimeType = 'image/gif';
 
                                     // 2. 将数据注入浏览器并派发原生 paste 事件
-                                    await Runtime.evaluate({ expression: `window.__base64Data = "${base64Data}";` });
                                     const injectPasteScript = `
                                         (async () => {
                                             try {
                                                 const el = document.querySelector('div[contenteditable="true"], textarea, rich-textarea, main [role="textbox"]') || document.activeElement;
-                                                if (!el) {
-                                                    console.error('[Inject] 未找到输入框组件');
-                                                    return { success: false, reason: '未找到输入框' };
-                                                }
-                                                console.log('[Inject] 已找到输入框:', el.tagName, el.className);
+                                                if (!el) return { success: false, reason: '未找到输入框' };
 
                                                 // 确保目标获取焦点
                                                 el.focus();
 
                                                 // 将 Base64 转换为 Blob -> File
-                                                const base64DataLocal = window.__base64Data;
-                                                console.log('[Inject] 正在转换 Base64 数据, 类型: "${mimeType}", 长度: ' + (base64DataLocal ? base64DataLocal.length : 0));
-                                                const res = await fetch('data:${mimeType};base64,' + base64DataLocal);
+                                                const res = await fetch('data:${mimeType};base64,${base64Data}');
                                                 const blob = await res.blob();
                                                 const file = new File([blob], "${imgName}", { type: "${mimeType}" });
-                                                delete window.__base64Data;
 
                                                 // 创建包含该文件的 DataTransfer 对象
                                                 const dt = new DataTransfer();
                                                 dt.items.add(file);
 
                                                 // 派发 paste 事件
-                                                console.log('[Inject] 正在向目标派发 paste 事件元件...');
                                                 const pasteEvent = new ClipboardEvent('paste', {
                                                     bubbles: true,
                                                     cancelable: true,
@@ -539,14 +506,12 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                                 
                                                 // 某些框架兼容性处理: 如果构造函数不支持 clipboardData，使用 defineProperty 强行覆盖
                                                 if (!pasteEvent.clipboardData || pasteEvent.clipboardData.files.length === 0) {
-                                                    console.log('[Inject] ClipboardEvent 属性热修复 (针对部分浏览器限制)...');
                                                     Object.defineProperty(pasteEvent, 'clipboardData', { value: dt });
                                                 }
 
                                                 el.dispatchEvent(pasteEvent);
                                                 
                                                 // 双重保险：同时触发一个 drop 事件（有些现代化编辑器监听的是 drop）
-                                                console.log('[Inject] 准备触发 drop 事件作为双重保险...');
                                                 const dropEvent = new DragEvent('drop', {
                                                     bubbles: true,
                                                     cancelable: true,
@@ -557,7 +522,6 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                                 }
                                                 el.dispatchEvent(dropEvent);
 
-                                                console.log('[Inject] 事件派发流程结束');
                                                 return { success: true };
                                             } catch (e) {
                                                 return { success: false, reason: e.toString() };
@@ -615,9 +579,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                     let found = false;
                     let attempts = 0;
                     while (!found && attempts < 80) { 
-                        if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                         await new Promise(r => setTimeout(r, 4000));
-                        if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                         attempts++;
                         
                         if (attempts % 5 === 0) {
@@ -723,13 +685,11 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                             // 实际的文件移动逻辑
                             const config = await getAutomationConfig();
                             const timeoutSeconds = parseConfigNumber(config.downloadTimeout, 35); // 默认缩短到 35 秒
-                            const sysDir = (task.systemConfig && task.systemConfig.systemDownloadsDir) || config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
+                            const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
                             const userDownloadDir = userId ? path.join(downloadDir, userId.toString()) : downloadDir;
                             if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
                             
-                            const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, userDownloadDir, timeoutSeconds, () => {
-                                if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
-                            });
+                            const movedFiles = await waitForAndMoveDownloads(Date.now(), sysDir, userDownloadDir, timeoutSeconds);
                             
                             if (movedFiles && movedFiles.length > 0) {
                                 // Important: make sure we push the relative path to db (like "1/Gemini_xxx.jpg")
@@ -753,11 +713,8 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                     }
 
                 } catch (taskErr: any) {
-                    const msg = taskErr.message || taskErr;
-                    console.error(`${stepPrefix} ❌ 任务执行异常:`, msg);
+                    console.error(`${stepPrefix} ❌ 任务执行异常:`, taskErr.message || taskErr);
                     task.status = 'failed';
-                    // 如果是手动取消，则不再尝试后续循环，直接向外层抛出
-                    if (msg === 'CANCELLED') throw taskErr;
                 } finally {
                     if (client) {
                         try { await client.close(); } catch(e) {}
@@ -819,21 +776,10 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
 }
 
 export async function executeBatch(input: any, filename: string, userId?: string | number) {
-    console.log(`[Batch] 🚀 准备执行批次任务: ${filename}, 包含 ${Array.isArray(input) ? input.length : (input.tasks?.length || 0)} 个子任务`);
-    if (input.systemConfig) {
-        console.log(`[Batch] 🛠️ 收到系统下载目录配置: ${input.systemConfig.systemDownloadsDir}`);
-    }
     const tasks = Array.isArray(input) ? input : (input.tasks || []);
     if (!Array.isArray(tasks) || tasks.length === 0) {
         console.log(`⚠️ 批次 ${filename} 中没有可执行的任务任务。`);
         return input;
-    }
-
-    // Attach systemConfig to each task so they can use it for download paths
-    if (input.systemConfig) {
-        tasks.forEach((t: any) => {
-            if (!t.systemConfig) t.systemConfig = input.systemConfig;
-        });
     }
 
     const firstExecutor = tasks[0]?.executor || 'cdp';
@@ -1050,15 +996,13 @@ export function handleBrowserDebug(msg: string) {
     console.log(`  👉 [浏览器内部视角] ${msg.replace(/\\n/g, ' ')}`);
 }
 
-async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string, maxWaitSeconds: number = 130, checkCancel?: () => void): Promise<string[]> {
-    console.log(`[监控] 进入下载监控循环: sysDir=${systemDownloadsDir}, dest=${projectDownloadDir}, maxWait=${maxWaitSeconds}s`);
+async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string, maxWaitSeconds: number = 130): Promise<string[]> {
     console.log(`[DEBUG] waitForAndMoveDownloads called with maxWaitSeconds: ${maxWaitSeconds} seconds`);
     console.log(`\n⏳ 开始死守系统下载目录，等待图片出现: ${systemDownloadsDir}`);
     let attempts = 0;
     const movedFiles: string[] = [];
 
     while (attempts < maxWaitSeconds) {
-        if (checkCancel) checkCancel();
         await new Promise(r => setTimeout(r, 1000));
         attempts++;
 
@@ -1506,9 +1450,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
             const userDownloadDir = userId ? path.join(downloadDir, userId.toString()) : downloadDir;
             if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
 
-            const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, userDownloadDir, timeoutSeconds, () => {
-                if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
-            });
+            const files = await waitForAndMoveDownloads(injectTime, systemDownloadsDir, userDownloadDir, timeoutSeconds);
             if (files && files.length > 0) {
                 const prefixedFiles = userId ? files.map(f => path.join(userId.toString(), f).replace(/\\/g, '/')) : files;
                 task.downloadedFiles.push(...prefixedFiles);

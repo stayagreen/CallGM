@@ -503,7 +503,6 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                     else if (ext === '.gif') mimeType = 'image/gif';
 
                                     // 2. 将数据注入浏览器并派发原生 paste 事件
-                                    await Runtime.evaluate({ expression: `window.__base64Data = "${base64Data}";` });
                                     const injectPasteScript = `
                                         (async () => {
                                             try {
@@ -518,12 +517,10 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                                 el.focus();
 
                                                 // 将 Base64 转换为 Blob -> File
-                                                const base64DataLocal = window.__base64Data;
-                                                console.log('[Inject] 正在转换 Base64 数据, 类型: "${mimeType}", 长度: ' + (base64DataLocal ? base64DataLocal.length : 0));
-                                                const res = await fetch('data:${mimeType};base64,' + base64DataLocal);
+                                                console.log('[Inject] 正在转换 Base64 数据, 类型: ${mimeType}, 长度: ${base64Data.length}');
+                                                const res = await fetch('data:${mimeType};base64,${base64Data}');
                                                 const blob = await res.blob();
                                                 const file = new File([blob], "${imgName}", { type: "${mimeType}" });
-                                                delete window.__base64Data;
 
                                                 // 创建包含该文件的 DataTransfer 对象
                                                 const dt = new DataTransfer();

@@ -49,33 +49,100 @@ socket.on("registered", (info) => {
     for (const [jobId, progress] of jobProgress.entries()) {
       socket.emit("task_status", { jobId, progress, status: progress.status });
     }
-  }, 5000);
+  }, 2000);
 });
 
-socket.on("new_batch", async (taskData) => {
-  const { id: jobId, data } = taskData;
-  console.log(`[任务] 收到新批次: ${jobId}`);
-  
-  const filename = `${jobId}.json`;
-  
+async function uploadResult(token: string, jobId: string, filePath: string) {
   try {
-    // 执行批次任务
-    const resultFiles = await executeBatch(data, filename, jobId);
+    const filename = path.basename(filePath);
+    const base64Data = fs.readFileSync(filePath, { encoding: 'base64' });
     
-    console.log(`[任务] 批次 ${jobId} 执行完成, 结果文件数: ${resultFiles.length}`);
-    
-     // 上传结果文件
-     const uploadResult = async (token, taskId, filePath) => {
-         const formData = new FormData();
-         const fileBuffer = fs.readFileSync(filePath);
-         const blob = new Blob([fileBuffer]);
-         formData.append('token', token);
-         formData.append('taskId', taskId);
-         formData.append('file', blob, path.basename(filePath));
+    console.log(`[Worker] 🚀 准备回传文件到服务器: ${filename}, URL: ${SERVER_URL}/api/worker/upload-result`);
+    // We send to the primary server endpoint
+    const response = await fetch(`${SERVER_URL}/api/worker/upload-result`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            token,
+            jobId,
+            filename,
+            base64Data
+        })
+    });
+    const resText = await response.text();
+    if (!response.ok) {
+        console.error(`[Worker] ❌ 上传失败: ${resText} (HTTP ${response.status})`);
+    } else {
+        console.log(`[Worker] ✅ 成功回传并完成: ${filename}`);
+        // 回传成功后删除本地文件，节省空间
+        try {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                console.log(`[Worker] 已删除本地临时文件: ${filename}`);
+            }
+        } catch (unlinkErr) {
+            console.error(`[Worker] 删除文件失败:`, unlinkErr);
+        }
+    }
+  } catch (err) {
+    console.error(`[Worker] Upload error:`, err);
+  }
+}
 
-         await fetch(`${SERVER_URL}/api/worker/upload-result`, {
-             method: 'POST',
-             body: formData
+let isProcessing = false;
+let updatePending = false;
+
+// Helper to check and exit
+function checkUpdateAndExit() {
+    if (updatePending && !isProcessing) {
+        console.log("任务已全部执行完毕，现在执行更新重启...");
+        // Delay slightly for socket to flush logs
+        setTimeout(() => process.exit(0), 1000);
+    }
+}
+
+socket.on("run_task", async (taskData) => {
+  isProcessing = true;
+  console.log("-----------------------------------------");
+  console.log(`[新任务] 收到生图任务: ${taskData.id}`);
+  
+  // Update SERVER_URL if provided by dispatcher (dynamic discovery)
+  if (taskData.serverUrl) {
+      if (SERVER_URL !== taskData.serverUrl) {
+          console.log(`[连接] 动态更新服务器地址: ${taskData.serverUrl}`);
+          SERVER_URL = taskData.serverUrl;
+      }
+  }
+
+  // Sync system config to local storage so automation.js can read it if needed
+  if (taskData.systemConfig) {
+      try {
+          const dataDir = path.join(process.cwd(), "data");
+          if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+          const automationConfigPath = path.join(dataDir, "config.json");
+          fs.writeFileSync(automationConfigPath, JSON.stringify(taskData.systemConfig, null, 2));
+          console.log(`[配置] 已同步全局系统配置到本地: ${automationConfigPath}`);
+      } catch (e) {
+          console.warn("[配置] 同步全局配置失败:", e);
+      }
+  }
+  
+  // Reset cancellation for this task if it was previously set (though unlikely)
+  cancelledJobs.delete(taskData.id);
+
+  try {
+     // Execute native automation script
+     // executeBatch takes (input, filename, userId)
+     const updatedTaskData = await executeBatch(taskData, taskData.id, taskData.userId || 1);
+     
+     console.log(`[完成] 任务 ${taskData.id} 本地执行处理完毕. 等待传输文件...`);
+     
+     // Look for result files
+     let resultFiles: string[] = [];
+     if (updatedTaskData) {
+         const tasks = Array.isArray(updatedTaskData) ? updatedTaskData : (updatedTaskData.tasks || []);
+         tasks.forEach((t: any) => {
+             if (t.downloadedFiles) resultFiles.push(...t.downloadedFiles);
          });
      }
 
@@ -93,18 +160,54 @@ socket.on("new_batch", async (taskData) => {
          }
      }
      
-     socket.emit("batch_complete", { jobId });
-  } catch (err) {
-    console.error(`[任务] 批次 ${jobId} 执行失败:`, err);
-    socket.emit("batch_error", { jobId, error: err.message });
+     // 发送最终完成状态，通知主服务器将任务状态设为 completed
+     socket.emit("task_status", { 
+         jobId: taskData.id, 
+         progress: { completed: 1, total: 1, status: 'completed' }, 
+         status: 'completed' 
+     });
+
+     // 汇报完全结束 (The main server should update the status to completed)
+     // Also clear local map
+     jobProgress.delete(taskData.id);
+     
+     console.log(`[完全结束] 任务 ${taskData.id} 全部完成及传送.`);
+  } catch (error: any) {
+     console.error(`[失败] 任务报错:`, error.message);
+     const errStatus = { completed: 0, total: 1, status: 'error', message: error.message };
+     jobProgress.set(taskData.id, errStatus);
+     socket.emit("task_status", { jobId: taskData.id, progress: errStatus, status: 'error' });
+  } finally {
+     isProcessing = false;
+     checkUpdateAndExit();
   }
 });
 
-socket.on("cancel_batch", (jobId) => {
-  console.log(`[任务] 收到取消指令: ${jobId}`);
-  cancelledJobs.add(jobId);
+socket.on("cancel_task", (data: { jobId: string }) => {
+  console.log(`[取消指令] 接收到任务中止信号: ${data.jobId}`);
+  cancelledJobs.add(data.jobId);
 });
 
 socket.on("disconnect", () => {
-  console.log("与服务器断开连接.");
+  console.log("与主服务器断开连接...");
+});
+
+// 处理主服务器发来的管理员远程指令
+socket.on("admin_command", async (cmd: { action: string }) => {
+  if (cmd.action === 'restart') {
+      console.log("\n[管理员要求] 重启节点...");
+      process.exit(0); 
+  } else if (cmd.action === 'stop') {
+      console.log("\n[管理员要求] 永久停止节点!");
+      process.exit(99); 
+  } else if (cmd.action === 'update') {
+      console.log("\n[管理员要求] 节点更新指令已收到。");
+      updatePending = true;
+      if (!isProcessing) {
+          console.log("准备退出以让外部脚本执行更新...");
+          setTimeout(() => process.exit(0), 1000); 
+      } else {
+          console.log("当前正在执行任务，将在任务完成后自动重启以执行更新...");
+      }
+  }
 });
