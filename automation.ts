@@ -72,8 +72,11 @@ async function getAutomationConfig() {
     const dataDir = path.join(__dirname, 'data');
     const configPath = path.join(dataDir, 'config.json');
     if (fs.existsSync(configPath)) {
-        return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        console.log(`[Config] 📂 已加载本地配置文件: ${configPath}`);
+        return config;
     }
+    console.warn(`[Config] ⚠️ 找不到配置文件: ${configPath}`);
     return {};
 }
 
@@ -444,23 +447,27 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                     const isMac = os.platform() === 'darwin';
                     if (task.images && task.images.length > 0) {
                         console.log(`${stepPrefix} 🖼️ 处理图片上传 (使用底层数据流协议模拟粘贴)...`);
+                        console.log(`${stepPrefix} 📋 待处理参考图列表:`, task.images);
                         jobProgress.set(filename, { completed: completedLoops + 0.15, total: totalLoops, status: 'running', message: '🖼️ 正在上传参考图...' });
                         
                         const { Runtime } = client;
 
                         for (const imgUrl of task.images) {
                             if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
+                            console.log(`${stepPrefix} 🛠️ 正在分析图片路径: ${imgUrl}`);
                             let localPath = '';
                             let fallbackDir = '';
                             if (imgUrl.startsWith('http')) {
-                                console.log(`${stepPrefix} 🌐 发现远程图片 URL, 正在下载: ${imgUrl}`);
+                                console.log(`${stepPrefix} 🌐 远程图片 URL: ${imgUrl}`);
                                 try {
+                                    console.log(`${stepPrefix} ⏳ 正在从服务器拉取图片数据...`);
                                     const imgRes = await fetch(imgUrl);
                                     if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
                                     const buffer = await imgRes.arrayBuffer();
-                                    const tempPath = path.join(os.tmpdir(), `ref_${Date.now()}_${path.basename(imgUrl)}`);
+                                    const tempPath = path.join(os.tmpdir(), `ref_${Date.now()}_${path.basename(imgUrl.split('?')[0])}`);
                                     fs.writeFileSync(tempPath, Buffer.from(buffer));
                                     localPath = tempPath;
+                                    console.log(`${stepPrefix} ✅ 图片下载并保存至临时目录: ${localPath} (${buffer.byteLength} 字节)`);
                                 } catch (downloadErr: any) {
                                     console.error(`${stepPrefix} ❌ 下载远程图片失败:`, downloadErr.message);
                                 }
@@ -800,10 +807,21 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
 }
 
 export async function executeBatch(input: any, filename: string, userId?: string | number) {
+    console.log(`[Batch] 🚀 准备执行批次任务: ${filename}, 包含 ${Array.isArray(input) ? input.length : (input.tasks?.length || 0)} 个子任务`);
+    if (input.systemConfig) {
+        console.log(`[Batch] 🛠️ 收到系统下载目录配置: ${input.systemConfig.systemDownloadsDir}`);
+    }
     const tasks = Array.isArray(input) ? input : (input.tasks || []);
     if (!Array.isArray(tasks) || tasks.length === 0) {
         console.log(`⚠️ 批次 ${filename} 中没有可执行的任务任务。`);
         return input;
+    }
+
+    // Attach systemConfig to each task so they can use it for download paths
+    if (input.systemConfig) {
+        tasks.forEach((t: any) => {
+            if (!t.systemConfig) t.systemConfig = input.systemConfig;
+        });
     }
 
     const firstExecutor = tasks[0]?.executor || 'cdp';
@@ -1021,6 +1039,7 @@ export function handleBrowserDebug(msg: string) {
 }
 
 async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: string, projectDownloadDir: string, maxWaitSeconds: number = 130, checkCancel?: () => void): Promise<string[]> {
+    console.log(`[监控] 进入下载监控循环: sysDir=${systemDownloadsDir}, dest=${projectDownloadDir}, maxWait=${maxWaitSeconds}s`);
     console.log(`[DEBUG] waitForAndMoveDownloads called with maxWaitSeconds: ${maxWaitSeconds} seconds`);
     console.log(`\n⏳ 开始死守系统下载目录，等待图片出现: ${systemDownloadsDir}`);
     let attempts = 0;

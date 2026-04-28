@@ -205,17 +205,24 @@ export class DispatcherService {
                         const host = socket?.handshake.headers.host || 'localhost:4000';
                         const serverUrl = `${protocol}://${host}`;
 
+                        console.log(`[Dispatcher] Found task ${task.id}, preparing payload with serverUrl: ${serverUrl}`);
+
                         const taskPayload = {
                             ...taskData,
-                            id: task.id, // Ensure ID is present
+                            id: task.id, 
                             userId: task.user_id,
                             serverUrl: serverUrl,
-                            systemConfig: config // Pass global config (including systemDownloadsDir)
+                            systemConfig: config 
                         };
 
                         if (taskPayload.images && Array.isArray(taskPayload.images)) {
+                            console.log(`[Dispatcher] Original images:`, taskPayload.images);
                             taskPayload.images = taskPayload.images.map((img: string) => {
-                                if (img.startsWith('/')) return `${serverUrl}${img}`;
+                                if (img.startsWith('/')) {
+                                    const fullUrl = `${serverUrl}${img}`;
+                                    console.log(`[Dispatcher] Mapping local path ${img} to full URL: ${fullUrl}`);
+                                    return fullUrl;
+                                }
                                 return img;
                             });
                         }

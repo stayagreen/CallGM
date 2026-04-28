@@ -57,6 +57,7 @@ async function uploadResult(token: string, jobId: string, filePath: string) {
     const filename = path.basename(filePath);
     const base64Data = fs.readFileSync(filePath, { encoding: 'base64' });
     
+    console.log(`[Worker] 🚀 准备回传文件到服务器: ${filename}, URL: ${SERVER_URL}/api/worker/upload-result`);
     // We send to the primary server endpoint
     const response = await fetch(`${SERVER_URL}/api/worker/upload-result`, {
         method: "POST",
@@ -70,9 +71,9 @@ async function uploadResult(token: string, jobId: string, filePath: string) {
     });
     const resText = await response.text();
     if (!response.ok) {
-        console.error(`[Worker] 上传失败: ${resText}`);
+        console.error(`[Worker] ❌ 上传失败: ${resText} (HTTP ${response.status})`);
     } else {
-        console.log(`[Worker] 成功上传: ${filename}`);
+        console.log(`[Worker] ✅ 成功回传并完成: ${filename}`);
         // 回传成功后删除本地文件，节省空间
         try {
             if (fs.existsSync(filePath)) {
