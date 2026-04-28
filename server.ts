@@ -1035,30 +1035,40 @@ async function startServer() {
     }
   });
 
-  app.post('/api/config', (req, res) => {
+  app.post('/api/config', requireAdmin, (req, res) => {
     try {
-        console.log(`[Config] Received save request:`, req.body);
-        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-        fs.writeFileSync(configPath, JSON.stringify(req.body, null, 2));
+        const body = req.body;
+        console.log(`[Config] Admin is updating config...`, body);
         
-        // 同时更新数据库，确保调度器能实时获取最新配置
-        const configData = JSON.stringify(req.body);
-        const exists = db.prepare('SELECT key FROM system_config WHERE key = ?').get('app_config');
-        if (exists) {
-            db.prepare('UPDATE system_config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?').run(configData, 'app_config');
-            console.log(`[Config] Updated DB config:`, configData);
-        } else {
-            db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run('app_config', configData);
-            console.log(`[Config] Inserted DB config:`, configData);
+        // 1. Save to File
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+        fs.writeFileSync(configPath, JSON.stringify(body, null, 2));
+        
+        // 2. Save to Database
+        const configJson = JSON.stringify(body);
+        try {
+            const hasEntry = db.prepare('SELECT 1 FROM system_config WHERE key = ?').get('app_config');
+            if (hasEntry) {
+                db.prepare('UPDATE system_config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?').run(configJson, 'app_config');
+            } else {
+                db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run('app_config', configJson);
+            }
+            console.log(`[Config] DB sync successful.`);
+        } catch (dbErr) {
+            console.error(`[Config] DB sync failed:`, dbErr);
+            // Non-fatal for the file save, but let's log it
         }
         
-        // 触发调度器立即检查
-        dispatcherService.poke();
+        // 3. Poke Dispatcher
+        if (dispatcherService && typeof dispatcherService.poke === 'function') {
+            dispatcherService.poke();
+            console.log(`[Config] Dispatcher poked.`);
+        }
         
         res.json({ success: true });
     } catch (e: any) {
-        console.error(`[Config] Save failed:`, e);
-        res.status(500).json({ error: e.message });
+        console.error(`[Config] Route Error:`, e);
+        res.status(500).json({ error: e.message || 'Internal Server Error' });
     }
   });
 
