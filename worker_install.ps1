@@ -42,10 +42,20 @@ function Update-Files {
         # 下载最新的 worker 代码包
         Invoke-WebRequest -Uri "$REMOTE_URL/api/worker/download" -OutFile "$ZIP_PATH" -ErrorAction Stop
         
-        Write-Host "[更新] 正在解密解压更新包..." -ForegroundColor Cyan
-        # 强制解压到当前目录 (会覆盖同名文件，但 config.json 已经在内存里，代码也不会刻意删它)
+        Write-Host "[更新] 正在备份本地配置..." -ForegroundColor Cyan
+        if (Test-Path "$CONFIG_FILE") {
+            Copy-Item "$CONFIG_FILE" "$INSTALL_DIR\config_bak.json" -Force
+        }
+
+        Write-Host "[更新] 正在同步最新代码包..." -ForegroundColor Cyan
         Expand-Archive -Path "$ZIP_PATH" -DestinationPath "$INSTALL_DIR" -Force
         
+        # 还原配置
+        if (Test-Path "$INSTALL_DIR\config_bak.json") {
+            Move-Item "$INSTALL_DIR\config_bak.json" "$CONFIG_FILE" -Force
+            Write-Host "[配置] 已还原本地配置" -ForegroundColor Gray
+        }
+
         # 清理压缩包
         Remove-Item "$ZIP_PATH" -ErrorAction SilentlyContinue
         Write-Host "[更新] 成功同步最新代码！" -ForegroundColor Green

@@ -116,14 +116,24 @@ export class DispatcherService {
     try {
       // 1. Read global config
       const configRow = db.prepare('SELECT value FROM system_config WHERE key = ?').get('app_config') as any;
-      let config = { dispatchStrategy: 'server', globalConcurrency: 3 };
+      let config: any = { dispatchStrategy: 'all', globalConcurrency: 3 };
+      
       if (configRow) {
-        try { config = JSON.parse(configRow.value); } catch(e) {}
+        try { 
+          const dbConfig = JSON.parse(configRow.value);
+          config = { ...config, ...dbConfig };
+          console.log(`[Dispatcher] Loaded config from DB: strategy=${config.dispatchStrategy}, concurrency=${config.globalConcurrency}`);
+        } catch(e) {
+          console.error("[Dispatcher] Failed to parse config from DB", e);
+        }
       } else {
-        // Look dynamically by reading config file instead
         const configPath = path.join(process.cwd(), 'data', 'config.json');
         if (fs.existsSync(configPath)) {
-            try { config = { ...config, ...JSON.parse(fs.readFileSync(configPath, 'utf-8'))}; } catch(e) {}
+            try { 
+              const fileConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+              config = { ...config, ...fileConfig };
+              console.log(`[Dispatcher] Loaded config from File: strategy=${config.dispatchStrategy}`);
+            } catch(e) {}
         }
       }
 
