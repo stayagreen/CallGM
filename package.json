@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.ts",
     "dev": "tsx server.ts",
+    "build-worker": "node build_worker_dist.js",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
