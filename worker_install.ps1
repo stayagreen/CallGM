@@ -1,60 +1,91 @@
-# AI Worker Installation & Auto-Update Script
-# This script is meant to be served by the main server at http://SERVER:4000/worker_install.ps1
+# AI Worker Professional Installation & Daemon Script
+# 用法: 在节点机器上打开 PowerShell，运行此脚本。
 
-$SERVER_URL = "http://localhost:4000" # NOTE: Change 'localhost' to your actual Server IP in VM
-$INSTALL_DIR = "C:\AI_Worker"
-$ZIP_PATH = "$INSTALL_DIR\worker.zip"
+$SERVER_BASE_URL = "http://192.168.1.100:4000" # 请在此修改你的主服务器初始地址
+$INSTALL_DIR = Join-Path $HOME "AI_Worker"
+$CONFIG_FILE = Join-Path $INSTALL_DIR "config.json"
+$ZIP_PATH = Join-Path $INSTALL_DIR "update.zip"
 
-# Create Directory
-if (!(Test-Path $INSTALL_DIR)) {
-    New-Item -ItemType Directory -Path $INSTALL_DIR -Force
+# 1. 确保安装目录存在
+if (!(Test-Path "$INSTALL_DIR")) {
+    New-Item -ItemType Directory -Path "$INSTALL_DIR" -Force | Out-Null
 }
-Set-Location $INSTALL_DIR
+Set-Location "$INSTALL_DIR"
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "   AI Worker Installer (Port 4000)        " -ForegroundColor Cyan
+Write-Host "   AI Worker 节点管理器 (增强型)          " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
-function Update-Worker {
-    Write-Host "Checking for updates from $SERVER_URL..." -ForegroundColor Cyan
-    try {
-        # Download the latest worker package (assuming server provides /api/worker/bundle.zip)
-        Invoke-WebRequest -Uri "$SERVER_URL/api/worker/download" -OutFile $ZIP_PATH -ErrorAction Stop
-        
-        Write-Host "Extracting newest worker files..." -ForegroundColor Cyan
-        # Close Node if it's running
-        Stop-Process -Name "node" -ErrorAction SilentlyContinue
-        
-        Expand-Archive -Path $ZIP_PATH -DestinationPath $INSTALL_DIR -Force
-        Remove-Item $ZIP_PATH
-        Write-Host "Update Complete!" -ForegroundColor Green
-    } catch {
-        Write-Host "Failed to download update: $($_.Exception.Message)" -ForegroundColor Red
-        if (!(Test-Path "$INSTALL_DIR\worker.js")) {
-            Write-Host "Initial download failed. Exiting." -ForegroundColor Red
-            return $false
-        }
+# 2. 配置检查与初始化
+if (!(Test-Path "$CONFIG_FILE")) {
+    Write-Host "[配置] 未检测到配置文件，开始初始化..." -ForegroundColor Yellow
+    $server_ip = Read-Host "请输入主服务器地址 (默认: $SERVER_BASE_URL)"
+    if ($server_ip -eq "") { $server_ip = $SERVER_BASE_URL }
+    
+    $token = Read-Host "请输入节点的 Worker Token (从服务器后台获取)"
+    
+    $config_obj = @{
+        SERVER_URL = $server_ip
+        WORKER_TOKEN = $token
     }
-    return $true
+    $config_obj | ConvertTo-Json | Out-File -FilePath "$CONFIG_FILE" -Encoding utf8
+    Write-Host "[配置] 已创建: $CONFIG_FILE" -ForegroundColor Green
 }
 
-# Initial Config Check
-if (!(Test-Path "$INSTALL_DIR\.env")) {
-    $token = Read-Host "Enter your Worker Token (from Server Admin Panel)"
-    "SERVER_URL=$SERVER_URL`nTOKEN=$token" | Out-File -FilePath "$INSTALL_DIR\.env" -Encoding UTF8
+# 从配置中读取最新的服务器地址
+$current_config = Get-Content "$CONFIG_FILE" | ConvertFrom-Json
+$REMOTE_URL = $current_config.SERVER_URL
+
+function Update-Files {
+    Write-Host "[更新] 正在检查最新代码: $REMOTE_URL/api/worker/download" -ForegroundColor Cyan
+    try {
+        # 下载最新的 worker 代码包
+        Invoke-WebRequest -Uri "$REMOTE_URL/api/worker/download" -OutFile "$ZIP_PATH" -ErrorAction Stop
+        
+        Write-Host "[更新] 正在解密解压更新包..." -ForegroundColor Cyan
+        # 强制解压到当前目录 (会覆盖同名文件，但 config.json 已经在内存里，代码也不会刻意删它)
+        Expand-Archive -Path "$ZIP_PATH" -DestinationPath "$INSTALL_DIR" -Force
+        
+        # 清理压缩包
+        Remove-Item "$ZIP_PATH" -ErrorAction SilentlyContinue
+        Write-Host "[更新] 成功同步最新代码！" -ForegroundColor Green
+        return $true
+    } catch {
+        Write-Host "[错误] 无法获取更新: $($_.Exception.Message)" -ForegroundColor Red
+        if (Test-Path "$INSTALL_DIR\worker.js" -or Test-Path "$INSTALL_DIR\worker.ts") {
+            Write-Host "[警告] 将尝试使用本地缓存的代码启动..." -ForegroundColor Yellow
+            return $true
+        }
+        return $false
+    }
 }
 
-# Run the Worker Loop
+# 3. 主运行循环
 while($true) {
-    # Check for update every time before starting
-    Update-Worker
+    # 每次循环开始前，先执行一次更新检查
+    $ready = Update-Files
     
-    Write-Host "Starting Worker Service..." -ForegroundColor Green
-    # Start node and wait for it
-    # If the worker receives an 'Update' command from server, it should simply EXIT (process.exit(0))
-    # This loop will then catch that, pull the new ZIP, and restart.
-    node worker.js
+    if ($ready) {
+        Write-Host "[运行] 正在启动 Worker 服务..." -ForegroundColor Green
+        
+        # 判断运行模式 (如果有编译后的 js 跑 js，否则尝试跑 tsx/node ts)
+        if (Test-Path "worker.js") {
+            node worker.js
+        } elseif (Test-Path "worker.ts") {
+            # 如果你有 tsx 或 ts-node 环境
+            npx tsx worker.ts
+        } else {
+            Write-Host "[错误] 未找到入口文件 (worker.js 或 worker.ts)" -ForegroundColor Red
+            Start-Sleep -Seconds 10
+            continue
+        }
+        
+        # 当 node 进程退出时
+        Write-Host "[状态] Worker 进程已退出。" -ForegroundColor Yellow
+    } else {
+        Write-Host "[重试] 无法准备运行环境，5秒后重试..." -ForegroundColor Red
+    }
     
-    Write-Host "Worker crashed or requested restart. Re-checking in 5 seconds..." -ForegroundColor Yellow
+    Write-Host "------------------------------------------"
     Start-Sleep -Seconds 5
 }

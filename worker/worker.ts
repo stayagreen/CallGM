@@ -3,9 +3,25 @@ import fs from "fs";
 import path from "path";
 import { jobProgress, executeBatch, cancelledJobs } from "../automation.js";
 
-// ========= 配置区域 =========
-const SERVER_URL = "http://192.168.1.100:4000"; // 替换为主服务器局域网IP
-const WORKER_TOKEN = "wk-YOUR_TOKEN_HERE";      // 替换为后台生成的 Token
+// ========= 配置加载逻辑 =========
+const configPath = path.join(process.cwd(), "config.json");
+let SERVER_URL = "http://192.168.1.100:4000";
+let WORKER_TOKEN = "wk-YOUR_TOKEN_HERE";
+
+if (fs.existsSync(configPath)) {
+    try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        SERVER_URL = config.SERVER_URL || SERVER_URL;
+        WORKER_TOKEN = config.WORKER_TOKEN || WORKER_TOKEN;
+        console.log(`[配置] 已从 ${configPath} 加载配置: ${SERVER_URL}`);
+    } catch (e) {
+        console.warn("[配置] 读取 config.json 失败，使用默认配置");
+    }
+} else {
+    // 首次运行，创建默认配置文件
+    fs.writeFileSync(configPath, JSON.stringify({ SERVER_URL, WORKER_TOKEN }, null, 2));
+    console.log(`[配置] 已创建初始化配置文件: ${configPath}`);
+}
 // ==========================
 
 console.log("启动 Worker 工作节点...");
@@ -159,9 +175,10 @@ socket.on("admin_command", async (cmd: { action: string }) => {
       console.log("\n[管理员要求] 节点更新指令已收到。");
       updatePending = true;
       if (!isProcessing) {
-          process.exit(0);
+          console.log("准备退出以让外部脚本执行更新...");
+          setTimeout(() => process.exit(0), 1000); 
       } else {
-          console.log("当前正在执行任务，将在任务完成后自动重启更新...");
+          console.log("当前正在执行任务，将在任务完成后自动重启以执行更新...");
       }
   }
 });
