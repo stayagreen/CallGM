@@ -162,17 +162,18 @@ export class DispatcherService {
          const taskData = JSON.parse(task.data);
 
          // Resolve Worker vs Server based on dispatchStrategy
-         const strategy = config.dispatchStrategy || 'server';
-         console.log(`[Dispatcher] Processing ${task.type} task ${task.id} with strategy ${strategy}`);
+         const strategy = config.dispatchStrategy || 'all';
+         console.log(`[Dispatcher] Task ${task.id} (${task.type}) strategy: ${strategy}`);
 
          if (strategy === 'worker' || strategy === 'all') {
-            // Only image tasks go to workers
+            // Only image/batch tasks go to workers
             if (task.type !== 'video') {
                 const idleWorkers = db.prepare('SELECT * FROM workers WHERE status = ?').all('idle') as any[];
+                // Find a worker that has 'gemini_image' capability
                 const matchedWorker = idleWorkers.find(w => {
                     try {
                         const caps = JSON.parse(w.capabilities);
-                        return caps.includes('gemini_image');
+                        return Array.isArray(caps) && caps.includes('gemini_image');
                     } catch(e) { return false; }
                 });
 
@@ -190,14 +191,18 @@ export class DispatcherService {
                         db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('running', matchedWorker.id);
                         db.prepare('UPDATE tasks SET status = ?, worker_id = ? WHERE id = ?').run('running', matchedWorker.id, task.id);
                         this.io!.to(targetSocketId).emit('run_task', taskData);
-                        console.log(`[Dispatcher] Dispatched ${task.type} task ${task.id} to worker ${matchedWorker.name}`);
+                        console.log(`[Dispatcher] -> Dispatched task ${task.id} to WORKER ${matchedWorker.name}`);
                         dispatched = true;
                         runningImageCount++;
                     }
+                } else {
+                    console.log(`[Dispatcher] Task ${task.id} is waiting for an idle worker...`);
                 }
             }
          }
 
+         // ONLY dispatch to local server if strategy is 'server' OR 'all'
+         // If strategy is 'worker', this block will NEVER execute
          if (!dispatched && (strategy === 'server' || strategy === 'all')) {
              // Dispatch locally
              try {
@@ -210,7 +215,7 @@ export class DispatcherService {
                 fs.writeFileSync(path.join(userTaskDir, filename), JSON.stringify(taskData, null, 2));
 
                 db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('running', task.id);
-                console.log(`[Dispatcher] Queued ${task.type} task ${task.id} to local server watcher (${baseDirName}).`);
+                console.log(`[Dispatcher] -> Dispatched task ${task.id} to LOCAL SERVER (${baseDirName}).`);
                 dispatched = true;
                 if (task.type !== 'video') runningImageCount++;
              } catch(e: any) {
