@@ -105,6 +105,27 @@ socket.on("run_task", async (taskData) => {
   console.log("-----------------------------------------");
   console.log(`[新任务] 收到生图任务: ${taskData.id}`);
   
+  // Update SERVER_URL if provided by dispatcher (dynamic discovery)
+  if (taskData.serverUrl) {
+      if (SERVER_URL !== taskData.serverUrl) {
+          console.log(`[连接] 动态更新服务器地址: ${taskData.serverUrl}`);
+          SERVER_URL = taskData.serverUrl;
+      }
+  }
+
+  // Sync system config to local storage so automation.js can read it if needed
+  if (taskData.systemConfig) {
+      try {
+          const dataDir = path.join(process.cwd(), "data");
+          if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+          const automationConfigPath = path.join(dataDir, "config.json");
+          fs.writeFileSync(automationConfigPath, JSON.stringify(taskData.systemConfig, null, 2));
+          console.log(`[配置] 已同步全局系统配置到本地: ${automationConfigPath}`);
+      } catch (e) {
+          console.warn("[配置] 同步全局配置失败:", e);
+      }
+  }
+  
   // Reset cancellation for this task if it was previously set (though unlikely)
   cancelledJobs.delete(taskData.id);
 

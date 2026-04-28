@@ -198,10 +198,32 @@ export class DispatcherService {
                     }
 
                     if (targetSocketId) {
+                        const socket = this.io!.sockets.sockets.get(targetSocketId);
+                        // Fix image paths for workers - they need full URLs
+                        const protocol = this.io!.engine.opts.cors ? 'https' : 'http';
+                        // We use the host from the handshake to determine how the worker reached us
+                        const host = socket?.handshake.headers.host || 'localhost:4000';
+                        const serverUrl = `${protocol}://${host}`;
+
+                        const taskPayload = {
+                            ...taskData,
+                            id: task.id, // Ensure ID is present
+                            userId: task.user_id,
+                            serverUrl: serverUrl,
+                            systemConfig: config // Pass global config (including systemDownloadsDir)
+                        };
+
+                        if (taskPayload.images && Array.isArray(taskPayload.images)) {
+                            taskPayload.images = taskPayload.images.map((img: string) => {
+                                if (img.startsWith('/')) return `${serverUrl}${img}`;
+                                return img;
+                            });
+                        }
+
                         db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('running', matchedWorker.id);
                         db.prepare('UPDATE tasks SET status = ?, worker_id = ? WHERE id = ?').run('running', matchedWorker.id, task.id);
-                        this.io!.to(targetSocketId).emit('run_task', taskData);
-                        console.log(`[Dispatcher] -> Dispatched task ${task.id} to WORKER ${matchedWorker.name}`);
+                        this.io!.to(targetSocketId).emit('run_task', taskPayload);
+                        console.log(`[Dispatcher] -> Dispatched task ${task.id} to WORKER ${matchedWorker.name} with serverUrl=${serverUrl}`);
                         dispatched = true;
                         runningImageCount++;
                     }

@@ -388,7 +388,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                         });
                         
                         const config = await getAutomationConfig();
-                        const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
+                        const sysDir = (task.systemConfig && task.systemConfig.systemDownloadsDir) || config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
                         if (!fs.existsSync(sysDir)) fs.mkdirSync(sysDir, { recursive: true });
 
                         await client.send('Page.setDownloadBehavior', {
@@ -452,7 +452,19 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                             if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
                             let localPath = '';
                             let fallbackDir = '';
-                            if (imgUrl.startsWith('/uploads/')) {
+                            if (imgUrl.startsWith('http')) {
+                                console.log(`${stepPrefix} 🌐 发现远程图片 URL, 正在下载: ${imgUrl}`);
+                                try {
+                                    const imgRes = await fetch(imgUrl);
+                                    if (!imgRes.ok) throw new Error(`HTTP ${imgRes.status}`);
+                                    const buffer = await imgRes.arrayBuffer();
+                                    const tempPath = path.join(os.tmpdir(), `ref_${Date.now()}_${path.basename(imgUrl)}`);
+                                    fs.writeFileSync(tempPath, Buffer.from(buffer));
+                                    localPath = tempPath;
+                                } catch (downloadErr: any) {
+                                    console.error(`${stepPrefix} ❌ 下载远程图片失败:`, downloadErr.message);
+                                }
+                            } else if (imgUrl.startsWith('/uploads/')) {
                                 localPath = path.join(__dirname, 'uploads', imgUrl.replace('/uploads/', ''));
                                 fallbackDir = path.join(__dirname, 'uploads');
                             } else if (imgUrl.startsWith('/downloads/')) {
@@ -692,7 +704,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                             // 实际的文件移动逻辑
                             const config = await getAutomationConfig();
                             const timeoutSeconds = parseConfigNumber(config.downloadTimeout, 35); // 默认缩短到 35 秒
-                            const sysDir = config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
+                            const sysDir = (task.systemConfig && task.systemConfig.systemDownloadsDir) || config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
                             const userDownloadDir = userId ? path.join(downloadDir, userId.toString()) : downloadDir;
                             if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
                             
