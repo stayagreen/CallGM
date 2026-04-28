@@ -21,6 +21,7 @@ declare module 'express-session' {
 }
 
 import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages, cancelledJobs } from "./automation.js";
+import { videoJobProgress, cancelledVideoJobs } from "./video_automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
