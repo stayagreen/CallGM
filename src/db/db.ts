@@ -88,6 +88,7 @@ try { db.exec('ALTER TABLE tasks ADD COLUMN type TEXT NOT NULL DEFAULT "image";'
 try { db.exec('ALTER TABLE assets ADD COLUMN type TEXT NOT NULL DEFAULT "image";'); } catch (e) {}
 try { db.exec('ALTER TABLE assets ADD COLUMN job_id TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE tasks ADD COLUMN worker_id TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE system_config ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;'); } catch (e) {}
 
 // Bootstrap admin user
 const adminExists = db.prepare('SELECT * FROM users WHERE username = ?').get('administrator');

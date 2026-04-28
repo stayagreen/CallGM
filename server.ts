@@ -1049,7 +1049,11 @@ async function startServer() {
         try {
             const hasEntry = db.prepare('SELECT 1 FROM system_config WHERE key = ?').get('app_config');
             if (hasEntry) {
-                db.prepare('UPDATE system_config SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?').run(configJson, 'app_config');
+                // 如果数据库还没有 updated_at 列，这条语句可能会在第一次运行时失败
+                // 没关系，上面的补全逻辑会自动处理，或者我们这里直接更新 value
+                db.prepare('UPDATE system_config SET value = ? WHERE key = ?').run(configJson, 'app_config');
+                // 尝试更新一下时间戳，即使没有这一列也不影响主流程
+                try { db.exec("UPDATE system_config SET updated_at = CURRENT_TIMESTAMP WHERE key = 'app_config'"); } catch(e){}
             } else {
                 db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run('app_config', configJson);
             }
