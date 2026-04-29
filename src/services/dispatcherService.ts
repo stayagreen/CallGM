@@ -158,29 +158,21 @@ export class DispatcherService {
       console.log(`[Dispatcher] Current running: Image=${runningImageCount}/${maxImage}`);
 
       for (const task of pendingTasks) {
-         // Skip video tasks in worker dispatch ONLY if strategy is strictly 'worker'
-         // If strategy is 'all', we skip workers (because they don't support video) but allow them to fall through to local server.
-         if (task.type === 'video' && config.dispatchStrategy === 'worker') {
-             continue;
-         }
-         
-         if (task.type !== 'video' && runningImageCount >= maxImage) {
-             console.log(`[Dispatcher] Skipping image task ${task.id} due to concurrency limit.`);
-             continue;
-         }
-
          let dispatched = false;
          const taskData = JSON.parse(task.data);
 
          // Resolve Worker vs Server based on dispatchStrategy
          const strategy = config.dispatchStrategy || 'all';
-         console.log(`[Dispatcher] Task ${task.id} (${task.type}) strategy: ${strategy}`);
 
-         if (strategy === 'worker' || strategy === 'all') {
-            // Only image/batch tasks go to workers
-            if (task.type !== 'video') {
+         // CRITICAL: Video tasks ALWAYS go to server, regardless of worker availability
+         // This simplifies the logic and reflects that workers don't have FFmpeg setups
+         if (task.type === 'video') {
+             console.log(`[Dispatcher] Task ${task.id} is VIDEO, forcing server dispatch.`);
+         } else {
+             console.log(`[Dispatcher] Task ${task.id} (${task.type}) strategy: ${strategy}`);
+             
+             if (strategy === 'worker' || strategy === 'all') {
                 const idleWorkers = db.prepare('SELECT * FROM workers WHERE status = ?').all('idle') as any[];
-                // Find a worker that has 'gemini_image' capability
                 const matchedWorker = idleWorkers.find(w => {
                     try {
                         const caps = JSON.parse(w.capabilities);
@@ -192,72 +184,46 @@ export class DispatcherService {
                     // Find socket
                     let targetSocketId: string | null = null;
                     for (const [sid, token] of this.connectedWorkers.entries()) {
-                        if (token === matchedWorker.token) {
-                            targetSocketId = sid;
-                            break;
-                        }
+                        if (token === matchedWorker.token) { targetSocketId = sid; break; }
                     }
 
                     if (targetSocketId) {
                         const socket = this.io!.sockets.sockets.get(targetSocketId);
-                        // Fix image paths for workers - they need full URLs
-                        // We use the host from the handshake to determine how the worker reached us
                         const host = socket?.handshake.headers.host || 'localhost:4000';
                         let protocol = 'http';
                         
-                        // If it's a domain name (not IP) and not localhost, maybe it's HTTPS (behind proxy)
-                        // But for simplicity and local network workers, default to HTTP unless explicitly HTTPS
                         if (socket?.handshake.headers['x-forwarded-proto'] === 'https') {
                             protocol = 'https';
                         } else if (!host.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+/.test(host.split(':')[0])) {
-                            // If it's not an IP or localhost, and not explicitly marked as HTTPS by proxy, 
-                            // we might still be HTTPS if the main server is HTTPS.
-                            // In AI Studio environments, the reverse proxy usually handles HTTPS.
                             if (this.io!.engine.opts.cors) protocol = 'https';
                         }
 
                         const serverUrl = `${protocol}://${host}`;
-
                         console.log(`[Dispatcher] Found task ${task.id}, preparing payload with serverUrl: ${serverUrl}`);
 
                         const taskPayload = {
-                            data: {
-                                ...taskData,
-                                systemConfig: config
-                            },
+                            data: { ...taskData, systemConfig: config },
                             id: task.id, 
                             userId: task.user_id,
                             serverUrl: serverUrl
                         };
 
-                        if (taskPayload.data.images && Array.isArray(taskPayload.data.images)) {
-                            console.log(`[Dispatcher] Original images:`, taskPayload.data.images);
-                            taskPayload.data.images = taskPayload.data.images.map((img: string) => {
-                                if (img.startsWith('/')) {
-                                    const fullUrl = `${serverUrl}${img}`;
-                                    console.log(`[Dispatcher] Mapping local path ${img} to full URL: ${fullUrl}`);
-                                    return fullUrl;
-                                }
-                                return img;
-                            });
-                        }
-
                         db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('running', matchedWorker.id);
                         db.prepare('UPDATE tasks SET status = ?, worker_id = ? WHERE id = ?').run('running', matchedWorker.id, task.id);
                         this.io!.to(targetSocketId).emit('run_task', taskPayload);
-                        console.log(`[Dispatcher] -> Dispatched task ${task.id} to WORKER ${matchedWorker.name} with serverUrl=${serverUrl}`);
+                        console.log(`[Dispatcher] -> Dispatched task ${task.id} to WORKER ${matchedWorker.name}`);
                         dispatched = true;
                         runningImageCount++;
                     }
-                } else {
-                    console.log(`[Dispatcher] Task ${task.id} is waiting for an idle worker...`);
                 }
-            }
+             }
          }
 
-         // ONLY dispatch to local server if strategy is 'server' OR 'all'
-         // If strategy is 'worker', this block will NEVER execute
-         if (!dispatched && (strategy === 'server' || strategy === 'all')) {
+         // Fallback/Direct to local server
+         if (!dispatched && (task.type === 'video' || strategy === 'server' || strategy === 'all')) {
+             if (task.type !== 'video' && runningImageCount >= maxImage) {
+                 continue; // Still respect image concurrency
+             }
              // Dispatch locally
              try {
                 const reqUserId = task.user_id;

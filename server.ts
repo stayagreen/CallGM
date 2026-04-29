@@ -786,15 +786,35 @@ async function startServer() {
       const rows = db.prepare(query).all(...params) as any[];
       const jobs = rows.map(row => {
         const data = JSON.parse(row.data);
-        const progressInfo = jobProgress.get(row.id);
+        let progressInfo = jobProgress.get(row.id) as any;
+        if (row.type === 'video' && !progressInfo) {
+          progressInfo = videoJobProgress.get(row.id);
+        }
+
+        let progress = row.progress;
+        let statusMessage = '';
+        let currentStatus = row.status;
+
+        if (progressInfo) {
+          currentStatus = progressInfo.status;
+          if (progressInfo.total !== undefined && progressInfo.completed !== undefined) {
+            // Image/Batch automation progress
+            progress = progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0;
+            statusMessage = progressInfo.message || '';
+          } else if (progressInfo.progress !== undefined) {
+            // Video rendering progress
+            progress = progressInfo.progress;
+            statusMessage = progressInfo.error || '';
+          }
+        }
         
         return {
           id: row.id,
           userId: row.user_id,
           username: row.username,
-          status: progressInfo ? progressInfo.status : row.status,
-          progress: progressInfo ? (progressInfo.total > 0 ? Math.round((progressInfo.completed / progressInfo.total) * 100) : 0) : row.progress,
-          statusMessage: progressInfo ? (progressInfo.message || '') : '',
+          status: currentStatus,
+          progress: progress,
+          statusMessage: statusMessage,
           timestamp: new Date(row.created_at.endsWith('Z') ? row.created_at : row.created_at.replace(' ', 'T') + 'Z').getTime(),
           tasks: data.tasks || (Array.isArray(data) ? data : []),
           resultFiles: JSON.parse(row.result_files || '[]')
