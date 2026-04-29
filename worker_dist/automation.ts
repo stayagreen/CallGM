@@ -819,6 +819,10 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
 }
 
 export async function executeBatch(input: any, filename: string, userId?: string | number) {
+    if (!input) {
+        console.error(`[Batch] ❌ 任务执行失败: Input 数据为空`);
+        return [];
+    }
     console.log(`[Batch] 🚀 准备执行批次任务: ${filename}, 包含 ${Array.isArray(input) ? input.length : (input.tasks?.length || 0)} 个子任务`);
     if (input.systemConfig) {
         console.log(`[Batch] 🛠️ 收到系统下载目录配置: ${input.systemConfig.systemDownloadsDir}`);

@@ -158,8 +158,9 @@ export class DispatcherService {
       console.log(`[Dispatcher] Current running: Image=${runningImageCount}/${maxImage}`);
 
       for (const task of pendingTasks) {
-         // Skip video tasks in worker dispatch if nodes don't handle them
-         if (task.type === 'video' && config.dispatchStrategy !== 'server') {
+         // Skip video tasks in worker dispatch ONLY if strategy is strictly 'worker'
+         // If strategy is 'all', we skip workers (because they don't support video) but allow them to fall through to local server.
+         if (task.type === 'video' && config.dispatchStrategy === 'worker') {
              continue;
          }
          
@@ -220,16 +221,18 @@ export class DispatcherService {
                         console.log(`[Dispatcher] Found task ${task.id}, preparing payload with serverUrl: ${serverUrl}`);
 
                         const taskPayload = {
-                            ...taskData,
+                            data: {
+                                ...taskData,
+                                systemConfig: config
+                            },
                             id: task.id, 
                             userId: task.user_id,
-                            serverUrl: serverUrl,
-                            systemConfig: config 
+                            serverUrl: serverUrl
                         };
 
-                        if (taskPayload.images && Array.isArray(taskPayload.images)) {
-                            console.log(`[Dispatcher] Original images:`, taskPayload.images);
-                            taskPayload.images = taskPayload.images.map((img: string) => {
+                        if (taskPayload.data.images && Array.isArray(taskPayload.data.images)) {
+                            console.log(`[Dispatcher] Original images:`, taskPayload.data.images);
+                            taskPayload.data.images = taskPayload.data.images.map((img: string) => {
                                 if (img.startsWith('/')) {
                                     const fullUrl = `${serverUrl}${img}`;
                                     console.log(`[Dispatcher] Mapping local path ${img} to full URL: ${fullUrl}`);

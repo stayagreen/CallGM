@@ -21,7 +21,7 @@ declare module 'express-session' {
 }
 
 import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages, cancelledJobs } from "./automation.js";
-import { videoJobProgress, cancelledVideoJobs } from "./video_automation.js";
+import { videoJobProgress, cancelledVideoJobs, startVideoAutomationWatcher } from "./video_automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1501,6 +1501,19 @@ async function startServer() {
 
   // Start the automation watcher
   startAutomationWatcher();
+
+  // Start the video automation watcher
+  const getVideoConcurrency = () => {
+    try {
+      const configRow = db.prepare('SELECT value FROM system_config WHERE key = ?').get('app_config') as any;
+      if (configRow) {
+        const config = JSON.parse(configRow.value);
+        return config.videoConcurrency || 1; // Default 1
+      }
+    } catch (e) {}
+    return 1;
+  };
+  startVideoAutomationWatcher(getVideoConcurrency);
 
   // Start Proxy Service
   proxyService.start();
