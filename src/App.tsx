@@ -34,6 +34,7 @@ interface GalleryAsset {
   path: string;
   userId: number;
   username: string;
+  createdAt?: string;
 }
 
 interface Template {
@@ -2168,34 +2169,45 @@ function MainApp() {
                           </div>
                         )}
                       </div>
-                      <div className="mt-3 flex items-center justify-between px-1">
-                        <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img.split('/').pop()}</span>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => !processingGalleryImages.has(img) && setEditingGalleryImage({ filename: img, url: `/downloads/${img}?t=${galleryUpdateToken}` })}
-                            disabled={processingGalleryImages.has(img)}
-                            className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-purple-500 hover:bg-purple-50'}`}
-                            title="智能填充 (手动去水印)"
-                          >
-                            <Paintbrush className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => !processingGalleryImages.has(img) && handleOneClickWatermark(img)}
-                            disabled={processingGalleryImages.has(img)}
-                            className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
-                            title="一键去水印"
-                          >
-                            <Scissors className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => !processingGalleryImages.has(img) && deleteGalleryImage(img)}
-                            disabled={processingGalleryImages.has(img)}
-                            className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-red-500 hover:bg-red-50'}`}
-                            title="彻底删除源文件"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                      <div className="mt-3 px-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img.split('/').pop()}</span>
+                          <div className="flex gap-1">
+                            <button
+                              onClick={() => !processingGalleryImages.has(img) && setEditingGalleryImage({ filename: img, url: `/downloads/${img}?t=${galleryUpdateToken}` })}
+                              disabled={processingGalleryImages.has(img)}
+                              className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-purple-500 hover:bg-purple-50'}`}
+                              title="智能填充 (手动去水印)"
+                            >
+                              <Paintbrush className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => !processingGalleryImages.has(img) && handleOneClickWatermark(img)}
+                              disabled={processingGalleryImages.has(img)}
+                              className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
+                              title="一键去水印"
+                            >
+                              <Scissors className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => !processingGalleryImages.has(img) && deleteGalleryImage(img)}
+                              disabled={processingGalleryImages.has(img)}
+                              className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-red-500 hover:bg-red-50'}`}
+                              title="彻底删除源文件"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
+                        {imgData.createdAt && (
+                          <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-400 font-medium">
+                            <Clock size={10} />
+                            {(() => {
+                              const d = new Date(imgData.createdAt.endsWith('Z') ? imgData.createdAt : imgData.createdAt.replace(' ', 'T') + 'Z');
+                              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                            })()}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -2489,19 +2501,30 @@ function MainApp() {
                       <PlayCircle className="w-12 h-12 text-white opacity-80 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                     </div>
                   </div>
-                  <div className="mt-3 flex items-center justify-between px-1">
-                    <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid.split('/').pop()}</span>
-                    <button
-                      onClick={async () => {
-                        if (!window.confirm('确定要删除这个视频吗？')) return;
-                        await fetch(`/api/videos/${vid}`, { method: 'DELETE' });
-                        fetchVideoGallery();
-                      }}
-                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                      title="彻底删除源文件"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                  <div className="mt-3 px-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid.split('/').pop()}</span>
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm('确定要删除这个视频吗？')) return;
+                          await fetch(`/api/videos/${vid}`, { method: 'DELETE' });
+                          fetchVideoGallery();
+                        }}
+                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                        title="彻底删除源文件"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {vidData.createdAt && (
+                      <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-400 font-medium">
+                        <Clock size={10} />
+                        {(() => {
+                          const d = new Date(vidData.createdAt.endsWith('Z') ? vidData.createdAt : vidData.createdAt.replace(' ', 'T') + 'Z');
+                          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                        })()}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

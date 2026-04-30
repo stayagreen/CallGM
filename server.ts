@@ -417,8 +417,9 @@ async function startServer() {
                 let userId = parseInt(pathParts[0]);
                 if (isNaN(userId)) userId = 1;
 
-                db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(
-                    userId, type, relativePath
+                const stat = fs.statSync(filePath);
+                db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path, created_at) VALUES (?, ?, ?, ?)').run(
+                    userId, type, relativePath, stat.birthtime.toISOString()
                 );
             } catch(e) {}
         }
@@ -1123,7 +1124,8 @@ async function startServer() {
       res.json(rows.map(row => ({
         path: row.file_path.replace(/\\/g, '/'),
         userId: row.user_id,
-        username: row.username
+        username: row.username,
+        createdAt: row.created_at
       })));
     } catch (err) {
       console.error('Failed to read images from DB:', err);
@@ -1151,7 +1153,8 @@ async function startServer() {
       res.json(rows.map(row => ({
         path: row.file_path.replace(/\\/g, '/'),
         userId: row.user_id,
-        username: row.username
+        username: row.username,
+        createdAt: row.created_at
       })));
     } catch (err) {
       console.error('Failed to read videos from DB:', err);
