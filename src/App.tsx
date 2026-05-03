@@ -126,17 +126,6 @@ const JobItem = React.memo(({
                       {job.statusMessage}
                     </span>
                   )}
-                  {job.tasks.some(t => t.executor === 'js') && (
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.open('https://gemini.google.com/', '_blank');
-                      }}
-                      className="flex items-center gap-1 text-xs font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded border border-orange-100 hover:bg-orange-100 transition"
-                    >
-                      <ExternalLink size={12} /> 监视浏览器 (JS模式)
-                    </button>
-                  )}
                 </>
               )}
             </div>
@@ -1362,11 +1351,6 @@ function MainApp() {
     
     // setIsExecuting(true); // 不再禁用按钮，允许连续提交
     
-    // 如果包含 JS 模式，则提示用户并打开浏览器
-    if (validTasks.some(t => t.executor === 'js')) {
-      window.open('https://gemini.google.com/', '_blank');
-    }
-
     // 创建一个乐观UI的任务记录
     const tempId = `submitting_${Date.now()}`;
     const optimisticJob: Job = {
