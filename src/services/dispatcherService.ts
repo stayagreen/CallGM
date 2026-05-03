@@ -122,7 +122,6 @@ export class DispatcherService {
         try { 
           const dbConfig = JSON.parse(configRow.value);
           config = { ...config, ...dbConfig };
-          console.log(`[Dispatcher] Loaded config from DB: strategy=${config.dispatchStrategy}, concurrency=${config.globalConcurrency}`);
         } catch(e) {
           console.error("[Dispatcher] Failed to parse config from DB", e);
         }
@@ -132,16 +131,13 @@ export class DispatcherService {
             try { 
               const fileConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
               config = { ...config, ...fileConfig };
-              console.log(`[Dispatcher] Loaded config from File: strategy=${config.dispatchStrategy}`);
             } catch(e) {}
         }
       }
 
       // 2. Find pending tasks. Increase limit to allow scanning past blocked tasks.
       const pendingTasks = db.prepare('SELECT * FROM tasks WHERE status = ? ORDER BY created_at ASC LIMIT 50').all('pending') as any[];
-      if (pendingTasks.length > 0) {
-          console.log(`[Dispatcher] Found ${pendingTasks.length} pending tasks to process.`);
-      } else {
+      if (pendingTasks.length === 0) {
           this.isDispatching = false;
           return;
       }
@@ -154,8 +150,6 @@ export class DispatcherService {
       });
 
       const maxImage = config.globalConcurrency || 10;
-      
-      console.log(`[Dispatcher] Current running: Image=${runningImageCount}/${maxImage}`);
 
       for (const task of pendingTasks) {
          let dispatched = false;
@@ -167,10 +161,8 @@ export class DispatcherService {
          // CRITICAL: Video tasks ALWAYS go to server, regardless of worker availability
          // This simplifies the logic and reflects that workers don't have FFmpeg setups
          if (task.type === 'video') {
-             console.log(`[Dispatcher] Task ${task.id} is VIDEO, forcing server dispatch.`);
+             // VIDEO tasks always go to server
          } else {
-             console.log(`[Dispatcher] Task ${task.id} (${task.type}) strategy: ${strategy}`);
-             
              if (strategy === 'worker' || strategy === 'all') {
                 const idleWorkers = db.prepare('SELECT * FROM workers WHERE status = ?').all('idle') as any[];
                 const matchedWorker = idleWorkers.find(w => {
