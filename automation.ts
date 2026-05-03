@@ -1226,11 +1226,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
 
     // 封装地址栏注入逻辑 (终极无敌版：完美绕过 Chrome 粘贴保护 + 完美绕过中文输入法)
     const injectJsViaAddressBar = async (script: string) => {
-        // 0. 先按一下 Esc，确保清除掉任何可能遮挡的搜索框或弹窗
-        await keyboard.pressKey(Key.Escape);
-        await keyboard.releaseKey(Key.Escape);
-        await new Promise(r => setTimeout(r, 300));
-
         // 1. 聚焦地址栏 (Ctrl+L / Cmd+L)
         if (isMac) {
             await keyboard.pressKey(Key.LeftSuper, Key.L);
@@ -1277,8 +1272,16 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
 
     console.log('\n====================================================');
     console.log('准备开始【物理键鼠模拟】执行！');
+    console.log('正在自动唤起默认浏览器并打开 Gemini...');
     console.log('====================================================\n');
     
+    // 1. 使用系统命令自动打开/唤起浏览器，直接进入 Gemini
+    await open('https://gemini.google.com/');
+    
+    // 等待浏览器启动、页面加载并自动获取焦点
+    console.log('等待页面加载 (8秒)...');
+    await new Promise(r => setTimeout(r, 8000));
+
     for (const task of tasks) {
       if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
       if (!task.downloadedFiles) task.downloadedFiles = [];
@@ -1286,12 +1289,6 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
         if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
         jobProgress.set(filename, { completed: completedLoops + 0.1, total: totalLoops, status: 'running' });
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
-
-        // 0. 关键修复：在每个任务开始前，确保浏览器已经打开并处于最前端
-        console.log('正在确保浏览器已打开并处于最前端 (Gemini)...');
-        await open('https://gemini.google.com/');
-        // 给浏览器 3 秒时间响应唤起或加载
-        await new Promise(r => setTimeout(r, 3000));
         
         // 1.5 粘贴参考图
         if (task.images && task.images.length > 0) {
@@ -1544,8 +1541,26 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
         // 使用配置的任务间隔时间
         await new Promise(r => setTimeout(r, getRandomTime(config.taskMin, config.taskMax)));
 
-        // 之前这里有手动关闭和同步标签页的逻辑 (Ctrl+W/T)，现已移除以防止焦点丢失时误关其它程序。
-        // 下一个循环开始时会自动调用 open('https://gemini.google.com/') 确保处于正确的页面。
+        // 如果还有下一次循环，关闭当前标签页，重新打开新标签页
+        if (i < task.count - 1 || tasks.indexOf(task) < tasks.length - 1) {
+            console.log('🔄 关闭当前标签页，重新打开新标签页...');
+            if (isMac) {
+                await keyboard.pressKey(Key.LeftSuper, Key.W);
+                await keyboard.releaseKey(Key.LeftSuper, Key.W);
+                await new Promise(r => setTimeout(r, 1000));
+                await keyboard.pressKey(Key.LeftSuper, Key.T);
+                await keyboard.releaseKey(Key.LeftSuper, Key.T);
+            } else {
+                await keyboard.pressKey(Key.LeftControl, Key.W);
+                await keyboard.releaseKey(Key.LeftControl, Key.W);
+                await new Promise(r => setTimeout(r, 1000));
+                await keyboard.pressKey(Key.LeftControl, Key.T);
+                await keyboard.releaseKey(Key.LeftControl, Key.T);
+            }
+            await new Promise(r => setTimeout(r, 2000));
+            await open('https://gemini.google.com/');
+            await new Promise(r => setTimeout(r, 8000));
+        }
       }
     }
     
@@ -1576,7 +1591,23 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     return tasks;
   } finally {
     cancelledJobs.delete(filename);
-    // 移除自动关闭标签页逻辑，以防焦点偏移导致误关其它程序。
+    try {
+        // 只有当加载了 nutjs 且环境支持时才尝试关闭
+        const nutjs = await import('@nut-tree-fork/nut-js');
+        const { keyboard, Key } = nutjs;
+        const isMac = os.platform() === 'darwin';
+        
+        console.log('🏁 正在尝试关闭自动化任务使用的浏览器标签页...');
+        if (isMac) {
+            await keyboard.pressKey(Key.LeftSuper, Key.W);
+            await keyboard.releaseKey(Key.LeftSuper, Key.W);
+        } else {
+            await keyboard.pressKey(Key.LeftControl, Key.W);
+            await keyboard.releaseKey(Key.LeftControl, Key.W);
+        }
+    } catch (e) {
+        // 如果 nutjs 还没加载或者关闭失败，静默处理
+    }
     // jobProgress.delete(filename);
   }
 }
