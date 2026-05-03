@@ -137,7 +137,11 @@ export class DispatcherService {
 
       // 2. Find pending tasks. Increase limit to allow scanning past blocked tasks.
       const pendingTasks = db.prepare('SELECT * FROM tasks WHERE status = ? ORDER BY created_at ASC LIMIT 50').all('pending') as any[];
-      if (pendingTasks.length === 0) {
+      
+      if (pendingTasks.length > 0) {
+          // Only log if we found tasks to process (prevents spamming while idle)
+          console.log(`[Dispatcher] Found ${pendingTasks.length} pending tasks to process.`);
+      } else {
           this.isDispatching = false;
           return;
       }
@@ -227,7 +231,7 @@ export class DispatcherService {
                 fs.writeFileSync(path.join(userTaskDir, filename), JSON.stringify(taskData, null, 2));
 
                 db.prepare('UPDATE tasks SET status = ? WHERE id = ?').run('running', task.id);
-                console.log(`[Dispatcher] -> Dispatched task ${task.id} to LOCAL SERVER (${baseDirName}).`);
+                console.log(`[Dispatcher] -> Dispatched task ${task.id} (${task.type}) to LOCAL SERVER (${baseDirName}). Executor: ${taskData.tasks?.[0]?.executor || 'default'}`);
                 dispatched = true;
                 if (task.type !== 'video') runningImageCount++;
              } catch(e: any) {

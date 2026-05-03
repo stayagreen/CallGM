@@ -1276,7 +1276,13 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     console.log('====================================================\n');
     
     // 1. 使用系统命令自动打开/唤起浏览器，直接进入 Gemini
-    await open('https://gemini.google.com/');
+    console.log(`[JS-Engine] 🚀 正在通过系统命令启动 Gemini: https://gemini.google.com/`);
+    try {
+        await open('https://gemini.google.com/');
+        console.log(`[JS-Engine] ✅ 系统 open 命令已发送。`);
+    } catch (openErr: any) {
+        console.error(`[JS-Engine] ❌ 启动浏览器失败:`, openErr.message);
+    }
     
     // 等待浏览器启动、页面加载并自动获取焦点
     console.log('等待页面加载 (8秒)...');
