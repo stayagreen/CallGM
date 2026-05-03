@@ -950,9 +950,6 @@ async function startServer() {
         }
 
         if (action === 'delete' || action === 'pause_delete') {
-            // Add to cancelledJobs so running automation stops immediately
-            cancelledJobs.add(id);
-            
             // Need worker_id before delete
             const task = db.prepare('SELECT worker_id FROM tasks WHERE id = ?').get(id) as any;
             db.prepare('DELETE FROM tasks WHERE id = ?').run(id);

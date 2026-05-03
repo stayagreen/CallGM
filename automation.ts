@@ -812,9 +812,8 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
             if (t.status !== 'completed') t.status = 'failed';
         });
     } finally {
-        // 关键：清理已取消的任务标记，但不在此处重置全局 isRunning，交由 watcher 统一管理
         cancelledJobs.delete(filename);
-        jobProgress.delete(filename);
+        // jobProgress.delete(filename); // 移动到执行循环外，确保归档后才清理状态
     }
     return tasks;
 }
@@ -834,32 +833,27 @@ export async function executeBatch(input: any, filename: string, userId?: string
         return input;
     }
 
-    try {
-        // 1. 强力检测：如果子任务中任何一个指定了 js 模式，则整个批次进入物理模拟流程
-        const hasJsTask = tasks.some((t: any) => t.executor === 'js');
-        const executorToUse = hasJsTask ? 'js' : (tasks[0]?.executor || 'cdp');
-        
-        console.log(`📡 [Dispatcher] 引擎分发: [${executorToUse.toUpperCase()}] | 任务批次: ${filename} | 用户: ${userId || 'global'}`);
-        
-        let result;
-        if (executorToUse === 'js') {
-            result = await executeWithPhysicalSimulation(tasks, filename, userId);
-        } else {
-            result = await executeWithCDP(tasks, filename, userId);
-        }
+    // Attach systemConfig to each task so they can use it for download paths
+    if (input.systemConfig) {
+        tasks.forEach((t: any) => {
+            if (!t.systemConfig) t.systemConfig = input.systemConfig;
+        });
+    }
 
-        if (Array.isArray(input)) {
-            return result;
-        } else {
-            return { ...input, tasks: result };
-        }
-    } catch (criticalErr: any) {
-        console.error(`[Batch] ❌ 批次任务 ${filename} 发生不可恢复的严重错误:`, criticalErr.message);
-        // 确保任务状态被标记为失败，防止一直处于 running
-        try {
-           db.prepare('UPDATE tasks SET status = ?, status_message = ? WHERE id = ?').run('failed', criticalErr.message, filename);
-        } catch(e) {}
-        return input;
+    const firstExecutor = tasks[0]?.executor || 'cdp';
+    console.log(`📡 任务分发器: 正在使用 [${firstExecutor.toUpperCase()}] 引擎执行批次 ${filename} (User: ${userId || 'global'})`);
+    
+    let result;
+    if (firstExecutor === 'cdp') {
+        result = await executeWithCDP(tasks, filename, userId);
+    } else {
+        result = await executeWithPhysicalSimulation(tasks, filename, userId);
+    }
+
+    if (Array.isArray(input)) {
+        return result;
+    } else {
+        return { ...input, tasks: result };
     }
 }
 
@@ -1223,25 +1217,13 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
       }
   }
 
-  const isMac = os.platform() === 'darwin';
-  let nutjs: any;
-  let open: any;
-
   try {
-     console.log(`[JS-Engine] 🧪 正在初始化物理模拟依赖库...`);
-     // Dynamically import nut.js (using the maintained fork) and open
-     nutjs = await import('@nut-tree-fork/nut-js');
-     open = (await import('open')).default;
-     console.log(`[JS-Engine] ✅ 依赖库加载成功。`);
-  } catch (importErr: any) {
-     const errMsg = `[JS-Engine] ❌ 缺少物理模拟核心依赖 (@nut-tree-fork/nut-js 或 open): ${importErr.message}`;
-     console.error(errMsg);
-     throw new Error(errMsg);
-  }
+    // Dynamically import nut.js (using the maintained fork) and open
+    const nutjs = await import('@nut-tree-fork/nut-js');
+    const { keyboard, Key, mouse, screen, Point, clipboard } = nutjs;
+    const open = (await import('open')).default;
+    const isMac = os.platform() === 'darwin';
 
-  const { keyboard, Key, mouse, screen, Point, clipboard } = nutjs;
-
-  try {
     // 封装地址栏注入逻辑 (终极无敌版：完美绕过 Chrome 粘贴保护 + 完美绕过中文输入法)
     const injectJsViaAddressBar = async (script: string) => {
         // 1. 聚焦地址栏 (Ctrl+L / Cmd+L)
@@ -1294,13 +1276,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     console.log('====================================================\n');
     
     // 1. 使用系统命令自动打开/唤起浏览器，直接进入 Gemini
-    console.log(`[JS-Engine] 🚀 正在通过系统命令启动 Gemini: https://gemini.google.com/`);
-    try {
-        await open('https://gemini.google.com/');
-        console.log(`[JS-Engine] ✅ 系统 open 命令已发送。`);
-    } catch (openErr: any) {
-        console.error(`[JS-Engine] ❌ 启动浏览器失败:`, openErr.message);
-    }
+    await open('https://gemini.google.com/');
     
     // 等待浏览器启动、页面加载并自动获取焦点
     console.log('等待页面加载 (8秒)...');
