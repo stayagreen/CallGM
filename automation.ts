@@ -1221,9 +1221,7 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     // Dynamically import nut.js (using the maintained fork) and open
     const nutjs = await import('@nut-tree-fork/nut-js');
     const { keyboard, Key, mouse, screen, Point, clipboard } = nutjs;
-    const openModule = await import('open');
-    const open = openModule.default;
-    const apps = openModule.apps;
+    const open = (await import('open')).default;
     const isMac = os.platform() === 'darwin';
 
     // 封装地址栏注入逻辑 (终极无敌版：完美绕过 Chrome 粘贴保护 + 完美绕过中文输入法)
@@ -1290,20 +1288,10 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
 
         // 0. 关键修复：在每个任务开始前，确保浏览器已经打开并处于最前端
-        console.log('正在确保浏览器已打开并处于最前端 (Google Chrome - Gemini)...');
-        await open('https://gemini.google.com/', { app: { name: apps.chrome } });
-        
-        if (isMac) {
-            try {
-                const { exec } = await import('child_process');
-                exec('osascript -e \'tell application "Google Chrome" to activate\'');
-            } catch (e) {
-                console.error('Failed to focus Chrome on Mac:', e);
-            }
-        }
-        
-        // 给浏览器 6 秒时间响应唤起或加载 (稍微增加点时间，确保万无一失)
-        await new Promise(r => setTimeout(r, 6000));
+        console.log('正在确保浏览器已打开并处于最前端 (Gemini)...');
+        await open('https://gemini.google.com/');
+        // 给浏览器 3 秒时间响应唤起或加载
+        await new Promise(r => setTimeout(r, 3000));
         
         // 1.5 粘贴参考图
         if (task.images && task.images.length > 0) {

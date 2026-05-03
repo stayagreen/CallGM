@@ -1361,11 +1361,6 @@ function MainApp() {
     }
     
     // setIsExecuting(true); // 不再禁用按钮，允许连续提交
-    
-    // 如果包含 JS 模式，且不是移动端，则提示用户并打开浏览器
-    if (!isMobile && validTasks.some(t => t.executor === 'js')) {
-      window.open('https://gemini.google.com/', '_blank');
-    }
 
     // 创建一个乐观UI的任务记录
     const tempId = `submitting_${Date.now()}`;
