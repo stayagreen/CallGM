@@ -78,7 +78,11 @@ export function startVideoAutomationWatcher(getConcurrency: () => number) {
 
             const taskFiles: { path: string, filename: string }[] = [];
             for (const dir of allDirs) {
+                if (!fs.existsSync(dir)) continue;
                 const files = fs.readdirSync(dir).filter(f => f.endsWith('.json') && fs.statSync(path.join(dir, f)).isFile());
+                if (files.length > 0) {
+                    console.log(`[VideoEngine] 扫描到目录 ${dir} 下有 ${files.length} 个待处理任务`);
+                }
                 files.forEach(f => {
                     taskFiles.push({ path: path.join(dir, f), filename: f });
                 });

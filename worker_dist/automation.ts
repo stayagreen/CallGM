@@ -1082,7 +1082,20 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
                 
                 // 检查是否正在下载 (浏览器临时文件)
                 if (file.endsWith('.crdownload') || file.endsWith('.part') || file.endsWith('.tmp') || file.includes('.com.google.Chrome')) {
-                    isDownloading = true;
+                    try {
+                        const filePath = path.join(systemDownloadsDir, file);
+                        const stat = fs.statSync(filePath);
+                        const fileTime = Math.max(stat.ctimeMs, stat.mtimeMs, stat.birthtimeMs || 0);
+                        // 只关注点击/注入时间之前 120 秒到当前这段时间（以及之后）新产生的临时文件，忽略陈旧的残留临时文件
+                        if (fileTime > clickTime - 120000) {
+                            isDownloading = true;
+                        } else if (attempts === 1 || attempts % 10 === 0) {
+                            console.log(`[DEBUG] 忽略陈旧临时文件: ${file} (文件时间: ${new Date(fileTime).toLocaleTimeString()}, 点击时间: ${new Date(clickTime).toLocaleTimeString()})`);
+                        }
+                    } catch (e) {
+                        // 如果获取属性失败，可能文件正在写入，也算作正在下载
+                        isDownloading = true;
+                    }
                     continue;
                 }
 
