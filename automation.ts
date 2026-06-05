@@ -840,7 +840,7 @@ export async function executeBatch(input: any, filename: string, userId?: string
         });
     }
 
-    const firstExecutor = tasks[0]?.executor || 'cdp';
+    const firstExecutor = tasks[0]?.executor || 'js';
     console.log(`📡 任务分发器: 正在使用 [${firstExecutor.toUpperCase()}] 引擎执行批次 ${filename} (User: ${userId || 'global'})`);
     
     let result;

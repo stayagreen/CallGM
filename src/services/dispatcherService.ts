@@ -122,7 +122,7 @@ export class DispatcherService {
         try { 
           const dbConfig = JSON.parse(configRow.value);
           config = { ...config, ...dbConfig };
-          console.log(`[Dispatcher] Loaded config from DB: strategy=${config.dispatchStrategy}, concurrency=${config.globalConcurrency}`);
+          // console.log(`[Dispatcher] Loaded config from DB: strategy=${config.dispatchStrategy}, concurrency=${config.globalConcurrency}`);
         } catch(e) {
           console.error("[Dispatcher] Failed to parse config from DB", e);
         }
@@ -132,7 +132,7 @@ export class DispatcherService {
             try { 
               const fileConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
               config = { ...config, ...fileConfig };
-              console.log(`[Dispatcher] Loaded config from File: strategy=${config.dispatchStrategy}`);
+              // console.log(`[Dispatcher] Loaded config from File: strategy=${config.dispatchStrategy}`);
             } catch(e) {}
         }
       }

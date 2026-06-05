@@ -1215,7 +1215,7 @@ function MainApp() {
   const galleryCameraInputRef = useRef<HTMLInputElement>(null);
 
   const addTask = () => {
-    const newTask: Task = { id: Date.now().toString(), prompt: '', images: [], count: 1, download: true, executor: 'cdp' };
+    const newTask: Task = { id: Date.now().toString(), prompt: '', images: [], count: 1, download: true, executor: 'js' };
     setTasks([...tasks, newTask]);
     setActiveTaskId(newTask.id);
   };
@@ -1717,12 +1717,12 @@ function MainApp() {
         <div className="flex gap-6 mb-6 text-gray-700 items-center flex-wrap">
           <label className="flex items-center gap-2">模式: 
             <select 
-              value={activeTask?.executor || 'cdp'} 
+              value={activeTask?.executor || 'js'} 
               onChange={(e) => updateTask({ executor: e.target.value as 'js' | 'cdp' })}
               className="border border-gray-200 p-2 rounded-lg bg-gray-50 font-bold text-blue-600"
             >
-              <option value="cdp">CDP (推荐)</option>
-              <option value="js">JS (旧版)</option>
+              <option value="js">JS (旧版) [推荐]</option>
+              <option value="cdp">CDP</option>
             </select>
           </label>
           <label className="flex items-center gap-2">执行次数: <input type="number" value={activeTask?.count || 1} onChange={(e) => updateTask({ count: parseInt(e.target.value) })} className="w-20 border border-gray-200 p-2 rounded-lg" /></label>
