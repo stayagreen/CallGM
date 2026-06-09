@@ -1061,7 +1061,8 @@ async function startServer() {
     imageQuality: 'performance',
     videoConcurrency: 3,
     dispatchStrategy: 'all',
-    globalConcurrency: 3
+    globalConcurrency: 3,
+    headless: true
   };
 
   app.get('/api/config', (req, res) => {

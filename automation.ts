@@ -144,7 +144,12 @@ async function ensureBrowserLaunched() {
     }
 
     // 4. 正式启动浏览器
-    console.log(`🚀 重新启动 Chrome 后台实例...`);
+    const useHeadless = config.headless !== false;
+    if (useHeadless) {
+        console.log(`🚀 重新启动 Chrome 后台实例 (无头状态)...`);
+    } else {
+        console.log(`🚀 重新启动 Chrome 可见实例 (有头状态，可直接查看界面)...`);
+    }
 
     if (!fs.existsSync(chromePath)) {
         console.error(`❌ 找不到 Chrome 程序: ${chromePath}`);
@@ -156,9 +161,8 @@ async function ensureBrowserLaunched() {
         `--user-data-dir=${userDataDir}`,
         '--no-first-run',
         '--no-default-browser-check',
-        '--headless=new',
+        ...(useHeadless ? ['--headless=new', '--disable-gpu'] : []),
         '--window-size=1280,1024',
-        '--disable-gpu',
         '--disable-dev-shm-usage',
         '--no-sandbox',
         '--disable-setuid-sandbox',

@@ -824,6 +824,7 @@ function MainApp() {
     imageQuality: 'performance',
     dispatchStrategy: 'server',
     globalConcurrency: 3,
+    headless: true,
     openCodeApiKey: '',
     openCodeApiUrl: '',
     openCodeModel: ''
@@ -2726,6 +2727,18 @@ function MainApp() {
                       onChange={(e) => setSystemConfig({...systemConfig, systemDownloadsDir: e.target.value})}
                       placeholder="例如: C:\Users\YourName\Downloads"
                     />
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="headless"
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                      checked={systemConfig.headless !== false}
+                      onChange={(e) => setSystemConfig({...systemConfig, headless: e.target.checked})}
+                    />
+                    <label htmlFor="headless" className="font-semibold text-gray-700 cursor-pointer text-sm select-none">
+                      无头模式 (后台运行浏览器，取消勾选可在虚拟机/执行端显示浏览器界面)
+                    </label>
                   </div>
                 </div>
               </details>
