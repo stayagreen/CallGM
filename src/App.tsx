@@ -3030,6 +3030,11 @@ function MainApp() {
                 <button 
                   disabled={isGeneratingXhs}
                   onClick={async () => {
+                    const coverImage = viewingXhsNotes.taskData?.xhsCoverImage;
+                    if (!coverImage) {
+                      alert('请先在右侧上传或选择您的“小红书封面图”！本系统会把图片提供给大模型参考，生成更契合封面风格的爆款标题、正文与话题。');
+                      return;
+                    }
                     setIsGeneratingXhs(true);
                     try {
                       const response = await fetch('/api/videos/xhs/generate', {
@@ -3037,7 +3042,8 @@ function MainApp() {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                           storyboards: viewingXhsNotes.taskData?.storyboards || [],
-                          videoName: viewingXhsNotes.videoId.split('/').pop() || ''
+                          videoName: viewingXhsNotes.videoId.split('/').pop() || '',
+                          xhsCoverImage: coverImage
                         })
                       });
                       const resData = await response.json();

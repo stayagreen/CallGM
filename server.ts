@@ -1280,7 +1280,16 @@ async function startServer() {
 
   // Generate Xiaohongshu metadata using OpenCode API (MiniMax M3 model) with automatic Gemini fallback
   app.post('/api/videos/xhs/generate', requireAuth, checkAccess, async (req: any, res) => {
-    const { storyboards, videoName } = req.body;
+    const { storyboards, videoName, xhsCoverImage } = req.body;
+
+    if (!xhsCoverImage) {
+      return res.status(400).json({ error: '请先设置您的“小红书封面图”！本系统需要根据您的封面图片为您生成针对性的标题、正文与话题标签。' });
+    }
+
+    const imgData = getXhsCoverImageBase64(xhsCoverImage);
+    if (!imgData) {
+      return res.status(400).json({ error: '未能成功读取您的封面图片，请尝试重新设置或重新上传封面图片。' });
+    }
     
     // First, construct the prompt texts
     let storyboardTexts = '';
@@ -1294,7 +1303,9 @@ async function startServer() {
       storyboardTexts = `视频场景内容: 这是一个精美的创意视频作品`;
     }
 
-    const prompt = `你是一个小红书爆款文案专家。请根据以下提供的视频分镜画面描述，为我制作一个小红书发布的标题、正文和话题标签：
+    const prompt = `【核心要求：请务必深度结合我上传的“小红书封面图片”以及下方的视频分镜描述来创作。你生成的一切内容（包含标题、正文、情感基调与话题）都应该与这张封面图的视觉主题、画面主体、配色、情绪和文字标签高度契合，体现出根据封面图量身定制的原生质感。】
+
+你是一个小红书爆款文案专家。请结合我上传的封面图片，并根据以下提供的视频分镜画面描述，为我制作一个小红书发布的标题、正文和话题标签：
 
 视频分镜详情：
 ${storyboardTexts}
@@ -1369,7 +1380,23 @@ ${storyboardTexts}
         model: cleanModel,
         system: "You are a professional social media marketing assistant for Xiaohongshu.",
         messages: [
-          { role: 'user', content: prompt }
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: imgData.mimeType,
+                  data: imgData.data
+                }
+              },
+              {
+                type: 'text',
+                text: prompt
+              }
+            ]
+          }
         ],
         max_tokens: 4096,
         temperature: 0.7
@@ -1380,7 +1407,21 @@ ${storyboardTexts}
         model: cleanModel,
         messages: [
           { role: 'system', content: 'You are a professional social media marketing assistant for Xiaohongshu.' },
-          { role: 'user', content: prompt }
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: prompt
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${imgData.mimeType};base64,${imgData.data}`
+                }
+              }
+            ]
+          }
         ],
         temperature: 0.7
       };
@@ -1463,6 +1504,64 @@ ${storyboardTexts}
       parsed.xhsTitle = parsed.xhsTitle.substring(0, 20);
     }
     res.json({ success: true, ...parsed });
+  }
+
+  function getXhsCoverImageBase64(xhsCoverImage: string): { data: string; mimeType: string } | null {
+    if (!xhsCoverImage) return null;
+    
+    if (xhsCoverImage.startsWith('data:image/')) {
+      const matches = xhsCoverImage.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        return { mimeType: matches[1], data: matches[2] };
+      }
+      return null;
+    }
+
+    // Handle local path
+    let relativePath = xhsCoverImage;
+    if (relativePath.startsWith('/')) {
+      relativePath = relativePath.substring(1);
+    }
+
+    let fullPath = '';
+    if (relativePath.startsWith('uploads/')) {
+      fullPath = path.join(__dirname, relativePath);
+    } else if (relativePath.startsWith('downloads/')) {
+      fullPath = path.join(__dirname, relativePath);
+    } else {
+      const tryUploadPath = path.join(__dirname, 'uploads', relativePath);
+      if (fs.existsSync(tryUploadPath)) {
+        fullPath = tryUploadPath;
+      } else {
+        const tryDownloadPath = path.join(__dirname, 'downloads', relativePath);
+        if (fs.existsSync(tryDownloadPath)) {
+          fullPath = tryDownloadPath;
+        } else {
+          fullPath = path.join(__dirname, relativePath);
+        }
+      }
+    }
+
+    if (fs.existsSync(fullPath)) {
+      try {
+        const ext = path.extname(fullPath).toLowerCase().replace('.', '');
+        let mimeType = 'image/jpeg';
+        if (ext === 'png') mimeType = 'image/png';
+        else if (ext === 'webp') mimeType = 'image/webp';
+        else if (ext === 'gif') mimeType = 'image/gif';
+
+        const fileBuffer = fs.readFileSync(fullPath);
+        return {
+          mimeType,
+          data: fileBuffer.toString('base64'),
+        };
+      } catch (e) {
+        console.error('[AI-GEN] Error reading local cover image:', e);
+        return null;
+      }
+    }
+
+    return null;
   }
 
   // Delete a downloaded video
