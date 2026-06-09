@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -35,6 +35,8 @@ interface GalleryAsset {
   userId: number;
   username: string;
   createdAt?: string;
+  jobId?: string;
+  taskData?: VideoTask;
 }
 
 interface Template {
@@ -832,6 +834,8 @@ function MainApp() {
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
   const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
+  const [viewingXhsNotes, setViewingXhsNotes] = useState<{ videoId: string, jobId?: string, taskData: VideoTask } | null>(null);
+  const [showXhsGalleryPicker, setShowXhsGalleryPicker] = useState(false);
   const [processingGalleryImages, setProcessingGalleryImages] = useState<Set<string>>(new Set());
   const manualProcessingImages = useRef<Set<string>>(new Set());
   const [galleryUpdateToken, setGalleryUpdateToken] = useState<number>(Date.now());
@@ -2502,19 +2506,30 @@ function MainApp() {
                     </div>
                   </div>
                   <div className="mt-3 px-1">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between mb-1">
                       <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid.split('/').pop()}</span>
-                      <button
-                        onClick={async () => {
-                          if (!window.confirm('确定要删除这个视频吗？')) return;
-                          await fetch(`/api/videos/${vid}`, { method: 'DELETE' });
-                          fetchVideoGallery();
-                        }}
-                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                        title="彻底删除源文件"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        {(vidData.taskData || true) && (
+                          <button
+                            onClick={() => setViewingXhsNotes({ videoId: vidData.path, jobId: vidData.jobId, taskData: vidData.taskData || {} as VideoTask })}
+                            className="p-1 px-2 text-xs font-bold text-red-500 bg-red-50 hover:bg-red-100 rounded transition-colors"
+                            title="查看小红书笔记"
+                          >
+                            小红书
+                          </button>
+                        )}
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm('确定要删除这个视频吗？')) return;
+                            await fetch(`/api/videos/${vid}`, { method: 'DELETE' });
+                            fetchVideoGallery();
+                          }}
+                          className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                          title="彻底删除源文件"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                     {vidData.createdAt && (
                       <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-400 font-medium">
@@ -2929,6 +2944,180 @@ function MainApp() {
                 <a href={viewingVideo} download className="flex-1 max-w-[160px] bg-white text-gray-900 px-6 py-3 rounded-full font-bold hover:bg-gray-100 transition shadow-lg text-center">下载视频</a>
                 <button onClick={() => setViewingVideo(null)} className="flex-1 max-w-[160px] bg-gray-800 text-white px-6 py-3 rounded-full font-bold hover:bg-gray-700 transition shadow-lg">关闭预览</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {viewingXhsNotes && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999]" onClick={() => setViewingXhsNotes(null)}>
+          <div className="relative bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-red-50 p-4 border-b border-red-100 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-red-600 flex items-center gap-2"><Target size={24}/> 小红书笔记详情</h2>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => alert('即将接入 OpenCode API 自动生成图文...')}
+                  className="px-3 py-1.5 flex items-center gap-1 text-sm font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 transition-colors rounded-lg"
+                >
+                  <Sparkles size={16}/> AI 自动生成
+                </button>
+                <button onClick={() => setViewingXhsNotes(null)} className="text-red-400 hover:text-red-600 p-1"><X size={24}/></button>
+              </div>
+            </div>
+            
+            <div className="p-6 overflow-y-auto w-full grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">小红书标题</label>
+                  <input
+                    type="text"
+                    placeholder="填写吸引人的标题..."
+                    value={viewingXhsNotes.taskData?.xhsTitle || ''}
+                    onChange={e => setViewingXhsNotes({ ...viewingXhsNotes, taskData: { ...viewingXhsNotes.taskData, xhsTitle: e.target.value } })}
+                    className="w-full p-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-red-500 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">小红书话题</label>
+                  <input
+                    type="text"
+                    placeholder="#摄影 #日常 ..."
+                    value={viewingXhsNotes.taskData?.xhsTags || ''}
+                    onChange={e => setViewingXhsNotes({ ...viewingXhsNotes, taskData: { ...viewingXhsNotes.taskData, xhsTags: e.target.value } })}
+                    className="w-full p-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-red-500 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">小红书正文</label>
+                  <textarea
+                    rows={6}
+                    placeholder="填写笔记正文内容..."
+                    value={viewingXhsNotes.taskData?.xhsBody || ''}
+                    onChange={e => setViewingXhsNotes({ ...viewingXhsNotes, taskData: { ...viewingXhsNotes.taskData, xhsBody: e.target.value } })}
+                    className="w-full p-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-red-500 text-sm"
+                  ></textarea>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="text-sm font-bold text-gray-700">笔记封面图</label>
+                  <select 
+                    className="text-xs p-1.5 rounded border border-gray-200 bg-white"
+                    value={viewingXhsNotes.taskData?.xhsCoverAspectRatio || '3:4'}
+                    onChange={e => setViewingXhsNotes({ ...viewingXhsNotes, taskData: { ...viewingXhsNotes.taskData, xhsCoverAspectRatio: e.target.value as any } })}
+                  >
+                    <option value="3:4">3:4 (推荐)</option>
+                    <option value="4:3">4:3</option>
+                    <option value="9:16">9:16 (竖屏)</option>
+                    <option value="16:9">16:9 (横屏)</option>
+                  </select>
+                </div>
+                <div className="relative w-[200px] sm:w-[240px] mx-auto bg-gray-200 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 flex items-center justify-center flex-col shadow-sm cursor-pointer hover:border-red-400 group transition-all"
+                     onClick={() => setShowXhsGalleryPicker(true)}
+                     style={{
+                       aspectRatio: viewingXhsNotes.taskData?.xhsCoverAspectRatio === '16:9' ? '16/9' :
+                                    viewingXhsNotes.taskData?.xhsCoverAspectRatio === '4:3' ? '4/3' :
+                                    viewingXhsNotes.taskData?.xhsCoverAspectRatio === '9:16' ? '9/16' : '3/4'
+                     }}
+                >
+                  {viewingXhsNotes.taskData?.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards.length > 0 && viewingXhsNotes.taskData.storyboards[0].image) ? (
+                    <>
+                      <img 
+                        src={`/api/proxy?url=${encodeURIComponent(viewingXhsNotes.taskData.xhsCoverImage || viewingXhsNotes.taskData.storyboards[0].image)}`.replace('&', '%26')} 
+                        className="absolute inset-0 w-full h-full object-cover" 
+                        alt="Cover"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                        <p className="text-white font-bold text-sm bg-black/60 px-3 py-1.5 rounded-lg flex items-center gap-1"><ImageIcon size={14}/> 更换封面</p>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-gray-400 flex flex-col items-center">
+                      <ImageIcon size={32} className="mb-2 opacity-50" />
+                      <span className="text-xs font-medium">点击设置封面图</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-gray-100 bg-white flex justify-end gap-3 rounded-b-2xl">
+              <button 
+                onClick={() => setViewingXhsNotes(null)}
+                className="px-4 py-2 font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                disabled={isSavingConfig}
+              >
+                取消
+              </button>
+              <button 
+                onClick={async () => {
+                  try {
+                    setIsSavingConfig(true);
+                    await fetch('/api/videos/xhs', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ videoPath: viewingXhsNotes.videoId, taskData: viewingXhsNotes.taskData })
+                    });
+                    setViewingXhsNotes(null);
+                    fetchVideoGallery();
+                  } catch(e) {
+                    alert('保存失败');
+                  } finally {
+                    setIsSavingConfig(false);
+                  }
+                }}
+                className="px-4 py-2 font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors flex items-center gap-2"
+                disabled={isSavingConfig}
+              >
+                {isSavingConfig ? <div className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div> : <CheckCircle2 size={18}/>}
+                保存配置
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showXhsGalleryPicker && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[1000]">
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">选择笔记封面图</h2>
+              <button onClick={() => setShowXhsGalleryPicker(false)} className="text-gray-400 hover:text-gray-600"><X size={24}/></button>
+            </div>
+            
+            <div className="flex-grow overflow-y-auto mb-6 pr-2">
+              {galleryImages.length === 0 ? (
+                <div className="text-center py-12 text-gray-500">
+                  <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>图库中暂无图片</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                  {galleryImages.map(imgData => {
+                    const img = imgData.path;
+                    return (
+                    <div 
+                      key={img} 
+                      onClick={() => {
+                        const finalImageUrl = img.startsWith('uploads/') ? `/${img}` : `/downloads/${img}`;
+                        if (viewingXhsNotes) {
+                          setViewingXhsNotes({ ...viewingXhsNotes, taskData: { ...viewingXhsNotes.taskData, xhsCoverImage: finalImageUrl } });
+                        }
+                        setShowXhsGalleryPicker(false);
+                      }}
+                      className="relative aspect-square rounded-lg overflow-hidden border-2 cursor-pointer transition-all border-gray-200 hover:border-red-400"
+                    >
+                      <img 
+                        src={`/api/thumbnails/${img.startsWith('uploads/') ? 'uploads' : 'downloads'}/${img.replace(/^uploads\//, '')}?t=${galleryUpdateToken}`} 
+                        className="w-full h-full object-cover" 
+                        loading="lazy" 
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                    </div>
+                  )})}
+                </div>
+              )}
             </div>
           </div>
         </div>

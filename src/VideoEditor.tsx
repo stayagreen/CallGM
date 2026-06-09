@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon, Sparkles } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 
 export interface Storyboard {
@@ -20,6 +20,11 @@ export interface VideoTask {
   introAnimation: string;
   outroAnimation: string;
   bgm: string;
+  xhsTitle?: string;
+  xhsBody?: string;
+  xhsTags?: string;
+  xhsCoverImage?: string;
+  xhsCoverAspectRatio?: '3:4' | '9:16' | '4:3' | '16:9';
 }
 
 const ANIMATIONS = [
@@ -104,7 +109,7 @@ export default function VideoEditor({
 
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
-  const [galleryMode, setGalleryMode] = useState<'normal' | '4grid'>('normal');
+  const [galleryMode, setGalleryMode] = useState<'normal' | '4grid' | 'cover'>('normal');
   const [selectedGalleryGrids, setSelectedGalleryGrids] = useState<string[]>([]);
   const [activeStoryboardId, setActiveStoryboardId] = useState<string | null>(null);
   const [activeStoryboardIndex, setActiveStoryboardIndex] = useState(0);
@@ -342,6 +347,112 @@ export default function VideoEditor({
                 <button onClick={() => toggleBgm(task.bgm)} className="p-2.5 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200">
                   {playingBgm === task.bgm ? <Clock className="animate-spin" size={20}/> : <PlayCircle size={20}/>}
                 </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Xiaohongshu Metadata */}
+        <div className="bg-gray-50 p-5 rounded-xl border border-gray-100 mb-6">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-md font-bold text-gray-800 flex items-center gap-2">
+              <Target size={18} className="text-red-500" />
+              小红书发布配置
+            </h3>
+            <button 
+              onClick={() => alert('即将接入 OpenCode API 自动生成图文...')}
+              className="px-3 py-1.5 flex items-center gap-1 text-sm font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 transition-colors rounded-lg"
+            >
+              <Sparkles size={16}/> AI 自动生成
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">小红书标题</label>
+                <input
+                  type="text"
+                  placeholder="填写吸引人的标题..."
+                  value={task.xhsTitle || ''}
+                  onChange={e => updateTask({ xhsTitle: e.target.value })}
+                  className="w-full p-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-red-500 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">小红书话题 (空格或逗号分隔)</label>
+                <input
+                  type="text"
+                  placeholder="#摄影 #日常 ..."
+                  value={task.xhsTags || ''}
+                  onChange={e => updateTask({ xhsTags: e.target.value })}
+                  className="w-full p-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-red-500 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">小红书正文</label>
+                <textarea
+                  rows={4}
+                  placeholder="填写笔记正文内容..."
+                  value={task.xhsBody || ''}
+                  onChange={e => updateTask({ xhsBody: e.target.value })}
+                  className="w-full p-2 rounded-lg border border-gray-200 focus:ring-2 focus:ring-red-500 text-sm"
+                ></textarea>
+              </div>
+            </div>
+            
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <label className="text-sm font-bold text-gray-700">笔记封面图</label>
+                <select 
+                  className="text-xs p-1.5 rounded border border-gray-200 bg-white"
+                  value={task.xhsCoverAspectRatio || '3:4'}
+                  onChange={e => updateTask({ xhsCoverAspectRatio: e.target.value as any })}
+                >
+                  <option value="3:4">3:4 (推荐)</option>
+                  <option value="4:3">4:3</option>
+                  <option value="9:16">9:16 (竖屏)</option>
+                  <option value="16:9">16:9 (横屏)</option>
+                </select>
+              </div>
+              <div className="relative w-[180px] sm:w-[240px] mx-auto bg-gray-200 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 flex items-center justify-center flex-col shadow-sm cursor-pointer hover:border-red-400 group transition-all"
+                   onClick={() => {
+                     setGalleryMode('cover');
+                     setShowGallery(true);
+                   }}
+                   style={{
+                     aspectRatio: task.xhsCoverAspectRatio === '16:9' ? '16/9' :
+                                  task.xhsCoverAspectRatio === '4:3' ? '4/3' :
+                                  task.xhsCoverAspectRatio === '9:16' ? '9/16' : '3/4'
+                   }}
+              >
+                {task.xhsCoverImage || (task.storyboards.length > 0 && task.storyboards[0].image) ? (
+                  <>
+                    <img 
+                      src={getBustedUrl(task.xhsCoverImage || task.storyboards[0].image)} 
+                      className="absolute inset-0 w-full h-full object-cover" 
+                      alt="Cover"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                      <p className="text-white font-bold text-sm bg-black/60 px-3 py-1.5 rounded-lg flex items-center gap-1"><ImageIcon size={14}/> 更换封面</p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-gray-400 flex flex-col items-center">
+                    <ImageIcon size={32} className="mb-2 opacity-50" />
+                    <span className="text-xs font-medium">点击设置封面图</span>
+                    <span className="text-[10px] text-gray-400 mt-1">(默认第一镜)</span>
+                  </div>
+                )}
+              </div>
+              {task.xhsCoverImage && (
+                <div className="text-center mt-3">
+                   <button 
+                     onClick={(e) => { e.stopPropagation(); updateTask({ xhsCoverImage: '' }); }}
+                     className="text-xs text-red-500 hover:bg-red-50 px-3 py-1 rounded transition border border-red-100"
+                   >
+                     重置为默认 (第一分镜)
+                   </button>
+                </div>
               )}
             </div>
           </div>
@@ -691,6 +802,10 @@ export default function VideoEditor({
                         setSelectedGalleryGrids(prev => 
                           prev.includes(img) ? prev.filter(p => p !== img) : [...prev, img]
                         );
+                      } else if (galleryMode === 'cover') {
+                        const finalImageUrl = img.startsWith('uploads/') ? `/${img}` : `/downloads/${img}`;
+                        updateTask({ xhsCoverImage: finalImageUrl });
+                        setShowGallery(false);
                       } else {
                         const finalImageUrl = img.startsWith('uploads/') ? `/${img}` : `/downloads/${img}`;
                         // Find first empty storyboard or append

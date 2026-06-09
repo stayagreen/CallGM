@@ -468,6 +468,19 @@ async function startServer() {
     const userUploadsDir = path.join(getUserStoragePath(req, uploadsDir));
     if (!fs.existsSync(userUploadsDir)) fs.mkdirSync(userUploadsDir, { recursive: true });
 
+    if (taskData.xhsCoverImage && taskData.xhsCoverImage.startsWith('data:image')) {
+      const matches = taskData.xhsCoverImage.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+      if (matches) {
+        const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+        const base64Data = matches[2];
+        const filename = `ref_xhs_cover_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
+        const relativePath = path.join(user.id.toString(), filename);
+        fs.writeFileSync(path.join(userUploadsDir, filename), base64Data, 'base64');
+        try { db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'upload', `uploads/${relativePath}`); } catch(e) {}
+        taskData.xhsCoverImage = `/uploads/${user.id}/${filename}`;
+      }
+    }
+
     if (taskData.storyboards) {
       taskData.storyboards.forEach((sb: any) => {
         if (sb.image && sb.image.startsWith('data:image')) {
@@ -1137,7 +1150,7 @@ async function startServer() {
   app.get('/api/videos', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
 
-    let query = 'SELECT assets.*, users.username FROM assets LEFT JOIN users ON assets.user_id = users.id WHERE type = ?';
+    let query = 'SELECT assets.*, users.username, tasks.data AS task_data FROM assets LEFT JOIN users ON assets.user_id = users.id LEFT JOIN tasks ON assets.job_id = tasks.id WHERE assets.type = ?';
     let params: any[] = ['video'];
 
     if (user.role !== 'admin') {
@@ -1150,14 +1163,69 @@ async function startServer() {
     try {
       const rows = db.prepare(query).all(...params) as any[];
       // The frontend expects paths relative to /downloads/videos/
-      res.json(rows.map(row => ({
-        path: row.file_path.replace(/\\/g, '/'),
-        userId: row.user_id,
-        username: row.username,
-        createdAt: row.created_at
-      })));
+      res.json(rows.map(row => {
+        let taskData = null;
+        try { if (row.task_data) taskData = JSON.parse(row.task_data); } catch(e) {}
+        return {
+          path: row.file_path.replace(/\\/g, '/'),
+          userId: row.user_id,
+          username: row.username,
+          createdAt: row.created_at,
+          jobId: row.job_id,
+          taskData: taskData
+        };
+      }));
     } catch (err) {
       console.error('Failed to read videos from DB:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Save Xiaohongshu metadata for a video
+  app.post('/api/videos/xhs', requireAuth, checkAccess, (req: any, res) => {
+    const { videoPath, taskData } = req.body;
+    if (!videoPath) return res.status(400).json({ error: 'Video path required' });
+
+    try {
+      if (taskData.xhsCoverImage && taskData.xhsCoverImage.startsWith('data:image')) {
+        const matches = taskData.xhsCoverImage.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+        if (matches) {
+          const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+          const base64Data = matches[2];
+          const filename = `ref_xhs_cover_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
+          
+          const userUploadsDir = path.join(getUserStoragePath(req, uploadsDir));
+          if (!fs.existsSync(userUploadsDir)) fs.mkdirSync(userUploadsDir, { recursive: true });
+
+          const relativePath = path.join(req.session.user.id.toString(), filename);
+          fs.writeFileSync(path.join(userUploadsDir, filename), base64Data, 'base64');
+          try { db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(req.session.user.id, 'upload', `uploads/${relativePath}`); } catch(e) {}
+          taskData.xhsCoverImage = `/uploads/${req.session.user.id}/${filename}`;
+        }
+      }
+
+      const dbPath = videoPath.replace(/\//g, '\\');
+      const asset = db.prepare('SELECT * FROM assets WHERE file_path = ? OR file_path = ?').get(videoPath, dbPath) as any;
+      if (!asset) return res.status(404).json({ error: 'Video not found' });
+      
+      let jobId = asset.job_id;
+      if (!jobId) {
+        jobId = Date.now().toString() + Math.floor(Math.random()*1000);
+        db.prepare('UPDATE assets SET job_id = ? WHERE id = ?').run(jobId, asset.id);
+        db.prepare('INSERT INTO tasks (id, type, status, data, user_id, retry_count) VALUES (?, ?, ?, ?, ?, ?)').run(jobId, 'video_generation', 'completed', JSON.stringify(taskData), asset.user_id, 0);
+      } else {
+        const taskRow = db.prepare('SELECT data FROM tasks WHERE id = ?').get(jobId) as any;
+        let existingData = {};
+        if (taskRow && taskRow.data) {
+          try { existingData = JSON.parse(taskRow.data); } catch(e) {}
+        }
+        const newData = { ...existingData, ...taskData };
+        db.prepare('UPDATE tasks SET data = ? WHERE id = ?').run(JSON.stringify(newData), jobId);
+      }
+      
+      res.json({ success: true, jobId, coverImage: taskData.xhsCoverImage });
+    } catch (err) {
+      console.error('Failed to save XHS data:', err);
       res.status(500).json({ error: 'Internal server error' });
     }
   });
