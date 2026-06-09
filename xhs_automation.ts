@@ -94,7 +94,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
       expression: `(() => {
         const isLoginRedirect = window.location.href.includes('/login');
         const loginForm = !!document.querySelector('.login-box, input[placeholder*="手机"], .login-container');
-        const isPublishPage = window.location.href.includes('/publish-note');
+        const isPublishPage = window.location.href.includes('/publish') || window.location.href.includes('/publish-note');
         return { isLoginRedirect, loginForm, isPublishPage, url: window.location.href };
       })()`,
       returnByValue: true
@@ -104,7 +104,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     console.log(`[XHS 发布] 当前页面诊断:`, statusResult);
 
     if (statusResult.isLoginRedirect || statusResult.loginForm || !statusResult.isPublishPage) {
-      throw new Error(`未检测到登录状态，已跳转至登录页面。请在您的独立调试 Chrome 浏览器中手动完成小红书创作者页面登录，保证处于正常工作页面 (https://creator.xiaohongshu.com/publish/publish-note) 后重试。`);
+      throw new Error(`未检测到登录状态，已跳转至登录页面。请在您的独立调试 Chrome 浏览器中手动完成小红书创作者页面登录，保证处于正常工作页面 (https://creator.xiaohongshu.com/publish/publish?from=menu&target=video 或 https://creator.xiaohongshu.com/publish/publish-note) 后重试。`);
     }
 
     xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 35, message: '登录验证通过！正在定位视频与封面文件...' });
