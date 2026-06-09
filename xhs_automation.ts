@@ -85,39 +85,73 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     const { Page, Runtime, DOM, Input } = client;
     await Promise.all([Page.enable(), Runtime.enable(), DOM.enable()]);
 
-    // 定义拟真键盘打字操作，支持 keyDown + char + keyUp 完整流
-    const typeCharacter = async (char: string, code?: string) => {
-      let key = char;
-      let virtualKeyValue = char;
+    // 定义拟真键盘打字操作，支持 keyDown + char + keyUp 完整流，并且赋予精准的 virtual key codes!
+    const typeCharacter = async (char: string) => {
+      let code = '';
+      let windowsVirtualKeyCode = 0;
+      let modifiers = 0;
+      
       if (char === ' ') {
-        key = ' ';
-        virtualKeyValue = 'Space';
         code = 'Space';
+        windowsVirtualKeyCode = 32;
+      } else if (char === '#') {
+        code = 'Digit3';
+        windowsVirtualKeyCode = 51;
+        modifiers = 8; // Shift modifier
+      } else if (char === 'Enter') {
+        code = 'Enter';
+        windowsVirtualKeyCode = 13;
+      } else if (char >= 'a' && char <= 'z') {
+        code = `Key${char.toUpperCase()}`;
+        windowsVirtualKeyCode = char.toUpperCase().charCodeAt(0);
+      } else if (char >= 'A' && char <= 'Z') {
+        code = `Key${char}`;
+        windowsVirtualKeyCode = char.charCodeAt(0);
+        modifiers = 8; // Shift modifier
+      } else if (char >= '0' && char <= '9') {
+        code = `Digit${char}`;
+        windowsVirtualKeyCode = char.charCodeAt(0);
+      } else {
+        // 对于中文字符或常规字符，CDP 注入其 text 事件，windowsVirtualKeyCode 设为 229 (代表 IME 组成状态)
+        code = '';
+        windowsVirtualKeyCode = 229;
       }
+
       try {
+        // 1. 发送 keyDown
         await Input.dispatchKeyEvent({
           type: 'keyDown',
-          text: char,
-          unmodifiedText: char,
-          key: virtualKeyValue,
-          code: code
+          text: char === 'Enter' ? '\r' : char,
+          unmodifiedText: char === 'Enter' ? '\r' : char,
+          key: char === ' ' ? ' ' : (char === 'Enter' ? 'Enter' : char),
+          code: code,
+          windowsVirtualKeyCode: windowsVirtualKeyCode,
+          modifiers: modifiers
         });
-        await Input.dispatchKeyEvent({
-          type: 'char',
-          text: char,
-          unmodifiedText: char,
-          key: virtualKeyValue,
-          code: code
-        });
+        
+        // 2. 如果不是回车，则需要派发真实的 'char' 输入事件
+        if (char !== 'Enter') {
+          await Input.dispatchKeyEvent({
+            type: 'char',
+            text: char,
+            unmodifiedText: char,
+            key: char === ' ' ? ' ' : char,
+            code: code,
+            windowsVirtualKeyCode: windowsVirtualKeyCode,
+            modifiers: modifiers
+          });
+        }
+
+        // 3. 发送 keyUp
         await Input.dispatchKeyEvent({
           type: 'keyUp',
-          text: char,
-          unmodifiedText: char,
-          key: virtualKeyValue,
-          code: code
+          key: char === ' ' ? ' ' : (char === 'Enter' ? 'Enter' : char),
+          code: code,
+          windowsVirtualKeyCode: windowsVirtualKeyCode,
+          modifiers: modifiers
         });
       } catch (e) {
-        console.warn(`[CDP 打字] 发送字符 ${char} 遇到错误:`, e);
+        console.warn(`[CDP 打字] 发送字符 ${char} 故障:`, e);
       }
     };
 
@@ -227,18 +261,24 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     // 7. 处理封面图上传
     if (absCoverPath && fs.existsSync(absCoverPath)) {
-      // 视频加载与转码状态检测完，加上 4500ms 强制保护，防止编辑器因为视频流还没加载完而拒绝封面上传动作
+      // 视频加载与转码状态检测完，加上 5000ms 充分安全保护，保证小红书前端组件完全稳定
       console.log(`[XHS 发布] 安全阻尼：等待小红书封面控制组件激活就绪...`);
-      await new Promise(r => setTimeout(r, 4500));
+      await new Promise(r => setTimeout(r, 5000));
 
       try {
-        // 强制触发“上传/更换封面”动作
+        // 强制触发“设置封面”区域的 hover 和 click
         await Runtime.evaluate({
           expression: `(() => {
             try {
               const clickElement = (el) => {
                 if (!el) return;
                 try { el.focus(); } catch(e) {}
+                try {
+                  // 1. 发送高拟真悬浮 Mouse Hover 事件激活小红书的“修改封面”文字提示浮层
+                  el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+                  el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
+                  el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true }));
+                } catch(e) {}
                 try { el.click(); } catch(e) {}
                 try {
                   const mdown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
@@ -248,43 +288,96 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
                 } catch(e) {}
               };
 
-              // 查找所有类名或标签名中含“更换封面”、“上传封面”的组件
-              const selectors = [
-                'button.upload-cover', '.cover-upload', '.edit-cover', '.cover-btn', '.upload-wrapper',
-                '[class*="cover"] button', '[class*="cover"] div', '[class*="upload"] button', '[class*="cover"]'
-              ];
-              
-              for (const selector of selectors) {
-                const els = document.querySelectorAll(selector);
-                for (const el of els) {
-                  const txt = el.textContent || '';
-                  if (txt.includes('封面') || txt.includes('更换') || txt.includes('修改') || txt.includes('上传')) {
-                    clickElement(el);
-                    console.log('Clicked selector:', selector, txt);
+              // 方案 A：围绕“设置封面”/“视频封面”/“修改封面”文本向周围扩展探测点击点
+              const coverTitleLabels = Array.from(document.querySelectorAll('*')).filter(el => {
+                const txt = el.textContent ? el.textContent.trim() : '';
+                return txt === '设置封面' || txt === '视频封面' || txt === '更换封面' || txt === '编辑封面';
+              });
+
+              console.log('Detected cover labels count:', coverTitleLabels.length);
+
+              let clickedAnySuccess = false;
+              for (const header of coverTitleLabels) {
+                // 点击标签自身
+                clickElement(header);
+                
+                // 向上寻找父代容器，然后点击其底下的 canvas, img, video, .cover-preview, .upload-btn 或类名中含有 cover/upload 的交互元素
+                let current = header;
+                for (let d = 0; d < 4 && current; d++) {
+                  const interactives = Array.from(current.querySelectorAll('.cover-preview, [class*="cover"], .upload-btn, .upload-btn-wrapper, canvas, img, video, .card, [class*="card"], [class*="btn"], button, [role="button"]'));
+                  for (const target of interactives) {
+                    if (target !== header && target.textContent !== header.textContent) {
+                      clickElement(target);
+                      console.log('Clicked sub-interactive block inside parent:', target.tagName, target.className);
+                      clickedAnySuccess = true;
+                    }
                   }
+                  
+                  // 同时尝试点击同级的下一个兄弟节点及其子代
+                  let sibling = current.nextElementSibling;
+                  while (sibling) {
+                    clickElement(sibling);
+                    const siblingChildren = Array.from(sibling.querySelectorAll('.cover-preview, [class*="cover"], canvas, img, video, .card, button'));
+                    for (const sc of siblingChildren) {
+                      clickElement(sc);
+                    }
+                    sibling = sibling.nextElementSibling;
+                    clickedAnySuccess = true;
+                  }
+                  current = current.parentElement;
                 }
               }
 
-              // 按文字精准匹配
-              const textEls = Array.from(document.querySelectorAll('button, div, span, p, label')).filter(el => {
+              // 方案 B：直接关键字全局匹配任何类似于“更换封面”、“修改封面”、“编辑封面”、“选择封面”的组件
+              const directKeywords = ['修改封面', '更换封面', '设置封面', '编辑封面', '选择封面', '视频封面', '上传图片', '本地上传'];
+              const customEls = Array.from(document.querySelectorAll('*')).filter(el => {
+                if (el.children.length > 2) return false; // 仅聚焦叶子结点或叶子紧邻祖先，防大范围容器点击
                 const txt = el.textContent ? el.textContent.trim() : '';
-                return txt === '上传封面' || txt === '更换封面' || txt === '编辑封面' || txt === '选择封面' || txt === '修改封面' || txt === '上传图片' || txt === '本地上传';
+                return directKeywords.some(kw => txt === kw || txt.includes(kw));
               });
-              
-              for (const el of textEls) {
+
+              for (const el of customEls) {
                 clickElement(el);
-                console.log('Clicked exact text:', el.textContent);
+                console.log('Clicked matched keyword component directly:', el.textContent);
+                clickedAnySuccess = true;
               }
+
+              return clickedAnySuccess ? 'COVER_TRIGGER_ATTEMPTED' : 'NO_ELEMENT_CLICKED';
             } catch(e) {
-              console.error('Trigger cover upload error:', e);
+              return 'TRIGGER_ERROR: ' + e.message;
             }
-          })()`
+          })()`,
+          returnByValue: true
         });
 
-        // 稳妥等待 3500ms，给弹出选择封面/裁剪遮罩极其宽裕的渲染挂载时间
-        await new Promise(r => setTimeout(r, 3500));
+        // 稳妥等待 4000ms，让弹出选择封面/自定义图片上传的模态对话框极其宽裕地渲染挂载就绪
+        await new Promise(r => setTimeout(r, 4000));
 
-        // 绝招：通过 JavaScript 远程对象(RemoteObject)定位文件上传元素，100% 精确获取其 CDP NodeId
+        // 如果弹窗内需要点击“上传图片”或“本地上传”来唤醒图片输入框
+        await Runtime.evaluate({
+          expression: `(() => {
+            try {
+              const clickElement = (el) => {
+                if (!el) return;
+                try { el.focus(); } catch(e) {}
+                try { el.click(); } catch(e) {}
+              };
+              const modal = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"], [class*="cropper"], [role="dialog"]') || document;
+              const uploadTriggers = Array.from(modal.querySelectorAll('*')).filter(el => {
+                if (el.children.length > 1) return false;
+                const txt = el.textContent ? el.textContent.trim() : '';
+                return txt === '上传图片' || txt === '本地上传' || txt === '上传自定义封面' || txt === '上传自定义' || txt.includes('本地') || txt.includes('照片') || txt.includes('上传');
+              });
+              for (const trigger of uploadTriggers) {
+                clickElement(trigger);
+                console.log('Clicked upload trigger inside modal:', trigger.textContent);
+              }
+            } catch(e) {}
+          })()`
+        });
+        await new Promise(r => setTimeout(r, 1000));
+
+        // 通过 JavaScript 远程对象(RemoteObject)定位文件上传 input，100% 精确获取其 CDP NodeId
         const evalResult = await Runtime.evaluate({
           expression: `(() => {
             const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
@@ -318,10 +411,10 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           if (imageInputNodeId) {
             await DOM.setFileInputFiles({ files: [absCoverPath], nodeId: imageInputNodeId });
             console.log(`[XHS 发布] [CDP] 成功注入封面图片路径: ${absCoverPath}`);
-            // 给与 3500ms 等图片在浏览器中完全加载并在画布中解码出来
-            await new Promise(r => setTimeout(r, 3500));
+            // 给与 4500ms 等图片在浏览器中完全加载、渲染并在裁剪画板中生成
+            await new Promise(r => setTimeout(r, 4500));
 
-            // 对视频封面裁剪弹出框进行全方位确认点击
+            // 对封面设置弹出框进行确认点击（点击右下角确定按钮）
             const cropResult = await Runtime.evaluate({
               expression: `(() => {
                 try {
@@ -335,27 +428,30 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
                     } catch(e) {}
                   };
 
-                  // 1. 优先在这个裁剪模态弹窗的内部寻确定
-                  const modal = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"], [class*="cropper"]');
+                  // 1. 优先在这个封面弹窗/裁剪对话框的内部寻找确定
+                  const modal = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"], [class*="cropper"], [role="dialog"]');
                   if (modal) {
+                    // 自定义查找底部/右下角的确和完按钮，通常是后置的 button 元素
                     const btns = Array.from(modal.querySelectorAll('button, [role="button"], div, span')).filter(el => {
                       const t = el.textContent ? el.textContent.trim() : '';
-                      return t === '确定' || t === '完成' || t === '保存' || t === '裁剪并确定' || t === '确认' || t.includes('确') || t.includes('完') || t.includes('保存');
+                      return t === '确定' || t === '完成' || t === '保存' || t === '裁剪并确定' || t === '确认' || t === '确定并使用' || t.includes('确定') || t.includes('完成');
                     });
                     if (btns.length > 0) {
-                      const actualBtn = btns.find(b => b.tagName === 'BUTTON') || btns[0];
+                      // 优先选 button 标签
+                      const actualBtn = btns.find(b => b.tagName === 'BUTTON' && (b.textContent?.includes('确') || b.textContent?.includes('完'))) || btns.find(b => b.tagName === 'BUTTON') || btns[btns.length - 1];
                       clickElement(actualBtn);
                       return 'CLICKED_MODAL_CROP_CONFIRM_SUCCESS';
                     }
                   }
                   
-                  // 2. 备用：全局点击
-                  const globalBtns = Array.from(document.querySelectorAll('button')).filter(el => {
+                  // 2. 备用：全局点击最右下角的“确定”/“保存”
+                  const globalBtns = Array.from(document.querySelectorAll('button, [role="button"]')).filter(el => {
                     const t = el.textContent ? el.textContent.trim() : '';
                     return t === '确定' || t === '完成' || t === '保存' || t === '裁剪并确定' || t === '确认' || t === '确定并使用';
                   });
                   if (globalBtns.length > 0) {
-                    clickElement(globalBtns[0]);
+                    // 回归右下边判定：通常最后一个 button 就是弹窗的右下角确定按钮
+                    clickElement(globalBtns[globalBtns.length - 1]);
                     return 'CLICKED_GLOBAL_CROP_CONFIRM_SUCCESS';
                   }
                   return 'NO_CONFIRM_BTN_FOUND';
@@ -365,7 +461,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
               })()`,
               returnByValue: true
             });
-            console.log(`[XHS 发布] 封面遮罩/裁剪确认判定结果:`, cropResult.result?.value);
+            console.log(`[XHS 发布] 封面遮罩/裁剪右下角确定按钮点击判定结果:`, cropResult.result?.value);
             await new Promise(r => setTimeout(r, 2000));
           }
         } else {
@@ -509,29 +605,33 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             } catch(e) {}
           };
 
-          // 寻找包含“声明原创”的文本标识
-          const originalLabels = Array.from(document.querySelectorAll('span, label, p, div')).filter(el => {
+          // 1. 寻找匹配“声明原创”、“原创说明”、“原创声明”字样的标题/文字标签
+          const originalLabels = Array.from(document.querySelectorAll('*')).filter(el => {
+            if (el.children.length > 2) return false;
             const text = el.textContent ? el.textContent.trim() : '';
-            return text === '声明原创' || text.slice(0, 15) === '声明原创';
+            return text === '声明原创' || text === '原创声明' || text.slice(0, 10).includes('声明原创') || text.slice(0, 10).includes('原创声明');
           });
           
+          console.log('Found original claim text labels:', originalLabels.length);
+
           if (originalLabels.length > 0) {
-            // 点击文本本身
+            // 首先点击文字标签自身
             clickElement(originalLabels[0]);
             
-            // 寻找父级中的开关/复选框并同步点击
-            const parent = originalLabels[0].parentElement;
-            if (parent) {
-              const sw = parent.querySelector('input[type="checkbox"], .semi-switch, .semi-checkbox, .checkbox, [class*="switch"]');
-              if (sw) {
+            // 2. 在该文字所在的层级内向其祖先深度检查并点击 Switch 开关、或 Checkbox 交互控件
+            let parent = originalLabels[0].parentElement;
+            for (let d = 0; d < 3 && parent; d++) {
+              const sws = Array.from(parent.querySelectorAll('input[type="checkbox"], .semi-switch, .semi-checkbox, .checkbox, [class*="switch"], [class*="checkbox"], [role="switch"]'));
+              for (const sw of sws) {
                 clickElement(sw);
-                return 'ORIGINAL_LABEL_AND_SWITCH_CLICKED';
+                console.log('Clicked switch component under parent context:', sw.className);
               }
+              parent = parent.parentElement;
             }
-            return 'ORIGINAL_LABEL_CLICKED';
+            return 'ORIGINAL_LABEL_AND_PARENT_SWITCH_CLICKED';
           }
           
-          // 如果未按文字定位，尝试根据类名或 ID 自主定位
+          // 3. 兜底方案：如果文本找不到，尝试根据类名或 ID 直接定位 Switch 元素
           const originalSwitches = document.querySelectorAll('[class*="original"], [id*="original"]');
           if (originalSwitches.length > 0) {
             clickElement(originalSwitches[0]);
@@ -548,8 +648,8 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     console.log(`[XHS 发布] 原创声明开关触发尝试结果:`, originalTriggerResult.result?.value);
 
-    // 留出 1.8 秒充分安全时间，彻底等待小红书的“声明须知”对话框弹窗打开
-    await new Promise(r => setTimeout(r, 1800));
+    // 留出 2.0 秒充分安全时间，确保小红书的“声明须知”对话框弹窗完全挂载打开
+    await new Promise(r => setTimeout(r, 2000));
 
     // 8d. 勾选“声名须知”复选逻辑，并确认点击“声明原创”按钮
     const originalDialogResult = await Runtime.evaluate({
@@ -573,15 +673,15 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           if (checkboxLabel) {
             console.log('Found agreement text:', checkboxLabel.textContent);
             
-            // 3. 在其文字本身或它的父辈元素链条内搜寻复选选按钮，保障 100% 连带判定
+            // 3. 在其文字本身或它的父辈元素链条内搜寻复选项按钮，保障 100% 连带判定
             let foundCheckbox = null;
-            const selectors = ['.semi-checkbox', 'input[type="checkbox"]', '.checkbox', '[role="checkbox"]'];
+            const selectors = ['.semi-checkbox', 'input[type="checkbox"]', '.checkbox', '[role="checkbox"]', '[class*="checkbox"]', '[class*="check"]'];
             
             let current = checkboxLabel;
             for (let d = 0; d < 4 && current; d++) {
               for (const sel of selectors) {
                 const cbEl = current.querySelector(sel);
-                if (cbEl) {
+                if (cbEl && cbEl !== checkboxLabel) {
                   foundCheckbox = cbEl;
                   break;
                 }
@@ -590,10 +690,10 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
               current = current.parentElement;
             }
 
-            // 如果还是找不到，就用 checkboxLabel 自身做备用对象
+            // 如果找到独立的 checkbox 控件，我们就仅点击 checkbox，以防同时点击 label 和 checkbox 导致极速双击又取消勾选
             const targetCb = foundCheckbox || checkboxLabel;
             
-            // 4. 精准状态检查：如果通过类名或属性发现它已经是 checked，绝对不要重复点击导致取消勾选！
+            // 4. 精准状态检查：如果通过类名和属性发现已经是 checked/active 状态，千万不要重复点击！
             let isAlreadyChecked = false;
             if (targetCb.tagName === 'INPUT') {
               isAlreadyChecked = targetCb.checked;
@@ -611,11 +711,11 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
               clickElement(targetCb);
               console.log('Clicked agreement checkbox successfully!');
             } else {
-              console.log('Agreement checkbox was already checked. Skipped click to prevent uncheck.');
+              console.log('Agreement checkbox was already checked. Skipped click.');
             }
           } else {
-            // 最强鲁棒防线：如果搜不到特定文本，则把对话框下的全部未勾选 Checkbox 都勾上
-            const checkboxes = Array.from(dialog.querySelectorAll('input[type="checkbox"], .semi-checkbox, .checkbox'));
+            // 兜底方案：如果任一没有找到，就对所有的 checkbox 进行一次勾选动作
+            const checkboxes = Array.from(dialog.querySelectorAll('input[type="checkbox"], .semi-checkbox, .checkbox, [class*="checkbox"]'));
             checkboxes.forEach(cb => {
               try {
                 let isChecked = false;
@@ -631,18 +731,19 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             });
           }
 
-          // 等待勾选指令派发完成
+          // 稍加延迟，确认勾选转换时间
           return new Promise(resolve => {
             setTimeout(() => {
               try {
-                // 5. 寻找并点击二次确认按钮（如：“声明原创”、“确认声明”、“确认”、“确定”）
+                // 5. 寻找并点击二次确认按钮（如：“声明原创”、“确认声明”、“确认”、“确定”、“同意”）
                 const dialogContext = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"]') || document;
                 const confirmBtns = Array.from(dialogContext.querySelectorAll('button, [role="button"], span, div')).filter(el => {
                   const txt = el.textContent ? el.textContent.trim() : '';
-                  return txt === '声明原创' || txt === '确认声明' || txt === '确认' || txt === '确定';
+                  return txt === '声明原创' || txt === '确认声明' || txt === '确认' || txt === '确定' || txt === '同意' || txt.includes('确定');
                 });
 
                 if (confirmBtns.length > 0) {
+                  // 优先寻找 BUTTON 标签，若无则取首个
                   const targetBtn = confirmBtns.find(el => el.tagName === 'BUTTON') || confirmBtns[0];
                   clickElement(targetBtn);
                   resolve('DECLARED_ORIGINAL_DIALOG_CONFIRMED_SUCCESS');
@@ -652,7 +753,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
               } catch(e) {
                 resolve('CONFIRM_BTN_STEP_ERROR: ' + e.message);
               }
-            }, 300);
+            }, 500);
           });
         } catch(e) {
           return 'ERROR: ' + e.message;
