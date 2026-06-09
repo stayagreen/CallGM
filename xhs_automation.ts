@@ -29,10 +29,17 @@ function getAbsoluteFilePath(relativeOrAbsolute: string): string {
   const candidates = [
     path.join(process.cwd(), cleanPath),
     path.join(__dirname, cleanPath),
-    path.join(__dirname, 'uploads', cleanPath.replace(/^uploads\//, '')),
-    path.join(__dirname, 'download', cleanPath.replace(/^downloads\//, '').replace(/^download\//, '')),
+    // Standard uploads
     path.join(process.cwd(), 'uploads', cleanPath.replace(/^uploads\//, '')),
-    path.join(process.cwd(), 'download', cleanPath.replace(/^downloads\//, '').replace(/^download\//, ''))
+    path.join(__dirname, 'uploads', cleanPath.replace(/^uploads\//, '')),
+    // Standard download
+    path.join(process.cwd(), 'download', cleanPath.replace(/^downloads\//, '').replace(/^download\//, '')),
+    path.join(__dirname, 'download', cleanPath.replace(/^downloads\//, '').replace(/^download\//, '')),
+    // Subfolders under download (like videos, images)
+    path.join(process.cwd(), 'download', 'videos', cleanPath.replace(/^downloads\//, '').replace(/^download\//, '').replace(/^videos\//, '')),
+    path.join(__dirname, 'download', 'videos', cleanPath.replace(/^downloads\//, '').replace(/^download\//, '').replace(/^videos\//, '')),
+    path.join(process.cwd(), 'download', 'images', cleanPath.replace(/^downloads\//, '').replace(/^download\//, '').replace(/^images\//, '')),
+    path.join(__dirname, 'download', 'images', cleanPath.replace(/^downloads\//, '').replace(/^download\//, '').replace(/^images\//, ''))
   ];
   
   for (const candidate of candidates) {
@@ -63,6 +70,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
   let client: any = null;
   let currentTarget: any = null;
+  let shouldKeepTabOpen = false;
 
   try {
     // 2. 确保浏览器已打开
@@ -71,7 +79,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     // 3. 打开小红书后台发布页面
     // 用 9222 端口建立 CDP 连接
-    currentTarget = await CDP.New({ url: 'https://creator.xiaohongshu.com/publish/publish-note', port: 9222 });
+    currentTarget = await CDP.New({ url: 'https://creator.xiaohongshu.com/publish/publish?from=menu&target=video', port: 9222 });
     client = await CDP({ target: currentTarget.id, port: 9222 });
 
     const { Page, Runtime, DOM, Input } = client;
@@ -301,84 +309,25 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     });
 
     await new Promise(r => setTimeout(r, 2000));
-    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 90, message: '配置项填写完毕，正在执行最终发布动作...' });
+    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 90, message: '配置项填写完毕，已进入测试校对模式...' });
 
-    // 9. 执行发布点击
-    await Runtime.evaluate({
-      expression: `(() => {
-        try {
-          const btns = Array.from(document.querySelectorAll('button')).filter(el => {
-            const txt = el.textContent ? el.textContent.trim() : '';
-            return txt === '发布' || txt === '确认发布' || txt === '立即发布';
-          });
-          if (btns.length > 0) {
-            btns[0].click();
-            return 'CLICKED_PUBLISH';
-          }
-          return 'NO_PUBLISH_BUTTON_FOUND';
-        } catch(e) {
-          return e.message;
-        }
-      })()`,
-      returnByValue: true
+    // 9. 执行发布点击 (用户要求：发布点击动作先不要做，以便测试发布前的信息是否填写准确)
+    console.log(`[XHS 发布] [测试模式] 跳过最终的发布点击动作，保持浏览器页面处于打开状态以供校对。`);
+    
+    // 标记不要关闭当前调试标签页，使用户能在 Chrome 中实时校对并手动点击发布
+    shouldKeepTabOpen = true;
+
+    db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/publish/publish?from=menu&target=video', noteId);
+    
+    xhsProgressMap.set(noteId, { 
+      id: noteId, 
+      status: 'success', 
+      progress: 100, 
+      message: '🎉 [测试校对模式] 信息已在您的 Chrome 浏览器中填写完毕！请校对正确后手动点击“发布”按钮进行发布。' 
     });
 
-    console.log(`[XHS 发布] 已触发立即发布按钮，安全等待成功跳转...`);
-    
-    // 10. 循环诊断发布成败及回填页面链接
-    let publishSuccess = false;
-    let publishUrlResult = '';
-    
-    for (let check = 0; check < 15; check++) {
-      await new Promise(r => setTimeout(r, 2000));
-      
-      const checkResult = await Runtime.evaluate({
-        expression: `(() => {
-          const url = window.location.href;
-          // 若跳转至创作管理页面(或者包含 notes / creator/home)，说明发布已经提交或跳转
-          const published = url.includes('/creator/home') || url.includes('/posts') || document.body.innerText.includes('发布成功') || document.body.innerText.includes('审核中');
-          
-          let noteUrl = '';
-          if (published) {
-            // 尝试提取刚刚发布成功的笔记地址
-            const firstLink = document.querySelector('a[href*="/discovery/detail/"], a[href*="/explore/"]');
-            if (firstLink) {
-              noteUrl = firstLink.href;
-            }
-          }
-          return { published, noteUrl, currentUrl: url };
-        })()`,
-        returnByValue: true
-      });
-
-      const verify = checkResult.result?.value || { published: false, noteUrl: '', currentUrl: '' };
-      console.log(`[XHS 发布] 发布验证结果 (${check + 1}/15):`, verify);
-
-      if (verify.published) {
-        publishSuccess = true;
-        publishUrlResult = verify.noteUrl;
-        if (publishUrlResult) {
-          break; // 拿到了链接提前结束
-        }
-      }
-    }
-
-    if (publishSuccess) {
-      const finalUrl = publishUrlResult || 'https://creator.xiaohongshu.com/creator/home';
-      db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(finalUrl, noteId);
-      
-      xhsProgressMap.set(noteId, { 
-        id: noteId, 
-        status: 'success', 
-        progress: 100, 
-        message: '🎉 笔记已成功发布，并已记录发布记录。' 
-      });
-
-      console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 发布成功！回填链接: ${finalUrl}`);
-      return { success: true, url: finalUrl };
-    } else {
-      throw new Error("点击发布后，小红书系统未在限时内返回发布成功响应或未能检测到页面正常跳转（可能后台正在进行严格的安全限流拦截）。");
-    }
+    console.log(`[XHS 发布] ✅ [测试模式] 任务 ID: ${noteId} 信息填写及封面填充就绪！`);
+    return { success: true, url: 'https://creator.xiaohongshu.com/publish/publish?from=menu&target=video' };
 
   } catch (error: any) {
     console.error(`[XHS 发布] ❌ 任务 ID: ${noteId} 发生致命错误:`, error.message || error);
@@ -389,8 +338,8 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     
     return { success: false, error: errMessage };
   } finally {
-    // 关闭此标签页防溢出
-    if (client && currentTarget) {
+    // 关闭此标签页防溢出 (如果是测试模式下的成功状态，则保持打开以便用户进行手动校对)
+    if (client && currentTarget && !shouldKeepTabOpen) {
       try {
         await CDP.Close({ id: currentTarget.id, port: 9222 });
       } catch (e) {}

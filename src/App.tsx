@@ -3531,11 +3531,13 @@ function MainApp() {
                           try {
                             setIsSavingConfig(true);
                             // 1. First save metadata configuration
-                            await fetch('/api/videos/xhs', {
+                            const saveRes = await fetch('/api/videos/xhs', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ videoPath: viewingXhsNotes.videoId, taskData: viewingXhsNotes.taskData })
                             });
+                            const saveResult = await saveRes.json();
+                            const resolvedCoverPath = saveResult.coverImage || viewingXhsNotes.taskData.xhsCoverImage;
                             
                             // 2. Trigger Publish API
                             const res = await fetch('/api/videos/xhs/publish', {
@@ -3543,7 +3545,7 @@ function MainApp() {
                               headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({
                                 videoPath: viewingXhsNotes.videoId,
-                                coverPath: viewingXhsNotes.taskData.xhsCoverImage,
+                                coverPath: resolvedCoverPath,
                                 title: viewingXhsNotes.taskData.xhsTitle,
                                 content: viewingXhsNotes.taskData.xhsBody,
                                 tags: viewingXhsNotes.taskData.xhsTags,
