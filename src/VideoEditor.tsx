@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon, Sparkles, Crop } from 'lucide-react';
 import ImageEditor from './ImageEditor';
+import { ImageCropper } from './components/ImageCropper';
 
 export interface Storyboard {
   id: string;
@@ -114,6 +115,7 @@ export default function VideoEditor({
   const [activeStoryboardId, setActiveStoryboardId] = useState<string | null>(null);
   const [activeStoryboardIndex, setActiveStoryboardIndex] = useState(0);
   const [editingImage, setEditingImage] = useState<{ id: string, image: string } | null>(null);
+  const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
 
   const getBustedUrl = (url: string) => {
     if (!url || !galleryUpdateToken || (!url.startsWith('/downloads/') && !url.startsWith('/api/thumbnails/'))) return url;
@@ -499,8 +501,36 @@ export default function VideoEditor({
                   </div>
                 )}
               </div>
+              <div className="flex justify-center gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setGalleryMode('cover');
+                    setShowGallery(true);
+                  }}
+                  className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-gray-200 shadow-sm"
+                >
+                  <ImageIcon size={13} /> 更换封面
+                </button>
+                {(task.xhsCoverImage || (task.storyboards.length > 0 && task.storyboards[0].image)) && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const url = task.xhsCoverImage || (task.storyboards.length > 0 && task.storyboards[0]?.image);
+                      if (url) {
+                        setCropperImageSrc(url);
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-600 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-red-200 shadow-sm"
+                  >
+                    <Crop size={13} /> 裁剪封面
+                  </button>
+                )}
+              </div>
               {task.xhsCoverImage && (
-                <div className="text-center mt-3">
+                <div className="text-center mt-2">
                    <button 
                      onClick={(e) => { e.stopPropagation(); updateTask({ xhsCoverImage: '' }); }}
                      className="text-xs text-red-500 hover:bg-red-50 px-3 py-1 rounded transition border border-red-100"
@@ -859,7 +889,7 @@ export default function VideoEditor({
                         );
                       } else if (galleryMode === 'cover') {
                         const finalImageUrl = img.startsWith('uploads/') ? `/${img}` : `/downloads/${img}`;
-                        updateTask({ xhsCoverImage: finalImageUrl });
+                        setCropperImageSrc(finalImageUrl);
                         setShowGallery(false);
                       } else {
                         const finalImageUrl = img.startsWith('uploads/') ? `/${img}` : `/downloads/${img}`;
@@ -993,6 +1023,18 @@ export default function VideoEditor({
             </div>
           </div>
         </div>
+      )}
+
+      {cropperImageSrc && (
+        <ImageCropper
+          imageSrc={cropperImageSrc}
+          aspectRatio={task.xhsCoverAspectRatio || '3:4'}
+          onClose={() => setCropperImageSrc(null)}
+          onCropComplete={(base64Url) => {
+            updateTask({ xhsCoverImage: base64Url });
+            setCropperImageSrc(null);
+          }}
+        />
       )}
     </div>
   );
