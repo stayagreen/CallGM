@@ -115,17 +115,9 @@ async function ensureBrowserLaunched() {
         } catch (e) {}
     }
 
-    // 2. 强制清理现有的 Chrome 进程 (避免占用冲突)
-    console.log(`🧹 正在执行强制进程清理，确保启动环境纯净...`);
+    // 2. 强制进程清理逻辑已按照用户要求取消，避免关闭非关联的 Chrome 浏览器
+    console.log(`🧹 已跳过强制 Chrome 进程清理流程，保护用户其他活动的 Chrome 实例。`);
     try {
-        const isWin = process.platform === 'win32';
-        const killCmd = isWin ? 'taskkill /F /IM chrome.exe /T' : 'pkill -f chrome';
-        try {
-            execSync(killCmd, { stdio: 'ignore' });
-            console.log(`   👉 已尝试清理 Chrome 相关线程。`);
-        } catch (e) {
-            // 如果本来就没进程，taskkill 会报错，这里忽略
-        }
 
         // 3. 额外清理 UserData 锁文件 (防止锁死崩溃)
         const lockFile = path.join(userDataDir, 'SingletonLock');
@@ -363,17 +355,8 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                 let client: any = null;
 
                 try {
-                    // 0. 强力清理：在开启每一个新任务标签页前，先强制关闭所有已存在的页面标签，确保环境纯净
-                    try {
-                        const targets = await CDP.List({ port: 9222 });
-                        for (const t of targets) {
-                            if (t.type === 'page') {
-                                await CDP.Close({ id: t.id, port: 9222 });
-                            }
-                        }
-                    } catch (e) {
-                        // 忽略清理阶段可能的连接报错
-                    }
+                    // 0. 页标签清理已按照用户要求关闭，不再强行关闭其他已经打开的页面
+                    // (取消了多余的 Chrome Tab 关闭，避免干扰用户正常的浏览及生图进程)
 
                     // 1. 创建并连接新标签页
                     currentTarget = await CDP.New({ url: 'https://gemini.google.com/', port: 9222 });
@@ -407,11 +390,36 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                         console.warn(`${stepPrefix} ⚠️ 设置视口/下载行为失败:`, e.message);
                     }
 
-                    console.log(`${stepPrefix} 🌐 新标签页已就绪，正在等待页面加载 (8秒)...`);
-                    for (let wait = 0; wait < 8; wait++) {
-                        await new Promise(r => setTimeout(r, 1000));
+                    console.log(`${stepPrefix} 🌐 新标签页已就绪，正在等待页面完全加载 (智能检测模式)...`);
+                    let pageLoaded = false;
+                    const maxWaitSeconds = 40;
+                    for (let wait = 0; wait < maxWaitSeconds; wait++) {
                         if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
+                        try {
+                            const checkLoad = await Runtime.evaluate({
+                                expression: `(() => {
+                                    const ready = document.readyState === 'complete';
+                                    const hasInput = !!document.querySelector('div[contenteditable="true"], textarea, rich-textarea, main [role="textbox"]');
+                                    return { ready, hasInput };
+                                })()`,
+                                returnByValue: true
+                            });
+                            const status = checkLoad.result?.value || { ready: false, hasInput: false };
+                            if (status.ready && status.hasInput) {
+                                console.log(`${stepPrefix} 🎉 检测到页面完全加载且输入框已就绪！用时 ${wait + 1} 秒`);
+                                pageLoaded = true;
+                                break;
+                            }
+                        } catch (e) {
+                            // 忽略
+                        }
+                        await new Promise(r => setTimeout(r, 1000));
                     }
+                    if (!pageLoaded) {
+                        console.log(`${stepPrefix} ⚠️ 等待超时，可能网络较慢，尝试强制进入后续操作...`);
+                    }
+                    // 加载完成后，额外等待 1.5 秒确保 UI 逻辑及事件监听器完全加载完毕，防止粘滞
+                    await new Promise(r => setTimeout(r, 1500));
                     await simulateIdleMovement(Input);
 
                     // 2. 诊断登录状态
