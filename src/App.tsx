@@ -822,6 +822,8 @@ function MainApp() {
     downloadRetries: 3,
     videoConcurrency: 3,
     imageQuality: 'performance',
+    watermarkRoiWPercent: 15,
+    watermarkRoiHPercent: 10,
     dispatchStrategy: 'server',
     globalConcurrency: 3,
     headless: true,
@@ -2781,6 +2783,28 @@ function MainApp() {
                         <option value="performance">平衡</option>
                         <option value="highQuality">保真</option>
                       </select>
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">去水印探测区域宽度占比 (%):</label>
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="100" 
+                        className="w-full p-2 border border-gray-200 rounded-lg outline-none font-medium text-gray-800" 
+                        value={systemConfig.watermarkRoiWPercent !== undefined ? systemConfig.watermarkRoiWPercent : 15} 
+                        onChange={(e) => setSystemConfig({...systemConfig, watermarkRoiWPercent: parseInt(e.target.value) || 0})} 
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">去水印探测区域高度占比 (%):</label>
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="100" 
+                        className="w-full p-2 border border-gray-200 rounded-lg outline-none font-medium text-gray-800" 
+                        value={systemConfig.watermarkRoiHPercent !== undefined ? systemConfig.watermarkRoiHPercent : 10} 
+                        onChange={(e) => setSystemConfig({...systemConfig, watermarkRoiHPercent: parseInt(e.target.value) || 0})} 
+                      />
                     </div>
                   </div>
                 </div>

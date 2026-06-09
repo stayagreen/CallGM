@@ -9,7 +9,9 @@ import sharp from 'sharp';
  */
 export async function autoInpaint(
   filePath: string, 
-  mode: 'performance' | 'highQuality' | 'fastSpeed' = 'performance'
+  mode: 'performance' | 'highQuality' | 'fastSpeed' = 'performance',
+  roiWPercent?: number,
+  roiHPercent?: number
 ): Promise<boolean> {
   const fileName = path.basename(filePath);
   console.log(`🔍 [去水印-WASM] 开始处理文件: ${fileName}`);
@@ -94,15 +96,45 @@ export async function autoInpaint(
     const h = src.rows;
     const w = src.cols;
 
-    // 3. ROI 区域锁定 (稍微放宽一点点，确保不同比例下的水印都在范围内)
-    const roiW = Math.floor(w * 0.15); 
-    const roiH = Math.floor(h * 0.10); 
-    const roiX = w - roiW - Math.floor(w * 0.01);
-    const roiY = h - roiH - Math.floor(h * 0.01);
+    // 3. ROI 区域锁定 (可以使用动态配置好的百分比，以便用户自主调整)
+    let widthRatio = 0.15;
+    let heightRatio = 0.10;
+
+    try {
+      let finalWPercent = roiWPercent;
+      let finalHPercent = roiHPercent;
+
+      if (finalWPercent === undefined || finalHPercent === undefined) {
+        const configPath = path.join(process.cwd(), 'data', 'config.json');
+        if (fs.existsSync(configPath)) {
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+          if (finalWPercent === undefined && config.watermarkRoiWPercent !== undefined) {
+            finalWPercent = Number(config.watermarkRoiWPercent);
+          }
+          if (finalHPercent === undefined && config.watermarkRoiHPercent !== undefined) {
+            finalHPercent = Number(config.watermarkRoiHPercent);
+          }
+        }
+      }
+
+      if (finalWPercent !== undefined && !isNaN(finalWPercent)) {
+        widthRatio = finalWPercent / 100;
+      }
+      if (finalHPercent !== undefined && !isNaN(finalHPercent)) {
+        heightRatio = finalHPercent / 100;
+      }
+    } catch (err) {
+      console.warn(`[去水印-WASM] 读取 ROI 配置出错 (使用默认 15% / 10%):`, err);
+    }
+
+    const roiW = Math.max(10, Math.min(w, Math.floor(w * widthRatio)));
+    const roiH = Math.max(10, Math.min(h, Math.floor(h * heightRatio)));
+    const roiX = Math.max(0, w - roiW - Math.floor(w * 0.01));
+    const roiY = Math.max(0, h - roiH - Math.floor(h * 0.01));
     
     const roiRect = new cvInst.Rect(roiX, roiY, roiW, roiH);
     let roi = src.roi(roiRect);
-    console.log(`📍 [星型探测] ROI 区域: ${roiW}x${roiH} @ (${roiX}, ${roiY})`);
+    console.log(`📍 [星型探测] ROI 区域: ${roiW}x${roiH} (占比: ${(widthRatio * 100).toFixed(0)}% x ${(heightRatio * 100).toFixed(0)}%) @ (${roiX}, ${roiY})`);
 
     // 4. 预处理
     let gray = new cvInst.Mat();

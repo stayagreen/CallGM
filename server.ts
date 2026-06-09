@@ -1059,6 +1059,8 @@ async function startServer() {
     downloadCheckDelay: 1,
     downloadRetries: 3,
     imageQuality: 'performance',
+    watermarkRoiWPercent: 15,
+    watermarkRoiHPercent: 10,
     videoConcurrency: 3,
     dispatchStrategy: 'all',
     globalConcurrency: 3,
