@@ -971,6 +971,7 @@ function MainApp() {
   const [isMobile, setIsMobile] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [isGeneratingXhs, setIsGeneratingXhs] = useState(false);
   const [submittingJobs, setSubmittingJobs] = useState<Job[]>([]);
   const [submittingVideoJobs, setSubmittingVideoJobs] = useState<Job[]>([]);
   const [uploadingCount, setUploadingCount] = useState(0);
@@ -3001,10 +3002,42 @@ function MainApp() {
               <h2 className="text-xl font-bold text-red-600 flex items-center gap-2"><Target size={24}/> 小红书笔记详情</h2>
               <div className="flex items-center gap-2">
                 <button 
-                  onClick={() => alert('即将接入 OpenCode API 自动生成图文...')}
-                  className="px-3 py-1.5 flex items-center gap-1 text-sm font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 transition-colors rounded-lg"
+                  disabled={isGeneratingXhs}
+                  onClick={async () => {
+                    setIsGeneratingXhs(true);
+                    try {
+                      const response = await fetch('/api/videos/xhs/generate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          storyboards: viewingXhsNotes.taskData?.storyboards || [],
+                          videoName: viewingXhsNotes.videoId.split('/').pop() || ''
+                        })
+                      });
+                      const resData = await response.json();
+                      if (!response.ok) {
+                        throw new Error(resData.error || 'AI 自动生成错误');
+                      }
+                      setViewingXhsNotes({
+                        ...viewingXhsNotes,
+                        taskData: {
+                          ...viewingXhsNotes.taskData,
+                          xhsTitle: resData.xhsTitle || '',
+                          xhsBody: resData.xhsBody || '',
+                          xhsTags: resData.xhsTags || ''
+                        }
+                      });
+                    } catch (e: any) {
+                      console.error(e);
+                      alert(e.message || 'AI 生成失败，请重试');
+                    } finally {
+                      setIsGeneratingXhs(false);
+                    }
+                  }}
+                  className="px-3 py-1.5 flex items-center gap-1 text-sm font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 transition-colors rounded-lg disabled:opacity-50"
                 >
-                  <Sparkles size={16}/> AI 自动生成
+                  <Sparkles size={16} className={isGeneratingXhs ? "animate-spin text-indigo-500" : ""}/>
+                  {isGeneratingXhs ? "生成中..." : "AI 自动生成"}
                 </button>
                 <button onClick={() => setViewingXhsNotes(null)} className="text-red-400 hover:text-red-600 p-1"><X size={24}/></button>
               </div>

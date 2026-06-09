@@ -1230,6 +1230,142 @@ async function startServer() {
     }
   });
 
+  // Generate Xiaohongshu metadata using OpenCode API (MiniMax M3 model)
+  app.post('/api/videos/xhs/generate', requireAuth, checkAccess, async (req: any, res) => {
+    const { storyboards, videoName } = req.body;
+    
+    try {
+      // Load OpenCode API Key from config
+      let openCodeApiKey = '';
+      if (fs.existsSync(configPath)) {
+        try {
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+          openCodeApiKey = config.openCodeApiKey || '';
+        } catch (e) {}
+      }
+
+      if (!openCodeApiKey) {
+        return res.status(400).json({ error: '请先在系统设置中配置 OpenCode API Key 并保存' });
+      }
+
+      // Build specific storyboards list or fall back to videoName
+      let storyboardTexts = '';
+      if (storyboards && Array.isArray(storyboards) && storyboards.length > 0) {
+        storyboardTexts = storyboards.map((s: any, idx: number) => {
+          return `分镜 ${idx + 1}: ${s.text || '（无描述）'}`;
+        }).join('\n');
+      } else if (videoName) {
+        storyboardTexts = `视频名称/场景内容: ${videoName}`;
+      } else {
+        storyboardTexts = `视频场景内容: 这是一个精美的创意视频作品`;
+      }
+
+      const model = 'abab6.5s-chat';
+
+      const prompt = `你是一个小红书爆款文案专家。请根据以下提供的视频分镜画面描述，为我制作一个小红书发布的标题、正文和话题标签：
+
+视频分镜详情：
+${storyboardTexts}
+
+请遵循以下极严限制：
+1. **标题**（xhsTitle）：标题必须短小精悍且极具吸引力（例如使用爆款问句、感叹句、情绪词、emoji），且**总字数（包含文字、标点、特殊符号和emoji）绝对不能超过20字**（严格 ≤ 20字）。
+2. **正文**（xhsBody）：正文要求生动活泼，语气要像小红书个人博主日常分享，分段清晰，善用表情符号/emoji。**绝对不能出现任何营销、导流、推广、购买、加好友、链接、加微信等政治敏感/营销广告引导语**，以天然真实原生态分享为主。
+3. **话题**（xhsTags）：精选**刚好 10 个**极具热度和深度相关的爆款小红书话题。格式为“#话题1 #话题2 ...”，每个话题带#号，空格隔开，严格返回正好 10 个，不能多也不能少。
+
+请使用以下标准的纯JSON格式返回，不需要有任何其他解释文字或Markdown包裹：
+{
+  "xhsTitle": "20字内极富吸引力小红书标题",
+  "xhsBody": "元气活泼的小红书正文...",
+  "xhsTags": "#话题1 #话题2 #话题3 #话题4 #话题5 #话题6 #话题7 #话题8 #话题9 #话题10"
+}`;
+
+      const apiResponse = await fetch('https://api.opencode.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openCodeApiKey}`
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            { role: 'system', content: 'You are a professional social media marketing assistant for Xiaohongshu.' },
+            { role: 'user', content: prompt }
+          ],
+          temperature: 0.7,
+          response_format: { type: 'json_object' }
+        })
+      });
+
+      if (!apiResponse.ok) {
+        const errText = await apiResponse.text();
+        console.error('OpenCode API error response:', errText);
+        // Retry fallback with minimax/abab6.5s-chat model id
+        if (apiResponse.status === 404 || apiResponse.status === 400) {
+          console.log('Retrying with minimax/abab6.5s-chat...');
+          const retryResponse = await fetch('https://api.opencode.ai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${openCodeApiKey}`
+            },
+            body: JSON.stringify({
+              model: 'minimax/abab6.5s-chat',
+              messages: [
+                { role: 'system', content: 'You are an expert social media assistant.' },
+                { role: 'user', content: prompt }
+              ],
+              temperature: 0.7
+            })
+          });
+          if (retryResponse.ok) {
+            const data = await retryResponse.json();
+            return parseAndRespond(data, res);
+          }
+        }
+        return res.status(apiResponse.status).json({ error: `大模型 API 调用失败: (状态码 ${apiResponse.status})` });
+      }
+
+      const data = await apiResponse.json();
+      return parseAndRespond(data, res);
+
+    } catch (err: any) {
+      console.error('Failed to generate XHS metadata:', err);
+      res.status(500).json({ error: `大模型请求异常: ${err.message || '网络连接或请求超时'}` });
+    }
+  });
+
+  function parseAndRespond(data: any, res: any) {
+    if (!data.choices || data.choices.length === 0) {
+      return res.status(500).json({ error: '大模型返回内容空空如也' });
+    }
+
+    let content = data.choices[0].message?.content || '';
+    if (!content) {
+      return res.status(500).json({ error: '没有生成有效的文本内容' });
+    }
+
+    content = content.trim();
+    if (content.startsWith('```json')) {
+      content = content.substring(7);
+    } else if (content.startsWith('```')) {
+      content = content.substring(3);
+    }
+    if (content.endsWith('```')) {
+      content = content.substring(0, content.length - 3);
+    }
+
+    try {
+      const parsed = JSON.parse(content.trim());
+      if (parsed.xhsTitle && parsed.xhsTitle.length > 20) {
+        parsed.xhsTitle = parsed.xhsTitle.substring(0, 20);
+      }
+      res.json({ success: true, ...parsed });
+    } catch (e) {
+      console.error('Failed to parse json:', content, e);
+      res.status(500).json({ error: '大模型未按要求的 JSON 格式返回，输出内容为:\n' + content });
+    }
+  }
+
   // Delete a downloaded video
   app.delete('/api/videos/*', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;

@@ -124,6 +124,7 @@ export default function VideoEditor({
   const [splitImages, setSplitImages] = useState<string[]>([]);
   const [selectedSplitIndices, setSelectedSplitIndices] = useState<number[]>([]);
   const [isProcessingGrid, setIsProcessingGrid] = useState(false);
+  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
 
   useEffect(() => {
     fetch('/api/bgm').then(res => res.json()).then(data => setBgmList(data));
@@ -360,10 +361,38 @@ export default function VideoEditor({
               小红书发布配置
             </h3>
             <button 
-              onClick={() => alert('即将接入 OpenCode API 自动生成图文...')}
-              className="px-3 py-1.5 flex items-center gap-1 text-sm font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 transition-colors rounded-lg"
+              disabled={isGeneratingAi}
+              onClick={async () => {
+                setIsGeneratingAi(true);
+                try {
+                  const response = await fetch('/api/videos/xhs/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      storyboards: task.storyboards || [],
+                      videoName: task.id || ''
+                    })
+                  });
+                  const resData = await response.json();
+                  if (!response.ok) {
+                    throw new Error(resData.error || 'AI 自动生成失败');
+                  }
+                  updateTask({
+                    xhsTitle: resData.xhsTitle || '',
+                    xhsBody: resData.xhsBody || '',
+                    xhsTags: resData.xhsTags || ''
+                  });
+                } catch (e: any) {
+                  console.error(e);
+                  alert(e.message || 'AI 自动生成异常，请检查配置');
+                } finally {
+                  setIsGeneratingAi(false);
+                }
+              }}
+              className="px-3 py-1.5 flex items-center gap-1 text-sm font-bold bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-100 transition-colors rounded-lg disabled:opacity-50"
             >
-              <Sparkles size={16}/> AI 自动生成
+              <Sparkles size={16} className={isGeneratingAi ? "animate-spin text-indigo-500" : ""}/>
+              {isGeneratingAi ? "生成中..." : "AI 自动生成"}
             </button>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
