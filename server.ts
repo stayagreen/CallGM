@@ -1514,8 +1514,11 @@ ${storyboardTexts}
   function getXhsCoverImageBase64(xhsCoverImage: string): { data: string; mimeType: string } | null {
     if (!xhsCoverImage) return null;
     
-    if (xhsCoverImage.startsWith('data:image/')) {
-      const matches = xhsCoverImage.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+    // Strip query parameters like timestamp `?t=...`
+    const cleanUrl = xhsCoverImage.split('?')[0];
+    
+    if (cleanUrl.startsWith('data:image/')) {
+      const matches = cleanUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
       if (matches && matches.length === 3) {
         return { mimeType: matches[1], data: matches[2] };
       }
@@ -1523,7 +1526,7 @@ ${storyboardTexts}
     }
 
     // Handle local path
-    let relativePath = xhsCoverImage;
+    let relativePath = cleanUrl;
     if (relativePath.startsWith('/')) {
       relativePath = relativePath.substring(1);
     }
@@ -1532,13 +1535,16 @@ ${storyboardTexts}
     if (relativePath.startsWith('uploads/')) {
       fullPath = path.join(__dirname, relativePath);
     } else if (relativePath.startsWith('downloads/')) {
+      // The router maps "/downloads" to physical "__dirname/download" (singular)
+      fullPath = path.join(__dirname, 'download', relativePath.substring('downloads/'.length));
+    } else if (relativePath.startsWith('download/')) {
       fullPath = path.join(__dirname, relativePath);
     } else {
       const tryUploadPath = path.join(__dirname, 'uploads', relativePath);
       if (fs.existsSync(tryUploadPath)) {
         fullPath = tryUploadPath;
       } else {
-        const tryDownloadPath = path.join(__dirname, 'downloads', relativePath);
+        const tryDownloadPath = path.join(__dirname, 'download', relativePath);
         if (fs.existsSync(tryDownloadPath)) {
           fullPath = tryDownloadPath;
         } else {
@@ -1546,6 +1552,8 @@ ${storyboardTexts}
         }
       }
     }
+
+    console.log(`[AI-GEN] Reading cover image from path: "${fullPath}"`);
 
     if (fs.existsSync(fullPath)) {
       try {
