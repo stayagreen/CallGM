@@ -3030,9 +3030,9 @@ function MainApp() {
                 <button 
                   disabled={isGeneratingXhs}
                   onClick={async () => {
-                    const coverImage = viewingXhsNotes.taskData?.xhsCoverImage;
+                    const coverImage = viewingXhsNotes.taskData?.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards[0]?.image);
                     if (!coverImage) {
-                      alert('请先在右侧上传或选择您的“小红书封面图”！本系统会把图片提供给大模型参考，生成更契合封面风格的爆款标题、正文与话题。');
+                      alert('请先上传或生成至少一个视频分镜，或在右侧设置“小红书封面图”！本系统会把图片提供给大模型参考，生成更契合封面风格的爆款标题、正文与话题。');
                       return;
                     }
                     setIsGeneratingXhs(true);

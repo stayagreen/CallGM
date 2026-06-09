@@ -1282,11 +1282,16 @@ async function startServer() {
   app.post('/api/videos/xhs/generate', requireAuth, checkAccess, async (req: any, res) => {
     const { storyboards, videoName, xhsCoverImage } = req.body;
 
-    if (!xhsCoverImage) {
-      return res.status(400).json({ error: '请先设置您的“小红书封面图”！本系统需要根据您的封面图片为您生成针对性的标题、正文与话题标签。' });
+    let coverUrl = xhsCoverImage;
+    if (!coverUrl && storyboards && Array.isArray(storyboards) && storyboards.length > 0) {
+      coverUrl = storyboards[0]?.image;
     }
 
-    const imgData = getXhsCoverImageBase64(xhsCoverImage);
+    if (!coverUrl) {
+      return res.status(400).json({ error: '请先上传或生成至少一个视频分镜，或先设置您的“小红书封面图”！本系统需要根据您的封面图片为您生成针对性的标题、正文与话题标签。' });
+    }
+
+    const imgData = getXhsCoverImageBase64(coverUrl);
     if (!imgData) {
       return res.status(400).json({ error: '未能成功读取您的封面图片，请尝试重新设置或重新上传封面图片。' });
     }
