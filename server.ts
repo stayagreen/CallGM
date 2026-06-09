@@ -1366,7 +1366,7 @@ ${storyboardTexts}
     if (isAnthropicStyle) {
       apiEndpoint = `${formattedBase}/messages`;
       requestBody = {
-        model: actualModel,
+        model: cleanModel,
         system: "You are a professional social media marketing assistant for Xiaohongshu.",
         messages: [
           { role: 'user', content: prompt }
@@ -1377,7 +1377,7 @@ ${storyboardTexts}
     } else {
       apiEndpoint = `${formattedBase}/chat/completions`;
       requestBody = {
-        model: actualModel,
+        model: cleanModel,
         messages: [
           { role: 'system', content: 'You are a professional social media marketing assistant for Xiaohongshu.' },
           { role: 'user', content: prompt }
@@ -1386,13 +1386,17 @@ ${storyboardTexts}
       };
     }
 
-    console.log(`[AI-GEN] API generating content. Model: "${actualModel}" (Protocol: ${isAnthropicStyle ? 'Anthropic Messages' : 'OpenAI Completions'}) via ${apiEndpoint}...`);
+    console.log(`[AI-GEN] API generating content. Model: "${cleanModel}" (Protocol: ${isAnthropicStyle ? 'Anthropic Messages' : 'OpenAI Completions'}) via ${apiEndpoint}...`);
     try {
       const apiResponse = await fetch(apiEndpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${openCodeApiKey}`
+          'Authorization': `Bearer ${openCodeApiKey}`,
+          ...(isAnthropicStyle ? {
+            'x-api-key': openCodeApiKey,
+            'anthropic-version': '2023-06-01'
+          } : {})
         },
         body: JSON.stringify(requestBody)
       });
