@@ -3059,7 +3059,7 @@ function MainApp() {
                   </select>
                 </div>
                 <div className="relative w-[200px] sm:w-[240px] mx-auto bg-gray-200 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 flex items-center justify-center flex-col shadow-sm cursor-pointer hover:border-red-400 group transition-all"
-                     onClick={() => setShowXhsGalleryPicker(true)}
+                     onClick={() => { fetchGallery(); setShowXhsGalleryPicker(true); }}
                      style={{
                        aspectRatio: viewingXhsNotes.taskData?.xhsCoverAspectRatio === '16:9' ? '16/9' :
                                     viewingXhsNotes.taskData?.xhsCoverAspectRatio === '4:3' ? '4/3' :
