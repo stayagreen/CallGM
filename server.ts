@@ -1314,143 +1314,134 @@ ${storyboardTexts}
     // Read config
     let openCodeApiKey = '';
     let openCodeApiUrl = '';
+    let openCodeModel = '';
     if (fs.existsSync(configPath)) {
       try {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
         openCodeApiKey = config.openCodeApiKey || '';
         openCodeApiUrl = config.openCodeApiUrl || '';
+        openCodeModel = config.openCodeModel || '';
       } catch (e) {}
     }
 
-    // fallback triggers indicator
-    let fallbackToGemini = false;
-    let fallbackReason = '';
-
     if (!openCodeApiKey) {
-      fallbackToGemini = true;
-      fallbackReason = 'OpenCode API Key 未在系统设置中配置，已自动接入全内置、免密钥配置的 Gemini 极速生成。';
+      return res.status(400).json({ error: '请先在系统设置中的 [AI 大模型配置] 里设置您的大模型 API Key（密钥）。' });
     }
 
-    if (!fallbackToGemini) {
-      // Clean and format the base URL
-      let baseUrl = (openCodeApiUrl || 'https://api.opencode.ai/v1').trim();
-      if (baseUrl.endsWith('/')) {
-        baseUrl = baseUrl.substring(0, baseUrl.length - 1);
-      }
-      
-      const endpointIdx = baseUrl.lastIndexOf('/chat/completions');
-      let apiEndpoint = baseUrl;
-      if (endpointIdx === -1) {
-        apiEndpoint = `${baseUrl}/chat/completions`;
-      }
+    // Default API URL is https://opencode.ai/zen/go/v1
+    let baseUrl = (openCodeApiUrl || 'https://opencode.ai/zen/go/v1').trim();
+    if (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+    }
 
-      console.log(`[AI-GEN] Attempting OpenCode API generation via ${apiEndpoint}...`);
-      try {
-        const apiResponse = await fetch(apiEndpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${openCodeApiKey}`
-          },
-          body: JSON.stringify({
-            model: 'abab6.5s-chat',
-            messages: [
-              { role: 'system', content: 'You are a professional social media marketing assistant for Xiaohongshu.' },
-              { role: 'user', content: prompt }
-            ],
-            temperature: 0.7,
-            response_format: { type: 'json_object' }
-          })
+    // Default model is minimax-m3
+    const actualModel = (openCodeModel || 'minimax-m3').trim();
+    
+    // Determine clean model name for protocol check (e.g. opencode-go/minimax-m3 -> minimax-m3)
+    let cleanModel = actualModel;
+    if (cleanModel.startsWith('opencode-go/')) {
+      cleanModel = cleanModel.substring(12);
+    }
+
+    // Identify if it's Anthropic messages-format (e.g., minimax or qwen models from OpenCode documentation)
+    const isAnthropicStyle = cleanModel.includes('minimax') || cleanModel.includes('qwen') || baseUrl.includes('/messages');
+
+    // Clean up base URL to make sure we attach the correct suffix path
+    let formattedBase = baseUrl;
+    const completionsSuffix = '/chat/completions';
+    const messagesSuffix = '/messages';
+
+    if (formattedBase.endsWith(completionsSuffix)) {
+      formattedBase = formattedBase.substring(0, formattedBase.length - completionsSuffix.length);
+    } else if (formattedBase.endsWith(messagesSuffix)) {
+      formattedBase = formattedBase.substring(0, formattedBase.length - messagesSuffix.length);
+    }
+    if (formattedBase.endsWith('/')) {
+      formattedBase = formattedBase.substring(0, formattedBase.length - 1);
+    }
+
+    let apiEndpoint = '';
+    let requestBody: any = {};
+
+    if (isAnthropicStyle) {
+      apiEndpoint = `${formattedBase}/messages`;
+      requestBody = {
+        model: actualModel,
+        system: "You are a professional social media marketing assistant for Xiaohongshu.",
+        messages: [
+          { role: 'user', content: prompt }
+        ],
+        max_tokens: 4096,
+        temperature: 0.7
+      };
+    } else {
+      apiEndpoint = `${formattedBase}/chat/completions`;
+      requestBody = {
+        model: actualModel,
+        messages: [
+          { role: 'system', content: 'You are a professional social media marketing assistant for Xiaohongshu.' },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.7
+      };
+    }
+
+    console.log(`[AI-GEN] API generating content. Model: "${actualModel}" (Protocol: ${isAnthropicStyle ? 'Anthropic Messages' : 'OpenAI Completions'}) via ${apiEndpoint}...`);
+    try {
+      const apiResponse = await fetch(apiEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openCodeApiKey}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      // Parse status or get retry fallback for alternative model representations if the configured name failed
+      if (!apiResponse.ok) {
+        const errText = await apiResponse.text();
+        console.warn(`[AI-GEN] API call failed with status ${apiResponse.status}: ${errText}`);
+        return res.status(apiResponse.status).json({ 
+          error: `API 大模型接口响应错误 (状态码 ${apiResponse.status})：${errText || '未知接口错误'}` 
         });
-
-        // Parse status or get retry fallback for common 404 / 400 structures
-        if (!apiResponse.ok) {
-          const errText = await apiResponse.text();
-          console.warn(`[AI-GEN] OpenCode primary model call failed (Status ${apiResponse.status}): ${errText}`);
-          
-          let successfullyRetried = false;
-          if (apiResponse.status === 404 || apiResponse.status === 400) {
-            console.log('[AI-GEN] Retrying OpenCode with alternative model id "minimax/abab6.5s-chat"...');
-            try {
-              const retryResponse = await fetch(apiEndpoint, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${openCodeApiKey}`
-                },
-                body: JSON.stringify({
-                  model: 'minimax/abab6.5s-chat',
-                  messages: [
-                    { role: 'system', content: 'You are an expert social media assistant.' },
-                    { role: 'user', content: prompt }
-                  ],
-                  temperature: 0.7
-                })
-              });
-
-              if (retryResponse.ok) {
-                const bodyText = await retryResponse.text();
-                const data = JSON.parse(bodyText);
-                parseAndRespond(data, res);
-                successfullyRetried = true;
-              } else {
-                const retryErrText = await retryResponse.text();
-                console.warn(`[AI-GEN] OpenCode retry model call also failed: ${retryErrText}`);
-              }
-            } catch (retryErr: any) {
-              console.warn(`[AI-GEN] OpenCode retry request model exception: ${retryErr.message}`);
-            }
-          }
-
-          if (!successfullyRetried) {
-            fallbackToGemini = true;
-            fallbackReason = `配置的第三方 API 响应异常 (状态码 ${apiResponse.status})，系统已自动无缝托管给内置 Gemini 闪电生成。`;
-          } else {
-            return; // Already resolved via retry
-          }
-        } else {
-          // It was ok! Let's read text first and then parse
-          const rawText = await apiResponse.text();
-          try {
-            const data = JSON.parse(rawText);
-            parseAndRespond(data, res);
-          } catch (jsonErr: any) {
-            console.warn(`[AI-GEN] OpenCode returned invalid JSON structure: "${rawText.substring(0, 100)}..."`);
-            fallbackToGemini = true;
-            fallbackReason = `配置的大模型端点未能在响应中返回 JSON 结构（可能是代理服务器拦截）。已被系统自动无感重定向到内置 Gemini 闪电生成。`;
-          }
+      } else {
+        const rawText = await apiResponse.text();
+        try {
+          const data = JSON.parse(rawText);
+          parseAndRespond(data, isAnthropicStyle, res);
+        } catch (jsonErr: any) {
+          console.warn(`[AI-GEN] API response was not parseable valid JSON: "${rawText.substring(0, 100)}..."`);
+          return res.status(500).json({ 
+            error: `API 接口未返回标准的 JSON 格式，解析失败。返回原始内容为: \n${rawText}` 
+          });
         }
-      } catch (err: any) {
-        console.warn(`[AI-GEN] OpenCode API request encountered exception: ${err.message}`);
-        fallbackToGemini = true;
-        fallbackReason = `连接第三方 AI 服务失败或网络超时，系统已自动降级降噪，托管给内置 Gemini 护航生成。`;
       }
-    }
-
-    // Execute fallback if triggered
-    if (fallbackToGemini) {
-      console.log(`[AI-GEN-FALLBACK] Executing automatic Gemini model fallback. Reason: ${fallbackReason}`);
-      try {
-        const geminiResult = await generateWithGemini(prompt);
-        if (geminiResult.xhsTitle && geminiResult.xhsTitle.length > 20) {
-          geminiResult.xhsTitle = geminiResult.xhsTitle.substring(0, 20);
-        }
-        return res.json({ success: true, ...geminiResult, fallbackUsed: true, fallbackMessage: fallbackReason });
-      } catch (geminiError: any) {
-        console.error('[AI-GEN-FAIL] Both OpenCode and Gemini fallback failed:', geminiError);
-        return res.status(500).json({ error: `大模型内容生成失败（中转端及内置降级大模型均不可用）: ${geminiError.message}` });
-      }
+    } catch (err: any) {
+      console.error('[AI-GEN] API request exception:', err);
+      return res.status(500).json({ 
+        error: `连接大模型服务发生网络异常（请检查接口地址及您的网络连接）: ${err.message || '网络连接超时'}` 
+      });
     }
   });
 
-  function parseAndRespond(data: any, res: any) {
-    if (!data.choices || data.choices.length === 0) {
-      throw new Error('LLM 返回的 choices 列表为空。');
+  function parseAndRespond(data: any, isAnthropicStyle: boolean, res: any) {
+    let content = '';
+    if (isAnthropicStyle) {
+      if (data.content && Array.isArray(data.content) && data.content.length > 0) {
+        content = data.content[0].text || '';
+      } else if (data.choices && data.choices.length > 0) {
+        content = data.choices[0].message?.content || '';
+      }
+    } else {
+      if (data.choices && data.choices.length > 0) {
+        content = data.choices[0].message?.content || '';
+      } else if (data.content && Array.isArray(data.content) && data.content.length > 0) {
+        content = data.content[0].text || '';
+      }
     }
 
-    let content = data.choices[0].message?.content || '';
     if (!content) {
-      throw new Error('LLM 返回的消息正文为空。');
+      throw new Error('LLM 返回的有效文本内容为空。返回密文为: ' + JSON.stringify(data));
     }
 
     content = content.trim();

@@ -824,7 +824,8 @@ function MainApp() {
     dispatchStrategy: 'server',
     globalConcurrency: 3,
     openCodeApiKey: '',
-    openCodeApiUrl: ''
+    openCodeApiUrl: '',
+    openCodeModel: ''
   });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
@@ -2830,9 +2831,9 @@ function MainApp() {
                       className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-sm"
                       value={systemConfig.openCodeApiUrl || ''}
                       onChange={(e) => setSystemConfig({...systemConfig, openCodeApiUrl: e.target.value})}
-                      placeholder="https://api.opencode.ai/v1"
+                      placeholder="https://opencode.ai/zen/go/v1"
                     />
-                    <p className="text-xs text-gray-400 mt-2">※ 默认为 https://api.opencode.ai/v1。支持自定义代理中转或 OpenAI 兼容端点</p>
+                    <p className="text-xs text-gray-400 mt-2">※ 默认为 https://opencode.ai/zen/go/v1。系统会自动识别您的模型分类（如 MiniMax、Qwen 等）来兼容 /messages 端点或 /chat/completions 格式。</p>
                   </div>
                   <div>
                     <label className="block mb-1 font-semibold text-gray-700">OpenCode API Key（API 密钥）：</label>
@@ -2843,7 +2844,17 @@ function MainApp() {
                       onChange={(e) => setSystemConfig({...systemConfig, openCodeApiKey: e.target.value})}
                       placeholder="sk-..."
                     />
-                    <p className="text-xs text-indigo-500 mt-2 font-medium">※ 温馨提示：即使不配置或其请求失效，系统也会自动无感切换到高品质的内置 Gemini (gemini-3.5-flash) 进行生成，零配置即可开箱即用！</p>
+                  </div>
+                  <div>
+                    <label className="block mb-1 font-semibold text-gray-700">大模型 Model Name（模型名称）：</label>
+                    <input
+                      type="text"
+                      className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-sm"
+                      value={systemConfig.openCodeModel || ''}
+                      onChange={(e) => setSystemConfig({...systemConfig, openCodeModel: e.target.value})}
+                      placeholder="opencode-go/minimax-m3"
+                    />
+                    <p className="text-xs text-indigo-500 mt-2 font-medium">※ 默认模型为 opencode-go/minimax-m3，同时支持各种 MiniMax、OpenCode 等兼容的模型名称（如 minimax-m3，abab6.5s-chat ）。</p>
                   </div>
                 </div>
               </details>
