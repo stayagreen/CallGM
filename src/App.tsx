@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Login } from './components/Login';
+import { ImageCropper } from './components/ImageCropper';
 
 // Shared type interfaces
 interface Task {
@@ -839,6 +840,7 @@ function MainApp() {
   const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
   const [viewingXhsNotes, setViewingXhsNotes] = useState<{ videoId: string, jobId?: string, taskData: VideoTask } | null>(null);
   const [showXhsGalleryPicker, setShowXhsGalleryPicker] = useState(false);
+  const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
   const [processingGalleryImages, setProcessingGalleryImages] = useState<Set<string>>(new Set());
   const manualProcessingImages = useRef<Set<string>>(new Set());
   const [galleryUpdateToken, setGalleryUpdateToken] = useState<number>(Date.now());
@@ -3156,6 +3158,34 @@ function MainApp() {
                     </div>
                   )}
                 </div>
+                <div className="flex justify-center gap-2 mt-3">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      fetchGallery();
+                      setShowXhsGalleryPicker(true);
+                    }}
+                    className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-gray-200 shadow-sm"
+                  >
+                    <ImageIcon size={13} /> 更换封面
+                  </button>
+                  {(viewingXhsNotes.taskData?.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards.length > 0 && viewingXhsNotes.taskData.storyboards[0].image)) && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const url = viewingXhsNotes.taskData.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards[0]?.image);
+                        if (url) {
+                          setCropperImageSrc(url);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-600 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-red-200 shadow-sm animate-pulse-subtle"
+                    >
+                      <Crop size={13} /> 裁剪封面
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -3218,9 +3248,7 @@ function MainApp() {
                       key={img} 
                       onClick={() => {
                         const finalImageUrl = img.startsWith('uploads/') ? `/${img}` : `/downloads/${img}`;
-                        if (viewingXhsNotes) {
-                          setViewingXhsNotes({ ...viewingXhsNotes, taskData: { ...viewingXhsNotes.taskData, xhsCoverImage: finalImageUrl } });
-                        }
+                        setCropperImageSrc(finalImageUrl);
                         setShowXhsGalleryPicker(false);
                       }}
                       className="relative aspect-square rounded-lg overflow-hidden border-2 cursor-pointer transition-all border-gray-200 hover:border-red-400"
@@ -3238,6 +3266,24 @@ function MainApp() {
             </div>
           </div>
         </div>
+      )}
+
+      {cropperImageSrc && viewingXhsNotes && (
+        <ImageCropper
+          imageSrc={cropperImageSrc}
+          aspectRatio={viewingXhsNotes.taskData?.xhsCoverAspectRatio || '3:4'}
+          onClose={() => setCropperImageSrc(null)}
+          onCropComplete={(base64Url) => {
+            setViewingXhsNotes({
+              ...viewingXhsNotes,
+              taskData: {
+                ...viewingXhsNotes.taskData,
+                xhsCoverImage: base64Url
+              }
+            });
+            setCropperImageSrc(null);
+          }}
+        />
       )}
     </div>
   );
