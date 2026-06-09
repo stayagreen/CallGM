@@ -27,7 +27,7 @@ function copyImageToClipboard(imagePath: string, isMac: boolean) {
         if (isMac) {
             execSync(`osascript -e 'set the clipboard to (read (POSIX file "${absPath}") as TIFF picture)'`);
         } else if (os.platform() === 'win32') {
-            execSync(`powershell -command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetImage([System.Drawing.Image]::FromFile('${absPath}'))"`);
+            execSync(`powershell -command "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $img = [System.Drawing.Image]::FromFile('${absPath}'); [System.Windows.Forms.Clipboard]::SetImage($img); $img.Dispose()"`);
         } else {
             // Linux 环境下，如果是在 headless 容器中，xclip 可能会因为没有 X11 DISPLAY 而失败
             try {
