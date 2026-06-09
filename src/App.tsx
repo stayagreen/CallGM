@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -803,7 +803,13 @@ function MainApp() {
   const [showAddTaskMenu, setShowAddTaskMenu] = useState(false);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery' | 'users' | 'proxy' | 'workers'>('tasks');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery' | 'users' | 'proxy' | 'workers' | 'xhs_notes'>('tasks');
+  const [xhsNotesList, setXhsNotesList] = useState<any[]>([]);
+  const [xhsSearchText, setXhsSearchText] = useState('');
+  const [isXhsNotesLoading, setIsXhsNotesLoading] = useState(false);
+  const [scheduledPublishTime, setScheduledPublishTime] = useState('');
+  const [publishingXhsNoteId, setPublishingXhsNoteId] = useState<number | null>(null);
+  const [xhsPublishProgress, setXhsPublishProgress] = useState<any>(null);
   const [showNavDropdown, setShowNavDropdown] = useState<'tasks' | 'records' | 'gallery' | 'admin' | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [systemConfig, setSystemConfig] = useState<any>({ 
@@ -1124,10 +1130,57 @@ function MainApp() {
     }
   };
 
+  const fetchXhsNotes = async () => {
+    setIsXhsNotesLoading(true);
+    try {
+      const res = await fetch('/api/xhs-notes');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setXhsNotesList(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch XHS notes list:', e);
+    } finally {
+      setIsXhsNotesLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (activeTab === 'gallery' || activeTab === 'video_tasks') fetchGallery();
     if (activeTab === 'video_gallery') fetchVideoGallery();
+    if (activeTab === 'xhs_notes') fetchXhsNotes();
   }, [activeTab]);
+
+  // Polling for Xiaohongshu Publishing progress
+  useEffect(() => {
+    if (publishingXhsNoteId === null) {
+      setXhsPublishProgress(null);
+      return;
+    }
+
+    let isSubscribed = true;
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/videos/xhs/publish/status/${publishingXhsNoteId}`);
+        const data = await res.json();
+        if (isSubscribed) {
+          setXhsPublishProgress(data);
+          if (data.status === 'success' || data.status === 'failed') {
+            clearInterval(pollInterval);
+            // Refresh list
+            fetchXhsNotes();
+          }
+        }
+      } catch (err) {
+        console.error('Failed to poll XHS publish status:', err);
+      }
+    }, 1000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(pollInterval);
+    };
+  }, [publishingXhsNoteId]);
 
   const handleBatchAction = async (action: 'pause' | 'pause_delete' | 'delete') => {
     if (selectedJobs.size === 0) return;
@@ -1525,6 +1578,15 @@ function MainApp() {
               </div>
             )}
           </div>
+
+          {/* Xiaohongshu Notes Publishing Summaries (小红书发布) */}
+          <button 
+            type="button"
+            onClick={() => { setActiveTab('xhs_notes'); setShowNavDropdown(null); }}
+            className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 cursor-pointer ${activeTab === 'xhs_notes' ? 'border-b-2 border-red-500 text-red-500' : 'text-gray-500 hover:text-gray-800'}`}
+          >
+            小红书发布
+          </button>
           {/* Admin Dropdown */}
           {user?.role === 'admin' && (
             <div className="relative">
@@ -2586,6 +2648,217 @@ function MainApp() {
         </div>
       )}
 
+      {activeTab === 'xhs_notes' && (
+        <div className="flex flex-col gap-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">小红书发布管理与汇总</h2>
+              <p className="text-xs text-gray-500 mt-1">汇总全部本地定时及立即发布的小红书笔记（支持查看发布进度与回传链接）。</p>
+            </div>
+            
+            <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200">
+              <button 
+                type="button"
+                onClick={fetchXhsNotes}
+                className="px-3 py-1.5 text-xs font-semibold bg-white rounded-md shadow-sm hover:bg-gray-50 flex items-center gap-1 cursor-pointer"
+              >
+                刷新记录
+              </button>
+            </div>
+          </div>
+
+          {/* Search bar */}
+          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center gap-3">
+            <input 
+              type="text" 
+              placeholder="搜索标题或正文关键字..." 
+              value={xhsSearchText}
+              onChange={e => setXhsSearchText(e.target.value)}
+              className="flex-grow px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-red-400 transition"
+            />
+          </div>
+
+          {isXhsNotesLoading ? (
+            <div className="flex flex-col items-center justify-center py-24 text-gray-400">
+              <div className="animate-spin h-8 w-8 border-3 border-red-500 rounded-full border-t-transparent mb-3"></div>
+              <span>正在获取发布摘要列表...</span>
+            </div>
+          ) : (() => {
+            const list = xhsNotesList.filter(note => {
+              const matchesSearch = !xhsSearchText || 
+                (note.title && note.title.toLowerCase().includes(xhsSearchText.toLowerCase())) ||
+                (note.content && note.content.toLowerCase().includes(xhsSearchText.toLowerCase()));
+              return matchesSearch;
+            });
+
+            if (list.length === 0) {
+              return (
+                <div className="text-center py-16 bg-white border border-gray-150 rounded-2xl">
+                  <Share2 className="w-12 h-12 mx-auto mb-3 text-red-400" />
+                  <p className="text-sm font-medium text-gray-500">暂无任何小红书发布记录</p>
+                  <p className="text-xs text-gray-400 mt-1">您可以在“素材库” - “本地视频库”中选择视频，点击“小红书配置”进行发布或定时计划。</p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {list.map(note => {
+                  const coverUrl = note.cover_path 
+                    ? (note.cover_path.startsWith('/') ? note.cover_path : `/${note.cover_path}`) 
+                    : '/placeholder_cover.jpg';
+                  
+                  return (
+                    <div key={note.id} className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition flex gap-4">
+                      {/* Left: Cover preview */}
+                      <div className="w-24 h-32 rounded-lg overflow-hidden bg-gray-100 border border-gray-150 relative flex-shrink-0">
+                        {note.cover_path ? (
+                          <img 
+                            referrerPolicy="no-referrer"
+                            src={coverUrl} 
+                            alt="cover" 
+                            className="w-full h-full object-cover" 
+                            onError={(e) => { e.currentTarget.src = '/placeholder_cover.jpg'; }}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex flex-col items-center justify-center text-gray-300">
+                            <ImageIcon size={24} />
+                            <span className="text-[10px] mt-1">无封面</span>
+                          </div>
+                        )}
+                        <div className="absolute top-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[10px] text-white">
+                          ID: {note.id}
+                        </div>
+                      </div>
+
+                      {/* Right: Info */}
+                      <div className="flex-grow flex flex-col justify-between min-w-0">
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            {/* Status badge */}
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              note.publish_status === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
+                              note.publish_status === 'failed' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                              note.publish_status === 'publishing' ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse' :
+                              'bg-gray-50 text-gray-600 border border-gray-200'
+                            }`}>
+                              {note.publish_status === 'success' ? '发布成功' :
+                               note.publish_status === 'failed' ? '发布失败' :
+                               note.publish_status === 'publishing' ? '发布中...' : '定时/等待中'}
+                            </span>
+                            
+                            {/* User indicator for admin */}
+                            {user?.role === 'admin' && note.username && (
+                              <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">
+                                👤 {note.username}
+                              </span>
+                            )}
+                          </div>
+
+                          <h3 className="font-bold text-gray-800 text-sm truncate" title={note.title}>{note.title || '（未命名标题）'}</h3>
+                          <p className="text-xs text-gray-500 line-clamp-2 mt-1 whitespace-pre-line" title={note.content}>{note.content || '（无描述正文）'}</p>
+                        </div>
+
+                        <div className="mt-2 pt-2 border-t border-gray-50">
+                          {/* Schedule/Publish time */}
+                          <div className="flex items-center gap-1 text-[10px] text-gray-400 mb-2 font-mono">
+                            <Clock size={11} />
+                            <span>
+                              {note.scheduled_at 
+                                ? `计划发布: ${new Date(note.scheduled_at).toLocaleString()}` 
+                                : `发布提交: ${new Date(note.created_at).toLocaleString()}`}
+                            </span>
+                          </div>
+
+                          {/* Show error if failed */}
+                          {note.publish_status === 'failed' && note.error_message && (
+                            <p className="text-[10px] text-rose-500 font-medium mb-2 truncate max-w-full" title={note.error_message}>
+                              ⚠️ 错误: {note.error_message}
+                            </p>
+                          )}
+
+                          {/* Actions buttons */}
+                          <div className="flex items-center gap-1.5">
+                            {note.publish_status === 'success' && note.publish_url && (
+                              <a 
+                                href={note.publish_url} 
+                                target="_blank" 
+                                rel="noreferrer" 
+                                className="flex-1 py-1 px-2 text-[11px] font-bold text-red-500 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer hover:font-bold"
+                              >
+                                <ExternalLink size={11} />
+                                打开笔记
+                              </a>
+                            )}
+
+                            {(note.publish_status === 'failed' || note.publish_status === 'pending') && (
+                              <button 
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    setPublishingXhsNoteId(note.id);
+                                    const res = await fetch('/api/videos/xhs/publish', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        videoPath: note.video_path,
+                                        coverPath: note.cover_path,
+                                        title: note.title,
+                                        content: note.content,
+                                        tags: note.tags
+                                      })
+                                    });
+                                    const result = await res.json();
+                                    if (result.success) {
+                                      setPublishingXhsNoteId(result.noteId);
+                                    } else {
+                                      alert('发布触发失败: ' + result.error);
+                                      setPublishingXhsNoteId(null);
+                                    }
+                                  } catch (err: any) {
+                                    alert('重试触发异常: ' + (err.message || err));
+                                    setPublishingXhsNoteId(null);
+                                  }
+                                }}
+                                className="flex-1 py-1 px-2 text-[11px] font-bold text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer font-bold"
+                              >
+                                <Share2 size={11} />
+                                {note.publish_status === 'failed' ? '重新发布' : '立即发布'}
+                              </button>
+                            )}
+
+                            <button 
+                              type="button"
+                              onClick={async () => {
+                                if (!window.confirm('确定要删除这档小红书笔记记录吗？（仅删除数据库发布概览）')) return;
+                                try {
+                                  await fetch('/api/xhs-notes/delete', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ id: note.id })
+                                  });
+                                  fetchXhsNotes();
+                                } catch (e) {
+                                  alert('删除失败');
+                                }
+                              }}
+                              className="p-1 px-2 text-[11px] font-bold text-gray-500 hover:text-red-500 hover:bg-gray-100 rounded-lg cursor-pointer flex items-center justify-center"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {activeTab === 'users' && user?.role === 'admin' && (
         <UserManagement />
       )}
@@ -3224,6 +3497,97 @@ function MainApp() {
                   )}
                 </div>
               </div>
+
+              {/* Timing/Publish Settings (小红书定时与发布) */}
+              <div className="md:col-span-2 pt-4 mt-2 border-t border-gray-100">
+                <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-1.5">
+                  <span className="w-1.5 h-3 bg-red-500 rounded-full"></span>
+                  定时发布及立即发布设置
+                </h3>
+                
+                <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 mb-2 flex items-center gap-1">
+                        <Calendar size={13} />
+                        选择定时发布时间 (不选则为立即开始自动化发布)
+                      </label>
+                      <input 
+                        type="datetime-local" 
+                        value={scheduledPublishTime}
+                        onChange={e => setScheduledPublishTime(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-red-400 transition"
+                      />
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!viewingXhsNotes.taskData?.xhsTitle) {
+                            alert('请输入笔记标题后再操作');
+                            return;
+                          }
+                          try {
+                            setIsSavingConfig(true);
+                            // 1. First save metadata configuration
+                            await fetch('/api/videos/xhs', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ videoPath: viewingXhsNotes.videoId, taskData: viewingXhsNotes.taskData })
+                            });
+                            
+                            // 2. Trigger Publish API
+                            const res = await fetch('/api/videos/xhs/publish', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                videoPath: viewingXhsNotes.videoId,
+                                coverPath: viewingXhsNotes.taskData.xhsCoverImage,
+                                title: viewingXhsNotes.taskData.xhsTitle,
+                                content: viewingXhsNotes.taskData.xhsBody,
+                                tags: viewingXhsNotes.taskData.xhsTags,
+                                scheduledAt: scheduledPublishTime ? new Date(scheduledPublishTime).toISOString() : null
+                              })
+                            });
+                            const result = await res.json();
+                            if (result.success) {
+                              if (result.scheduled) {
+                                alert(`成功加入小红书定时发布队列！计划发布时间: ${scheduledPublishTime}`);
+                                setViewingXhsNotes(null);
+                              } else {
+                                // Close setting modal and open immediate progress visualizer
+                                setViewingXhsNotes(null);
+                                setPublishingXhsNoteId(result.noteId);
+                              }
+                            } else {
+                              alert('发布失败: ' + result.error);
+                            }
+                          } catch (err: any) {
+                            alert('操作异常: ' + (err.message || err));
+                          } finally {
+                            setIsSavingConfig(false);
+                            setScheduledPublishTime('');
+                          }
+                        }}
+                        className="flex-1 py-2 px-4 text-sm font-bold text-white bg-red-500 hover:bg-red-600 active:bg-red-700 rounded-lg transition shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Share2 size={16}/>
+                        {scheduledPublishTime ? '确认定时发布' : '立即开始自动化发布'}
+                      </button>
+                      {scheduledPublishTime && (
+                        <button
+                          type="button"
+                          onClick={() => setScheduledPublishTime('')}
+                          className="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 rounded-lg font-medium transition"
+                        >
+                          重置为立即发布
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="p-4 border-t border-gray-100 bg-white flex justify-end gap-3 rounded-b-2xl">
@@ -3321,6 +3685,76 @@ function MainApp() {
             setCropperImageSrc(null);
           }}
         />
+      )}
+
+      {/* Xiaohongshu Publishing Progress Overlay Dialog */}
+      {publishingXhsNoteId !== null && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[2000] animate-fade-in">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden border border-gray-100">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-red-500 to-rose-600 p-5 text-white flex items-center gap-2.5">
+              <Share2 className="animate-pulse" size={22} />
+              <div>
+                <h3 className="font-bold text-base">小红书 CDP 自动化发布引擎</h3>
+                <p className="text-[10px] text-red-100 mt-0.5">正在使用 Chrome DevTools 协议模拟人工提审流程</p>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 flex flex-col items-center">
+              {/* Spinning / Circle progress */}
+              <div className="relative w-24 h-24 flex items-center justify-center mb-5">
+                <div className="absolute inset-0 border-4 border-gray-100 rounded-full"></div>
+                <div className="absolute inset-0 border-4 border-red-500 rounded-full border-t-transparent animate-spin"></div>
+                <div className="text-red-500 text-lg font-black font-mono">
+                  {xhsPublishProgress?.progress || 0}%
+                </div>
+              </div>
+
+              {/* Status information */}
+              <h4 className="font-bold text-gray-800 text-sm mb-1.5">
+                {xhsPublishProgress?.status === 'success' ? '🎉 发布成功！' :
+                 xhsPublishProgress?.status === 'failed' ? '❌ 发布失败' :
+                 '🚀 自动化执行中...'}
+              </h4>
+              <p className="text-xs text-gray-500 text-center bg-gray-50 border border-gray-100 px-4 py-2.5 rounded-xl font-medium w-full min-h-[3.5rem] flex items-center justify-center leading-relaxed">
+                {xhsPublishProgress?.message || '正在初始化发布队列状态...'}
+              </p>
+
+              {/* Success links / Error messages */}
+              {xhsPublishProgress?.status === 'success' && xhsPublishProgress?.progress === 100 && (
+                <div className="mt-4 w-full text-center">
+                  <p className="text-xs text-green-600 font-bold mb-2">恭喜，笔记已成功提交。你可以通过下方链接查看：</p>
+                  <a 
+                    href={xhsPublishProgress?.url || 'https://creator.xiaohongshu.com/creator/home'} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:underline"
+                  >
+                    <ExternalLink size={12} />
+                    查看小红书笔记链接
+                  </a>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-50 bg-gray-50/50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setPublishingXhsNoteId(null);
+                  setXhsPublishProgress(null);
+                  fetchXhsNotes();
+                }}
+                disabled={xhsPublishProgress?.status === 'publishing'}
+                className="px-4 py-1.5 text-xs font-bold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-sm cursor-pointer"
+              >
+                {xhsPublishProgress?.status === 'publishing' ? '后台静默发布中...' : '关闭弹窗'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

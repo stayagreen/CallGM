@@ -65,6 +65,23 @@ db.exec(`
     value TEXT NOT NULL,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS xhs_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    video_path TEXT NOT NULL,
+    cover_path TEXT,
+    title TEXT,
+    content TEXT,
+    tags TEXT,
+    scheduled_at DATETIME,
+    publish_status TEXT DEFAULT 'pending',
+    publish_url TEXT,
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
 `);
 
 // Bootstrap initial config
@@ -89,6 +106,26 @@ try { db.exec('ALTER TABLE assets ADD COLUMN type TEXT NOT NULL DEFAULT "image";
 try { db.exec('ALTER TABLE assets ADD COLUMN job_id TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE tasks ADD COLUMN worker_id TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE system_config ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;'); } catch (e) {}
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS xhs_notes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      video_path TEXT NOT NULL,
+      cover_path TEXT,
+      title TEXT,
+      content TEXT,
+      tags TEXT,
+      scheduled_at DATETIME,
+      publish_status TEXT DEFAULT 'pending',
+      publish_url TEXT,
+      error_message TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+  `);
+} catch (e) {}
 
 // Bootstrap admin user
 const adminExists = db.prepare('SELECT * FROM users WHERE username = ?').get('administrator');

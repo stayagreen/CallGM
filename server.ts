@@ -23,6 +23,7 @@ declare module 'express-session' {
 
 import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages, cancelledJobs } from "./automation.js";
 import { videoJobProgress, cancelledVideoJobs, startVideoAutomationWatcher } from "./video_automation.js";
+import { executeXhsPublish, startXhsAutomationWatcher, xhsProgressMap } from "./xhs_automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1234,6 +1235,102 @@ async function startServer() {
     }
   });
 
+  // Schedule or Publish a Xiaohongshu Note
+  app.post('/api/videos/xhs/publish', requireAuth, checkAccess, async (req: any, res) => {
+    const { videoPath, coverPath, title, content, tags, scheduledAt } = req.body;
+    const user = req.session.user;
+    if (!videoPath) return res.status(400).json({ error: '请指定视频路径' });
+
+    try {
+      const result = db.prepare(`
+        INSERT INTO xhs_notes (user_id, video_path, cover_path, title, content, tags, scheduled_at, publish_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(user.id, videoPath, coverPath || null, title || null, content || null, tags || null, scheduledAt || null, 'pending');
+
+      const noteId = result.lastInsertRowid as number;
+
+      // If scheduledAt is null or empty, publish immediately in the background
+      if (!scheduledAt) {
+        executeXhsPublish(noteId).catch(err => {
+          console.error(`Error executing immediate publish for note ${noteId}:`, err);
+        });
+      }
+
+      res.json({ success: true, noteId, scheduled: !!scheduledAt });
+    } catch (err: any) {
+      console.error('Failed to schedule/publish XHS note:', err);
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
+  // Get all Xiaohongshu Note Publishing Summaries
+  app.get('/api/xhs-notes', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    let query = 'SELECT xhs_notes.*, users.username FROM xhs_notes LEFT JOIN users ON xhs_notes.user_id = users.id';
+    const params: any[] = [];
+
+    if (user.role !== 'admin') {
+      query += ' WHERE xhs_notes.user_id = ?';
+      params.push(user.id);
+    }
+
+    query += ' ORDER BY xhs_notes.created_at DESC';
+
+    try {
+      const rows = db.prepare(query).all(...params);
+      res.json(rows);
+    } catch (err: any) {
+      console.error('Failed to query xhs notes summaries:', err);
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
+  // Delete an XHS Note record from summary
+  app.post('/api/xhs-notes/delete', requireAuth, checkAccess, (req: any, res) => {
+    const { id } = req.body;
+    const user = req.session.user;
+    if (!id) return res.status(400).json({ error: 'Missing note ID' });
+
+    try {
+      if (user.role === 'admin') {
+        db.prepare('DELETE FROM xhs_notes WHERE id = ?').run(id);
+      } else {
+        db.prepare('DELETE FROM xhs_notes WHERE id = ? AND user_id = ?').run(id, user.id);
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error('Failed to delete note record:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get publishing status (polling endpoint for immediate publishing)
+  app.get('/api/videos/xhs/publish/status/:id', requireAuth, (req: any, res) => {
+    const noteId = parseInt(req.params.id, 10);
+    if (isNaN(noteId)) return res.status(400).json({ error: 'Invalid ID' });
+
+    const cachedProgress = xhsProgressMap.get(noteId);
+    if (cachedProgress) {
+      res.json(cachedProgress);
+    } else {
+      try {
+        const row = db.prepare('SELECT publish_status, error_message FROM xhs_notes WHERE id = ?').get(noteId) as any;
+        if (row) {
+          res.json({
+            id: noteId,
+            status: row.publish_status,
+            progress: row.publish_status === 'success' ? 100 : 0,
+            message: row.publish_status === 'success' ? '发布成功' : (row.publish_status === 'failed' ? `发布失败: ${row.error_message}` : '排队中/定时任务')
+          });
+        } else {
+          res.status(404).json({ error: '未找到发布记录' });
+        }
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  });
+
   async function generateWithGemini(promptText: string) {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
@@ -1942,6 +2039,9 @@ ${storyboardTexts}
 
   // Start the automation watcher
   startAutomationWatcher();
+  
+  // Start the Xiaohongshu automation watcher
+  startXhsAutomationWatcher();
 
   // Start the video automation watcher
   const getVideoConcurrency = () => {
