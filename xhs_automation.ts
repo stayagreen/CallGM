@@ -85,6 +85,42 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     const { Page, Runtime, DOM, Input } = client;
     await Promise.all([Page.enable(), Runtime.enable(), DOM.enable()]);
 
+    // 定义拟真键盘打字操作，支持 keyDown + char + keyUp 完整流
+    const typeCharacter = async (char: string, code?: string) => {
+      let key = char;
+      let virtualKeyValue = char;
+      if (char === ' ') {
+        key = ' ';
+        virtualKeyValue = 'Space';
+        code = 'Space';
+      }
+      try {
+        await Input.dispatchKeyEvent({
+          type: 'keyDown',
+          text: char,
+          unmodifiedText: char,
+          key: virtualKeyValue,
+          code: code
+        });
+        await Input.dispatchKeyEvent({
+          type: 'char',
+          text: char,
+          unmodifiedText: char,
+          key: virtualKeyValue,
+          code: code
+        });
+        await Input.dispatchKeyEvent({
+          type: 'keyUp',
+          text: char,
+          unmodifiedText: char,
+          key: virtualKeyValue,
+          code: code
+        });
+      } catch (e) {
+        console.warn(`[CDP 打字] 发送字符 ${char} 遇到错误:`, e);
+      }
+    };
+
     // 等待页面初步加载
     await new Promise(r => setTimeout(r, 6000));
     xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 25, message: '正在检测登录与页面状态...' });
@@ -191,66 +227,83 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     // 7. 处理封面图上传
     if (absCoverPath && fs.existsSync(absCoverPath)) {
-      // 强制触发“上传封面”动作或找到第二个图片上传 input
+      // 视频加载与转码状态检测完，加上 4500ms 强制保护，防止编辑器因为视频流还没加载完而拒绝封面上传动作
+      console.log(`[XHS 发布] 安全阻尼：等待小红书封面控制组件激活就绪...`);
+      await new Promise(r => setTimeout(r, 4500));
+
       try {
+        // 强制触发“上传/更换封面”动作
         await Runtime.evaluate({
           expression: `(() => {
             try {
-              // 1. 寻找可能触发封面选取的按钮或区域并点击
-              const selectors = [
-                '.upload-cover', '.cover-upload', '.edit-cover', '.cover-btn', 
-                '[class*="cover"] button', '[class*="cover"] div', '[class*="upload"] button'
-              ];
-              for (const selector of selectors) {
+              const clickElement = (el) => {
+                if (!el) return;
+                try { el.focus(); } catch(e) {}
+                try { el.click(); } catch(e) {}
                 try {
-                  const els = document.querySelectorAll(selector);
-                  for (const el of els) {
-                    const txt = el.textContent || '';
-                    if (txt.includes('封面') || txt.includes('图片') || txt.includes('照片') || txt.includes('修改') || txt.includes('更换') || txt.includes('上传')) {
-                      el.click();
-                      console.log('Clicked selector:', selector);
-                    }
-                  }
+                  const mdown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+                  const mup = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
+                  el.dispatchEvent(mdown);
+                  el.dispatchEvent(mup);
                 } catch(e) {}
-              }
+              };
+
+              // 查找所有类名或标签名中含“更换封面”、“上传封面”的组件
+              const selectors = [
+                'button.upload-cover', '.cover-upload', '.edit-cover', '.cover-btn', '.upload-wrapper',
+                '[class*="cover"] button', '[class*="cover"] div', '[class*="upload"] button', '[class*="cover"]'
+              ];
               
-              // 2. 寻找带有“封面”、“设计”、“图片”文字的可点击元素
+              for (const selector of selectors) {
+                const els = document.querySelectorAll(selector);
+                for (const el of els) {
+                  const txt = el.textContent || '';
+                  if (txt.includes('封面') || txt.includes('更换') || txt.includes('修改') || txt.includes('上传')) {
+                    clickElement(el);
+                    console.log('Clicked selector:', selector, txt);
+                  }
+                }
+              }
+
+              // 按文字精准匹配
               const textEls = Array.from(document.querySelectorAll('button, div, span, p, label')).filter(el => {
                 const txt = el.textContent ? el.textContent.trim() : '';
                 return txt === '上传封面' || txt === '更换封面' || txt === '编辑封面' || txt === '选择封面' || txt === '修改封面' || txt === '上传图片' || txt === '本地上传';
               });
               
               for (const el of textEls) {
-                try {
-                  el.click();
-                  console.log('Clicked text element:', el.textContent);
-                } catch(e) {}
+                clickElement(el);
+                console.log('Clicked exact text:', el.textContent);
               }
-            } catch(e) {}
+            } catch(e) {
+              console.error('Trigger cover upload error:', e);
+            }
           })()`
         });
-        await new Promise(r => setTimeout(r, 2000));
+
+        // 稳妥等待 3500ms，给弹出选择封面/裁剪遮罩极其宽裕的渲染挂载时间
+        await new Promise(r => setTimeout(r, 3500));
 
         // 绝招：通过 JavaScript 远程对象(RemoteObject)定位文件上传元素，100% 精确获取其 CDP NodeId
         const evalResult = await Runtime.evaluate({
           expression: `(() => {
             const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
             if (inputs.length === 0) return null;
-            // 优先选择含有 accept 属性且支持图片的
+            // 优先选择支持图片的 input
             const imgInput = inputs.find(el => {
               const acc = el.getAttribute('accept');
               return acc && (acc.includes('image') || acc.includes('png') || acc.includes('jpg') || acc.includes('jpeg'));
             });
             if (imgInput) return imgInput;
             
-            // 是否在弹出层内
+            // 是否在弹出层/裁剪模态框内
             const modal = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"], [class*="cropper"]');
             if (modal) {
               const modalInput = modal.querySelector('input[type="file"]');
               if (modalInput) return modalInput;
             }
             
-            // 兜底方案：多个 input 时，通常最后一个就是封面 input
+            // 多个 input 时，最后一个通常是动态挂载的封面图 input
             if (inputs.length > 1) {
               return inputs[inputs.length - 1];
             }
@@ -265,22 +318,33 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           if (imageInputNodeId) {
             await DOM.setFileInputFiles({ files: [absCoverPath], nodeId: imageInputNodeId });
             console.log(`[XHS 发布] [CDP] 成功注入封面图片路径: ${absCoverPath}`);
-            await new Promise(r => setTimeout(r, 2500));
+            // 给与 3500ms 等图片在浏览器中完全加载并在画布中解码出来
+            await new Promise(r => setTimeout(r, 3500));
 
-            // 对裁剪弹出框进行确认点击
+            // 对视频封面裁剪弹出框进行全方位确认点击
             const cropResult = await Runtime.evaluate({
               expression: `(() => {
                 try {
-                  // 1. 优先在这个 modal 的内部确认
+                  const clickElement = (el) => {
+                    if (!el) return;
+                    try { el.focus(); } catch(e) {}
+                    try { el.click(); } catch(e) {}
+                    try {
+                      el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                      el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                    } catch(e) {}
+                  };
+
+                  // 1. 优先在这个裁剪模态弹窗的内部寻确定
                   const modal = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"], [class*="cropper"]');
                   if (modal) {
                     const btns = Array.from(modal.querySelectorAll('button, [role="button"], div, span')).filter(el => {
                       const t = el.textContent ? el.textContent.trim() : '';
-                      return t === '确定' || t === '完成' || t === '保存' || t === '裁剪并确定' || t === '确认' || t.includes('确') || t.includes('完');
+                      return t === '确定' || t === '完成' || t === '保存' || t === '裁剪并确定' || t === '确认' || t.includes('确') || t.includes('完') || t.includes('保存');
                     });
                     if (btns.length > 0) {
                       const actualBtn = btns.find(b => b.tagName === 'BUTTON') || btns[0];
-                      actualBtn.click();
+                      clickElement(actualBtn);
                       return 'CLICKED_MODAL_CROP_CONFIRM_SUCCESS';
                     }
                   }
@@ -288,10 +352,10 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
                   // 2. 备用：全局点击
                   const globalBtns = Array.from(document.querySelectorAll('button')).filter(el => {
                     const t = el.textContent ? el.textContent.trim() : '';
-                    return t === '确定' || t === '完成' || t === '保存' || t === '裁剪并确定' || t === '确认';
+                    return t === '确定' || t === '完成' || t === '保存' || t === '裁剪并确定' || t === '确认' || t === '确定并使用';
                   });
                   if (globalBtns.length > 0) {
-                    globalBtns[0].click();
+                    clickElement(globalBtns[0]);
                     return 'CLICKED_GLOBAL_CROP_CONFIRM_SUCCESS';
                   }
                   return 'NO_CONFIRM_BTN_FOUND';
@@ -302,11 +366,10 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
               returnByValue: true
             });
             console.log(`[XHS 发布] 封面遮罩/裁剪确认判定结果:`, cropResult.result?.value);
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 2000));
           }
         } else {
           console.warn(`[XHS 发布] 无法利用 RemoteObject 寻找到图片上传 Input，使用传统 selector 尝试做兜底流程...`);
-          // 备用兜底
           const { root: { nodeId: latestRootId } } = await DOM.getDocument();
           const { nodeId: backupImgNodeId } = await DOM.querySelector({ 
             nodeId: latestRootId, 
@@ -386,74 +449,66 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
         const tag = tagsList[i];
         console.log(`[XHS 发布] [打字进程] (${i + 1}/${tagsList.length}) 正在模拟输入: #${tag}`);
         
-        // 激活编辑器焦点
+        // 激活编辑器焦点并让光标移至末端，保证在最尾部平滑续写
         await Runtime.evaluate({
           expression: `(() => {
             const editor = document.querySelector('div[contenteditable="true"], x-editor, .post-content, textarea[placeholder*="正文"], #post-textarea');
-            if (editor) { editor.focus(); }
+            if (editor) {
+              editor.focus();
+              try {
+                const range = document.createRange();
+                const sel = window.getSelection();
+                range.selectNodeContents(editor);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+              } catch(e) {}
+            }
           })()`
         });
         await new Promise(r => setTimeout(r, 200));
 
-        // 1. 模拟按下并弹起 '# / 井号'
-        await Input.dispatchKeyEvent({ type: 'keyDown', text: '#', unmodifiedText: '#', key: '#' });
-        await Input.dispatchKeyEvent({ type: 'keyUp', text: '#', unmodifiedText: '#', key: '#' });
-        await new Promise(r => setTimeout(r, 100));
+        // 1. 模拟输入 '# / 井号' 触发搜索联想
+        await typeCharacter('#');
+        await new Promise(r => setTimeout(r, 150));
 
-        // 2. 逐一打上标签名字 (比如 "日常", "摄影") 
+        // 2. 逐一打上标签字词 (比如 "日常", "摄影")
         for (const char of tag) {
-          await Input.dispatchKeyEvent({ type: 'keyDown', text: char, unmodifiedText: char, key: char });
-          await Input.dispatchKeyEvent({ type: 'keyUp', text: char, unmodifiedText: char, key: char });
-          await new Promise(r => setTimeout(r, 100));
+          await typeCharacter(char);
+          await new Promise(r => setTimeout(r, 120));
         }
 
-        // 3. 高度仿真停留 500ms 让小红书的后台搜索关联下拉框拉取列表
-        await new Promise(r => setTimeout(r, 500));
+        // 3. 高度仿真停留 800ms 让小红书的后台搜索关联下拉框稳定加载
+        await new Promise(r => setTimeout(r, 800));
 
-        // 4. 用户打完标签会通过敲击空格或回车来激活/确定该标签，这里同时发放空格和回车事件让小红书生成真正的蓝色话题包
-        await Input.dispatchKeyEvent({
-          type: 'keyDown',
-          text: ' ',
-          unmodifiedText: ' ',
-          key: 'Space',
-          code: 'Space'
-        });
-        await Input.dispatchKeyEvent({
-          type: 'keyUp',
-          text: ' ',
-          unmodifiedText: ' ',
-          key: 'Space',
-          code: 'Space'
-        });
+        // 4. 用户反馈：输入完话题后按一下空格键就可以识别到话题。
+        // 所以我们输入一个空格触发话题包转换
+        await typeCharacter(' ');
+        await new Promise(r => setTimeout(r, 300));
 
-        // 5. 补充一个空格进行阻隔，给下一个话题的录入完美护航
-        await new Promise(r => setTimeout(r, 200));
-        await Input.dispatchKeyEvent({
-          type: 'keyDown',
-          text: ' ',
-          unmodifiedText: ' ',
-          key: 'Space',
-          code: 'Space'
-        });
-        await Input.dispatchKeyEvent({
-          type: 'keyUp',
-          text: ' ',
-          unmodifiedText: ' ',
-          key: 'Space',
-          code: 'Space'
-        });
-
-        await new Promise(r => setTimeout(r, 400));
+        // 5. 补充第二个空格或者回车键将话题包进行彻底阻断和隔离，为下一个话题完美引航
+        await typeCharacter(' ');
+        await new Promise(r => setTimeout(r, 450));
       }
     }
 
     console.log(`[XHS 发布] 所有话题标签已高仿真度完成模拟输入！`);
 
-    // 8b. 触发“声明原创”开关
+    // 8c. 触发“声明原创”开关
     xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 88, message: '检测并设定原创声明条款...' });
     const originalTriggerResult = await Runtime.evaluate({
       expression: `(() => {
         try {
+          const clickElement = (el) => {
+            if (!el) return;
+            try { el.focus(); } catch(e) {}
+            try { el.click(); } catch(e) {}
+            try {
+              el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+              el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            } catch(e) {}
+          };
+
           // 寻找包含“声明原创”的文本标识
           const originalLabels = Array.from(document.querySelectorAll('span, label, p, div')).filter(el => {
             const text = el.textContent ? el.textContent.trim() : '';
@@ -462,14 +517,14 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           
           if (originalLabels.length > 0) {
             // 点击文本本身
-            originalLabels[0].click();
+            clickElement(originalLabels[0]);
             
             // 寻找父级中的开关/复选框并同步点击
             const parent = originalLabels[0].parentElement;
             if (parent) {
               const sw = parent.querySelector('input[type="checkbox"], .semi-switch, .semi-checkbox, .checkbox, [class*="switch"]');
               if (sw) {
-                sw.click();
+                clickElement(sw);
                 return 'ORIGINAL_LABEL_AND_SWITCH_CLICKED';
               }
             }
@@ -479,7 +534,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           // 如果未按文字定位，尝试根据类名或 ID 自主定位
           const originalSwitches = document.querySelectorAll('[class*="original"], [id*="original"]');
           if (originalSwitches.length > 0) {
-            originalSwitches[0].click();
+            clickElement(originalSwitches[0]);
             return 'ORIGINAL_SWITCHES_CLICKED_BY_SELECTOR';
           }
           
@@ -493,49 +548,112 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     console.log(`[XHS 发布] 原创声明开关触发尝试结果:`, originalTriggerResult.result?.value);
 
-    // 留出 1.5 秒安全时间，彻底等待“声明须知”对话框弹窗打开
-    await new Promise(r => setTimeout(r, 1500));
+    // 留出 1.8 秒充分安全时间，彻底等待小红书的“声明须知”对话框弹窗打开
+    await new Promise(r => setTimeout(r, 1800));
 
-    // 8c. 勾选“声名须知”复选逻辑，并确认点击“声明原创”按钮
+    // 8d. 勾选“声名须知”复选逻辑，并确认点击“声明原创”按钮
     const originalDialogResult = await Runtime.evaluate({
       expression: `(() => {
         try {
-          // 1. 寻找弹出的对话框容器，并在其中定位协议勾选部分（“声明须知”、“我已阅读”、“原创声明”）
-          const checkboxLabel = Array.from(document.querySelectorAll('span, label, p, div')).find(el => {
+          const clickElement = (el) => {
+            if (!el) return;
+            try { el.focus(); } catch(e) {}
+            try { el.click(); } catch(e) {}
+          };
+
+          // 1. 寻找弹出的对话框容器（Modal 或 Dialog）
+          const dialog = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"], [role="dialog"]') || document;
+          
+          // 2. 在对话框中寻找“声明须知”、“我已阅读”、“同意”等字样的条约文字标签
+          const checkboxLabel = Array.from(dialog.querySelectorAll('span, label, p, div, a')).find(el => {
             const txt = el.textContent || '';
-            return txt.includes('声明须知') || txt.includes('我已阅读') || txt.includes('原创条款') || txt.includes('原创声明');
+            return txt.includes('声明须知') || txt.includes('我已阅读') || txt.includes('同意') || txt.includes('及相关处置');
           });
 
           if (checkboxLabel) {
-            checkboxLabel.click();
+            console.log('Found agreement text:', checkboxLabel.textContent);
             
-            const parent = checkboxLabel.parentElement;
-            if (parent) {
-              const input = parent.querySelector('input[type="checkbox"], .semi-checkbox, .checkbox');
-              if (input) {
-                input.click();
+            // 3. 在其文字本身或它的父辈元素链条内搜寻复选选按钮，保障 100% 连带判定
+            let foundCheckbox = null;
+            const selectors = ['.semi-checkbox', 'input[type="checkbox"]', '.checkbox', '[role="checkbox"]'];
+            
+            let current = checkboxLabel;
+            for (let d = 0; d < 4 && current; d++) {
+              for (const sel of selectors) {
+                const cbEl = current.querySelector(sel);
+                if (cbEl) {
+                  foundCheckbox = cbEl;
+                  break;
+                }
               }
+              if (foundCheckbox) break;
+              current = current.parentElement;
+            }
+
+            // 如果还是找不到，就用 checkboxLabel 自身做备用对象
+            const targetCb = foundCheckbox || checkboxLabel;
+            
+            // 4. 精准状态检查：如果通过类名或属性发现它已经是 checked，绝对不要重复点击导致取消勾选！
+            let isAlreadyChecked = false;
+            if (targetCb.tagName === 'INPUT') {
+              isAlreadyChecked = targetCb.checked;
+            } else {
+              const cls = targetCb.className || '';
+              isAlreadyChecked = cls.includes('checked') || 
+                                 targetCb.getAttribute('aria-checked') === 'true' || 
+                                 cls.includes('active') ||
+                                 !!targetCb.querySelector('[class*="checked"]') ||
+                                 !!targetCb.querySelector('input[type="checkbox"]:checked');
+            }
+
+            console.log('Agreement checkbox checked status:', isAlreadyChecked);
+            if (!isAlreadyChecked) {
+              clickElement(targetCb);
+              console.log('Clicked agreement checkbox successfully!');
+            } else {
+              console.log('Agreement checkbox was already checked. Skipped click to prevent uncheck.');
             }
           } else {
-            // 最强鲁棒防线：如果搜不到特定文本，则把当前打开的弹框模态框下的全部 Checkbox 均尝试勾上
-            const checkboxes = Array.from(document.querySelectorAll('input[type="checkbox"], .semi-checkbox, .checkbox'));
+            // 最强鲁棒防线：如果搜不到特定文本，则把对话框下的全部未勾选 Checkbox 都勾上
+            const checkboxes = Array.from(dialog.querySelectorAll('input[type="checkbox"], .semi-checkbox, .checkbox'));
             checkboxes.forEach(cb => {
-              try { cb.click(); } catch(e) {}
+              try {
+                let isChecked = false;
+                if (cb.tagName === 'INPUT') {
+                  isChecked = cb.checked;
+                } else {
+                  isChecked = cb.classList.contains('semi-checkbox-checked') || cb.getAttribute('aria-checked') === 'true';
+                }
+                if (!isChecked) {
+                  clickElement(cb);
+                }
+              } catch(e) {}
             });
           }
 
-          // 2. 在对话框中寻找并点击“声明原创”确定/提交按钮
-          const confirmBtns = Array.from(document.querySelectorAll('button, [role="button"], span, div')).filter(el => {
-            const txt = el.textContent ? el.textContent.trim() : '';
-            return txt === '声明原创' || txt === '确认声明' || txt === '确认';
-          });
+          // 等待勾选指令派发完成
+          return new Promise(resolve => {
+            setTimeout(() => {
+              try {
+                // 5. 寻找并点击二次确认按钮（如：“声明原创”、“确认声明”、“确认”、“确定”）
+                const dialogContext = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"]') || document;
+                const confirmBtns = Array.from(dialogContext.querySelectorAll('button, [role="button"], span, div')).filter(el => {
+                  const txt = el.textContent ? el.textContent.trim() : '';
+                  return txt === '声明原创' || txt === '确认声明' || txt === '确认' || txt === '确定';
+                });
 
-          if (confirmBtns.length > 0) {
-            const targetBtn = confirmBtns.find(el => el.tagName === 'BUTTON') || confirmBtns[0];
-            targetBtn.click();
-            return 'DECLARED_ORIGINAL_DIALOG_CONFIRMED_SUCCESS';
-          }
-          return 'NO_CONFIRM_BUTTON_FOUND_IN_DIALOG';
+                if (confirmBtns.length > 0) {
+                  const targetBtn = confirmBtns.find(el => el.tagName === 'BUTTON') || confirmBtns[0];
+                  clickElement(targetBtn);
+                  resolve('DECLARED_ORIGINAL_DIALOG_CONFIRMED_SUCCESS');
+                } else {
+                  resolve('NO_CONFIRM_BUTTON_FOUND_IN_DIALOG');
+                }
+              } catch(e) {
+                resolve('CONFIRM_BTN_STEP_ERROR: ' + e.message);
+              }
+            }, 300);
+          });
         } catch(e) {
           return 'ERROR: ' + e.message;
         }
