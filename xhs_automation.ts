@@ -277,85 +277,104 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
       await new Promise(r => setTimeout(r, 5000));
 
       try {
-        // 强制触发“设置封面”区域的 hover 和 click
+        // 第一步：精细派发鼠标 hover 拟真事件到“设置封面”区域，使其暴露出“修改封面”遮罩提示层
+        await Runtime.evaluate({
+          expression: `(() => {
+            try {
+              // 1. 寻找核心锚点：包含“设置封面”或“视频封面”的纯文本标签（叶子节点为主）
+              const anchors = Array.from(document.querySelectorAll('*')).filter(el => {
+                if (el.children.length > 1) return false;
+                const txt = el.textContent ? el.textContent.trim() : '';
+                return txt === '设置封面' || txt === '视频封面' || txt === '更换封面';
+              });
+
+              console.log('Found cover anchors count:', anchors.length);
+
+              // 2. 模拟鼠标 hover 在锚点元素以及它的父代容器上，让提示飘出
+              anchors.forEach(anc => {
+                try {
+                  anc.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+                  anc.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
+                  anc.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true }));
+                } catch(e) {}
+
+                // 往上寻找高优先级的父代图像框架盒子，对它及它内部的 preview 区域、canvas 同样进行高物理 Hover
+                let cur = anc;
+                for (let d = 0; d < 3 && cur; d++) {
+                  try {
+                    cur.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+                    cur.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
+                  } catch(e) {}
+                  
+                  const subs = Array.from(cur.querySelectorAll('img, canvas, video, svg, .cover-preview, [class*="preview"], [class*="cover"], [class*="btn"]'));
+                  subs.forEach(s => {
+                    try {
+                      s.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+                      s.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
+                    } catch(e) {}
+                  });
+                  cur = cur.parentElement;
+                }
+              });
+
+              return 'HOVER_PREVIEWS_DISPATCHED';
+            } catch(e) {
+              return 'HOVER_ERROR: ' + e.message;
+            }
+          })()`,
+          returnByValue: true
+        });
+
+        // 睡眠 1.2s 给浮层挂载和激活极高容错
+        await new Promise(r => setTimeout(r, 1200));
+
+        // 第二步：执行高精准物理点击
         await Runtime.evaluate({
           expression: `(() => {
             try {
               const clickElement = (el) => {
                 if (!el) return;
                 try { el.focus(); } catch(e) {}
-                try {
-                  // 1. 发送高拟真悬浮 Mouse Hover 事件激活小红书的“修改封面”文字提示浮层
-                  el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
-                  el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
-                  el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true }));
-                } catch(e) {}
                 try { el.click(); } catch(e) {}
                 try {
-                  const mdown = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
-                  const mup = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
-                  el.dispatchEvent(mdown);
-                  el.dispatchEvent(mup);
+                  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                  el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
                 } catch(e) {}
               };
 
-              // 方案 A：围绕“设置封面”/“视频封面”/“修改封面”文本向周围扩展探测点击点
-              const coverTitleLabels = Array.from(document.querySelectorAll('*')).filter(el => {
+              // A. 搜寻浮现并可以点击的敏感词标题按钮（不仅是纯文字，多级元素也进行兜底）
+              const activeKeywords = ['修改封面', '更换封面', '编辑封面', '选择封面', '设置封面'];
+              let clicked = false;
+
+              const allEls = Array.from(document.querySelectorAll('*'));
+              const targets = allEls.filter(el => {
+                if (el.children.length > 2) return false;
                 const txt = el.textContent ? el.textContent.trim() : '';
-                return txt === '设置封面' || txt === '视频封面' || txt === '更换封面' || txt === '编辑封面';
+                return activeKeywords.includes(txt) || activeKeywords.some(kw => txt === kw);
               });
 
-              console.log('Detected cover labels count:', coverTitleLabels.length);
-
-              let clickedAnySuccess = false;
-              for (const header of coverTitleLabels) {
-                // 点击标签自身
-                clickElement(header);
-                
-                // 向上寻找父代容器，然后点击其底下的 canvas, img, video, .cover-preview, .upload-btn 或类名中含有 cover/upload 的交互元素
-                let current = header;
-                for (let d = 0; d < 4 && current; d++) {
-                  const interactives = Array.from(current.querySelectorAll('.cover-preview, [class*="cover"], .upload-btn, .upload-btn-wrapper, canvas, img, video, .card, [class*="card"], [class*="btn"], button, [role="button"]'));
-                  for (const target of interactives) {
-                    if (target !== header && target.textContent !== header.textContent) {
-                      clickElement(target);
-                      console.log('Clicked sub-interactive block inside parent:', target.tagName, target.className);
-                      clickedAnySuccess = true;
-                    }
-                  }
-                  
-                  // 同时尝试点击同级的下一个兄弟节点及其子代
-                  let sibling = current.nextElementSibling;
-                  while (sibling) {
-                    clickElement(sibling);
-                    const siblingChildren = Array.from(sibling.querySelectorAll('.cover-preview, [class*="cover"], canvas, img, video, .card, button'));
-                    for (const sc of siblingChildren) {
-                      clickElement(sc);
-                    }
-                    sibling = sibling.nextElementSibling;
-                    clickedAnySuccess = true;
-                  }
-                  current = current.parentElement;
-                }
+              console.log('Click targets found:', targets.length);
+              for (const t of targets) {
+                clickElement(t);
+                console.log('Clicked keyword component directly:', t.textContent);
+                clicked = true;
               }
 
-              // 方案 B：直接关键字全局匹配任何类似于“更换封面”、“修改封面”、“编辑封面”、“选择封面”的组件
-              const directKeywords = ['修改封面', '更换封面', '设置封面', '编辑封面', '选择封面', '视频封面', '上传图片', '本地上传'];
-              const customEls = Array.from(document.querySelectorAll('*')).filter(el => {
-                if (el.children.length > 2) return false; // 仅聚焦叶子结点或叶子紧邻祖先，防大范围容器点击
-                const txt = el.textContent ? el.textContent.trim() : '';
-                return directKeywords.some(kw => txt === kw || txt.includes(kw));
-              });
-
-              for (const el of customEls) {
-                clickElement(el);
-                console.log('Clicked matched keyword component directly:', el.textContent);
-                clickedAnySuccess = true;
+              // B. 兜底方案：如果没有任何组件被点击，我们直接抓取小红书视频封面预览图（通常是 canvas 或包含“preview”类名/字样的 img、canvas 等图片区域）进行强制点击
+              if (!clicked) {
+                const backups = Array.from(document.querySelectorAll('canvas, img, video, .cover-preview, [class*="preview"], [class*="cover"]')).filter(el => {
+                  return el.clientWidth > 10 && el.clientHeight > 10;
+                });
+                console.log('Cover backups clickable components:', backups.length);
+                backups.forEach(b => {
+                  clickElement(b);
+                  clicked = true;
+                });
               }
 
-              return clickedAnySuccess ? 'COVER_TRIGGER_ATTEMPTED' : 'NO_ELEMENT_CLICKED';
+              return clicked ? 'CLICK_DISPATCH_SUCCESS' : 'NO_ELEMENT_CLICKED';
             } catch(e) {
-              return 'TRIGGER_ERROR: ' + e.message;
+              return 'CLICK_ERROR: ' + e.message;
             }
           })()`,
           returnByValue: true
@@ -386,7 +405,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             } catch(e) {}
           })()`
         });
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 1200));
 
         // 通过 JavaScript 远程对象(RemoteObject)定位文件上传 input，100% 精确获取其 CDP NodeId
         const evalResult = await Runtime.evaluate({
@@ -422,8 +441,8 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           if (imageInputNodeId) {
             await DOM.setFileInputFiles({ files: [absCoverPath], nodeId: imageInputNodeId });
             console.log(`[XHS 发布] [CDP] 成功注入封面图片路径: ${absCoverPath}`);
-            // 给与 4500ms 等图片在浏览器中完全加载、渲染并在裁剪画板中生成
-            await new Promise(r => setTimeout(r, 4500));
+            // 给与 5000ms 等图片在浏览器中完全加载、渲染并在裁剪画板中生成
+            await new Promise(r => setTimeout(r, 5000));
 
             // 对封面设置弹出框进行确认点击（点击右下角确定按钮）
             const cropResult = await Runtime.evaluate({
@@ -439,7 +458,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
                     } catch(e) {}
                   };
 
-                  // 1. 优先在这个封面弹窗/裁剪对话框的内部寻找确定
+                  // 1. 优先在这个封面弹窗/裁剪对话框 of 内部寻找确定
                   const modal = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"], [class*="cropper"], [role="dialog"]');
                   if (modal) {
                     // 自定义查找底部/右下角的确和完按钮，通常是后置的 button 元素
