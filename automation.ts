@@ -1307,60 +1307,22 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     console.log('等待浏览器启动并聚焦 (5秒)...');
     await new Promise(r => setTimeout(r, 5000));
 
-    console.log('🌐 正在等待页面完全加载 (智能检测模式)...');
-    let pageLoaded = false;
-    const maxWaitSeconds = 40;
-    
-    // 初始化剪贴板标记
-    try {
-        await clipboard.setContent('SIM_WAITING');
-    } catch (e) {}
-
-    for (let wait = 0; wait < maxWaitSeconds; wait++) {
+    console.log('🌐 正在安全等待 Gemini 页面整体及脚本加载就绪 (15秒)...');
+    for (let wait = 0; wait < 15; wait++) {
         if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
-        
-        // 每 3 秒尝试注入一次检测脚本
-        if (wait % 3 === 0) {
-            try {
-                const loadCheckScript = `(() => {
-                    try {
-                        const ready = document.readyState === 'complete';
-                        const hasInput = !!document.querySelector('div[contenteditable="true"], textarea, rich-textarea, main [role="textbox"]');
-                        if (ready && hasInput) {
-                            const t = document.createElement('textarea');
-                            t.value = 'SIM_LOADED';
-                            document.body.appendChild(t);
-                            t.select();
-                            document.execCommand('copy');
-                            document.body.removeChild(t);
-                        }
-                    } catch(e) {}
-                })()`;
-                await injectJsViaAddressBar(loadCheckScript);
-            } catch (e) {
-                // 忽略
-            }
-        }
-        
         await new Promise(r => setTimeout(r, 1000));
-        
-        try {
-            const clipText = await clipboard.getContent();
-            if (clipText === 'SIM_LOADED') {
-                console.log(`🎉 [物理模拟] 检测到页面完全加载且输入框已就绪！用时 ${wait + 1} 秒`);
-                pageLoaded = true;
-                break;
-            }
-        } catch (e) {
-            // 忽略
-        }
     }
     
-    if (!pageLoaded) {
-        console.log('⚠️ [物理模拟] 等待页面加载超时，强制进入后续操作...');
-    }
-    // 加载完成后，额外等待 1.5 秒确保 UI 逻辑及事件监听器完全加载完毕，防止粘滞
-    await new Promise(r => setTimeout(r, 1500));
+    // 定义极轻量、安全的单次强制聚焦脚本 (不进行任何可能改变页面状态的剪贴板轮询，聚焦并触发点击使其恢复响应)
+    const focusCommand = `(() => {
+        try {
+            const el = document.querySelector('div[contenteditable="true"], textarea, rich-textarea, main [role="textbox"]');
+            if (el) {
+                el.focus();
+                el.click();
+            }
+        } catch(e) {}
+    })()`;
 
     for (const task of tasks) {
       if (cancelledJobs.has(filename)) throw new Error('CANCELLED');
@@ -1370,7 +1332,16 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
         jobProgress.set(filename, { completed: completedLoops + 0.1, total: totalLoops, status: 'running' });
         console.log(`\n正在执行任务: ${task.prompt}, 第 ${i + 1} 次`);
         
-        // 1.5 粘贴参考图
+        // 关键安全修复：在每轮粘贴任何内容（图片、文字）之前，向页面注入单次强制聚焦命令，确保浏览器焦点精准对齐输入框
+        console.log('👉 正在执行输入框单次强制聚焦，确保焦点完美对齐...');
+        try {
+            await injectJsViaAddressBar(focusCommand);
+        } catch (e) {
+            console.warn('⚠️ 尝试通过地址栏强制聚焦失败:', e);
+        }
+        await new Promise(r => setTimeout(r, 1500)); // 给聚焦和点击动作 1.5 秒缓冲时间
+
+         // 1.5 粘贴参考图
         if (task.images && task.images.length > 0) {
             console.log(`准备粘贴 ${task.images.length} 张参考图...`);
             for (const imgUrl of task.images) {
