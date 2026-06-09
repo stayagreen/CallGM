@@ -822,7 +822,8 @@ function MainApp() {
     videoConcurrency: 3,
     imageQuality: 'performance',
     dispatchStrategy: 'server',
-    globalConcurrency: 3
+    globalConcurrency: 3,
+    openCodeApiKey: ''
   });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
@@ -2509,15 +2510,13 @@ function MainApp() {
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid.split('/').pop()}</span>
                       <div className="flex items-center gap-1">
-                        {(vidData.taskData || true) && (
-                          <button
-                            onClick={() => setViewingXhsNotes({ videoId: vidData.path, jobId: vidData.jobId, taskData: vidData.taskData || {} as VideoTask })}
-                            className="p-1 px-2 text-xs font-bold text-red-500 bg-red-50 hover:bg-red-100 rounded transition-colors"
-                            title="查看小红书笔记"
-                          >
-                            小红书
-                          </button>
-                        )}
+                        <button
+                          onClick={() => setViewingXhsNotes({ videoId: vidData.path, jobId: vidData.jobId, taskData: vidData.taskData || {} as VideoTask })}
+                          className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                          title="小红书配置"
+                        >
+                          <Target className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={async () => {
                             if (!window.confirm('确定要删除这个视频吗？')) return;
@@ -2680,112 +2679,158 @@ function MainApp() {
               <h2 className="text-2xl font-bold text-gray-800">系统设置</h2>
               <button disabled={isSavingConfig} onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-gray-600 disabled:opacity-50"><X size={24}/></button>
             </div>
-            <div className="mb-6 space-y-4 max-h-[60vh] overflow-y-auto pr-2">
-              <div className="grid grid-cols-1 gap-4">
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">Chrome 程序路径 (.exe)：</label>
-                  <input
-                    type="text"
-                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                    value={systemConfig.chromePath}
-                    onChange={(e) => setSystemConfig({...systemConfig, chromePath: e.target.value})}
-                    placeholder="例如: C:\Program Files\Google\Chrome\Application\chrome.exe"
-                  />
-                </div>
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">浏览器用户数据目录 (UserData)：</label>
-                  <input
-                    type="text"
-                    className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                    value={systemConfig.userDataDir}
-                    onChange={(e) => setSystemConfig({...systemConfig, userDataDir: e.target.value})}
-                    placeholder="例如: C:\ChromeDebug"
-                  />
-                  <p className="text-xs text-gray-400 mt-1">※ 重要：请确保此目录未被其它浏览器窗口占用。若出现崩溃，请尝试更换此路径。</p>
-                </div>
-              </div>
-              <div>
-                <label className="block mb-1 font-semibold text-gray-700">浏览器默认下载目录 (绝对路径)：</label>
-                <input
-                  type="text"
-                  className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
-                  value={systemConfig.systemDownloadsDir}
-                  onChange={(e) => setSystemConfig({...systemConfig, systemDownloadsDir: e.target.value})}
-                  placeholder="例如: C:\Users\YourName\Downloads"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">全局任务分配方式:</label>
-                  <select 
-                    className="w-full p-2 border border-gray-200 rounded-lg outline-none bg-white font-medium text-blue-700"
-                    value={systemConfig.dispatchStrategy || 'server'}
-                    onChange={(e) => setSystemConfig({...systemConfig, dispatchStrategy: e.target.value})}
-                  >
-                    <option value="server">本地服务器执行</option>
-                    <option value="worker">仅节点虚拟机执行</option>
-                    <option value="all">所有设备通过抢单执行</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">全局任务最大并发数:</label>
-                  <input type="number" min="1" className="w-full p-2 border border-gray-200 rounded-lg outline-none font-medium text-gray-800" value={systemConfig.globalConcurrency || 3} onChange={(e) => setSystemConfig({...systemConfig, globalConcurrency: parseInt(e.target.value) || 1})} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">粘贴图后等待(秒):</label>
-                  <div className="flex gap-1">
-                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.pasteMin || 5} onChange={(e) => setSystemConfig({...systemConfig, pasteMin: parseInt(e.target.value)})} />
-                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.pasteMax || 5} onChange={(e) => setSystemConfig({...systemConfig, pasteMax: parseInt(e.target.value)})} />
+            <div className="mb-6 space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+              <details className="group border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm" open>
+                <summary className="font-bold text-gray-800 bg-gray-50 p-4 cursor-pointer list-none flex justify-between items-center hover:bg-gray-100 transition-colors">
+                  <div className="flex items-center gap-2"><Settings size={18} className="text-blue-500"/> 基础环境与路径配置</div>
+                  <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="p-5 border-t border-gray-200 space-y-4">
+                  <div className="grid grid-cols-1 gap-4">
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">Chrome 程序路径 (.exe)：</label>
+                      <input
+                        type="text"
+                        className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                        value={systemConfig.chromePath}
+                        onChange={(e) => setSystemConfig({...systemConfig, chromePath: e.target.value})}
+                        placeholder="例如: C:\Program Files\Google\Chrome\Application\chrome.exe"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">浏览器用户数据目录 (UserData)：</label>
+                      <input
+                        type="text"
+                        className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                        value={systemConfig.userDataDir}
+                        onChange={(e) => setSystemConfig({...systemConfig, userDataDir: e.target.value})}
+                        placeholder="例如: C:\ChromeDebug"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">※ 重要：请确保此目录未被其它浏览器窗口占用。若出现崩溃，请尝试更换此路径。</p>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block mb-1 font-semibold text-gray-700">浏览器默认下载目录 (绝对路径)：</label>
+                    <input
+                      type="text"
+                      className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={systemConfig.systemDownloadsDir}
+                      onChange={(e) => setSystemConfig({...systemConfig, systemDownloadsDir: e.target.value})}
+                      placeholder="例如: C:\Users\YourName\Downloads"
+                    />
                   </div>
                 </div>
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">图片出现后等待(秒):</label>
-                  <div className="flex gap-1">
-                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.clickMin || 8} onChange={(e) => setSystemConfig({...systemConfig, clickMin: parseInt(e.target.value)})} />
-                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.clickMax || 8} onChange={(e) => setSystemConfig({...systemConfig, clickMax: parseInt(e.target.value)})} />
+              </details>
+
+              <details className="group border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm">
+                <summary className="font-bold text-gray-800 bg-gray-50 p-4 cursor-pointer list-none flex justify-between items-center hover:bg-gray-100 transition-colors">
+                  <div className="flex items-center gap-2"><Settings size={18} className="text-blue-500"/> 任务分配与并发配置</div>
+                  <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="p-5 border-t border-gray-200 space-y-4">
+                  <div className="grid grid-cols-2 gap-4 bg-white">
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">全局任务分配方式:</label>
+                      <select 
+                        className="w-full p-2 border border-gray-200 rounded-lg outline-none bg-white font-medium text-blue-700"
+                        value={systemConfig.dispatchStrategy || 'server'}
+                        onChange={(e) => setSystemConfig({...systemConfig, dispatchStrategy: e.target.value})}
+                      >
+                        <option value="server">本地服务器执行</option>
+                        <option value="worker">仅节点虚拟机执行</option>
+                        <option value="all">所有设备通过抢单执行</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">全局任务最大并发数:</label>
+                      <input type="number" min="1" className="w-full p-2 border border-gray-200 rounded-lg outline-none font-medium text-gray-800" value={systemConfig.globalConcurrency || 3} onChange={(e) => setSystemConfig({...systemConfig, globalConcurrency: parseInt(e.target.value) || 1})} />
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">视频渲染并发数:</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.videoConcurrency || 3} onChange={(e) => setSystemConfig({...systemConfig, videoConcurrency: parseInt(e.target.value)})} />
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">图片质量模式:</label>
+                      <select 
+                        className="w-full p-2 border border-gray-200 rounded-lg bg-white" 
+                        value={systemConfig.imageQuality || 'performance'} 
+                        onChange={(e) => setSystemConfig({...systemConfig, imageQuality: e.target.value as any})}
+                      >
+                        <option value="fastSpeed">极速</option>
+                        <option value="performance">平衡</option>
+                        <option value="highQuality">保真</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">下载超时等待(秒):</label>
-                  <div className="flex gap-1">
-                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadMin || 120} onChange={(e) => setSystemConfig({...systemConfig, downloadMin: parseInt(e.target.value)})} />
-                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadMax || 120} onChange={(e) => setSystemConfig({...systemConfig, downloadMax: parseInt(e.target.value)})} />
+              </details>
+
+              <details className="group border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm">
+                <summary className="font-bold text-gray-800 bg-gray-50 p-4 cursor-pointer list-none flex justify-between items-center hover:bg-gray-100 transition-colors">
+                  <div className="flex items-center gap-2"><Clock size={18} className="text-blue-500"/> 自动化时间与重试配置</div>
+                  <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="p-5 border-t border-gray-200 space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">粘贴图后等待(秒):</label>
+                      <div className="flex gap-1">
+                        <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.pasteMin || 5} onChange={(e) => setSystemConfig({...systemConfig, pasteMin: parseInt(e.target.value)})} />
+                        <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.pasteMax || 5} onChange={(e) => setSystemConfig({...systemConfig, pasteMax: parseInt(e.target.value)})} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">图片出现后等待(秒):</label>
+                      <div className="flex gap-1">
+                        <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.clickMin || 8} onChange={(e) => setSystemConfig({...systemConfig, clickMin: parseInt(e.target.value)})} />
+                        <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.clickMax || 8} onChange={(e) => setSystemConfig({...systemConfig, clickMax: parseInt(e.target.value)})} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">下载超时等待(秒):</label>
+                      <div className="flex gap-1">
+                        <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadMin || 120} onChange={(e) => setSystemConfig({...systemConfig, downloadMin: parseInt(e.target.value)})} />
+                        <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadMax || 120} onChange={(e) => setSystemConfig({...systemConfig, downloadMax: parseInt(e.target.value)})} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">任务间隔等待(秒):</label>
+                      <div className="flex gap-1">
+                        <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskMin || 5} onChange={(e) => setSystemConfig({...systemConfig, taskMin: parseInt(e.target.value)})} />
+                        <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskMax || 5} onChange={(e) => setSystemConfig({...systemConfig, taskMax: parseInt(e.target.value)})} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">点击下载后等待(秒):</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadCheckDelay || 1} onChange={(e) => setSystemConfig({...systemConfig, downloadCheckDelay: parseInt(e.target.value)})} />
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">图片下载重试次数:</label>
+                      <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadRetries || 3} onChange={(e) => setSystemConfig({...systemConfig, downloadRetries: parseInt(e.target.value)})} />
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">任务间隔等待(秒):</label>
-                  <div className="flex gap-1">
-                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskMin || 5} onChange={(e) => setSystemConfig({...systemConfig, taskMin: parseInt(e.target.value)})} />
-                    <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.taskMax || 5} onChange={(e) => setSystemConfig({...systemConfig, taskMax: parseInt(e.target.value)})} />
+              </details>
+
+              <details className="group border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm" open>
+                <summary className="font-bold text-gray-800 bg-gray-50 p-4 cursor-pointer list-none flex justify-between items-center hover:bg-gray-100 transition-colors">
+                  <div className="flex items-center gap-2"><Sparkles size={18} className="text-purple-500"/> AI 大模型配置</div>
+                  <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="p-5 border-t border-gray-200 space-y-4">
+                  <div>
+                    <label className="block mb-1 font-semibold text-gray-700">OpenCode API Key：</label>
+                    <input
+                      type="password"
+                      className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
+                      value={systemConfig.openCodeApiKey || ''}
+                      onChange={(e) => setSystemConfig({...systemConfig, openCodeApiKey: e.target.value})}
+                      placeholder="sk-..."
+                    />
+                    <p className="text-xs text-gray-400 mt-2">※ 用于一键生成小红书笔记标题、话题和正文等内容</p>
                   </div>
                 </div>
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">点击下载后等待(秒):</label>
-                  <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadCheckDelay || 1} onChange={(e) => setSystemConfig({...systemConfig, downloadCheckDelay: parseInt(e.target.value)})} />
-                </div>
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">图片下载重试次数:</label>
-                  <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.downloadRetries || 3} onChange={(e) => setSystemConfig({...systemConfig, downloadRetries: parseInt(e.target.value)})} />
-                </div>
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">视频渲染并发数:</label>
-                  <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.videoConcurrency || 3} onChange={(e) => setSystemConfig({...systemConfig, videoConcurrency: parseInt(e.target.value)})} />
-                </div>
-                <div>
-                  <label className="block mb-1 font-semibold text-gray-700">图片质量模式:</label>
-                  <select 
-                    className="w-full p-2 border border-gray-200 rounded-lg bg-white" 
-                    value={systemConfig.imageQuality || 'performance'} 
-                    onChange={(e) => setSystemConfig({...systemConfig, imageQuality: e.target.value as any})}
-                  >
-                    <option value="fastSpeed">极速</option>
-                    <option value="performance">平衡</option>
-                    <option value="highQuality">保真</option>
-                  </select>
-                </div>
-              </div>
+              </details>
             </div>
             <div className="flex gap-3">
               <button disabled={isSavingConfig} onClick={() => setShowConfigModal(false)} className="flex-1 py-3 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition disabled:opacity-50">取消</button>
@@ -3024,7 +3069,14 @@ function MainApp() {
                   {viewingXhsNotes.taskData?.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards.length > 0 && viewingXhsNotes.taskData.storyboards[0].image) ? (
                     <>
                       <img 
-                        src={`/api/proxy?url=${encodeURIComponent(viewingXhsNotes.taskData.xhsCoverImage || viewingXhsNotes.taskData.storyboards[0].image)}`.replace('&', '%26')} 
+                        src={(() => {
+                          const url = viewingXhsNotes.taskData.xhsCoverImage || (viewingXhsNotes.taskData.storyboards && viewingXhsNotes.taskData.storyboards[0]?.image);
+                          if (!url) return '';
+                          if (url.startsWith('data:')) return url;
+                          if (url.startsWith('/downloads/') || url.startsWith('/uploads/')) return `${url}?t=${Date.now()}`;
+                          if (!url.startsWith('http')) return url;
+                          return `/api/proxy?url=${encodeURIComponent(url)}`.replace('&', '%26');
+                        })()}
                         className="absolute inset-0 w-full h-full object-cover" 
                         alt="Cover"
                       />
