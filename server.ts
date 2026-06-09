@@ -1,5 +1,6 @@
 process.env.TZ = 'Asia/Shanghai';
 import express from "express";
+import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
@@ -1230,39 +1231,70 @@ async function startServer() {
     }
   });
 
-  // Generate Xiaohongshu metadata using OpenCode API (MiniMax M3 model)
+  async function generateWithGemini(promptText: string) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      throw new Error("内置的 GEMINI_API_KEY 环境变量未设置（请在系统后台或 Key 容器中保存配置）。");
+    }
+    const ai = new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: promptText,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            xhsTitle: {
+              type: Type.STRING,
+              description: "小红书爆款标题，不超过20个字"
+            },
+            xhsBody: {
+              type: Type.STRING,
+              description: "符合人设要求的小红书正文，不带广告、加微等引流用语"
+            },
+            xhsTags: {
+              type: Type.STRING,
+              description: "10个爆款话题标签，格式固定为：#话题1 #话题2 #话题3 #话题4 #话题5 #话题6 #话题7 #话题8 #话题9 #话题10，正好十个，空格隔开"
+            }
+          },
+          required: ["xhsTitle", "xhsBody", "xhsTags"]
+        }
+      }
+    });
+
+    const resultText = response.text;
+    if (!resultText) {
+      throw new Error("Gemini API 返回了空内容。");
+    }
+    return JSON.parse(resultText.trim());
+  }
+
+  // Generate Xiaohongshu metadata using OpenCode API (MiniMax M3 model) with automatic Gemini fallback
   app.post('/api/videos/xhs/generate', requireAuth, checkAccess, async (req: any, res) => {
     const { storyboards, videoName } = req.body;
     
-    try {
-      // Load OpenCode API Key from config
-      let openCodeApiKey = '';
-      if (fs.existsSync(configPath)) {
-        try {
-          const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-          openCodeApiKey = config.openCodeApiKey || '';
-        } catch (e) {}
-      }
+    // First, construct the prompt texts
+    let storyboardTexts = '';
+    if (storyboards && Array.isArray(storyboards) && storyboards.length > 0) {
+      storyboardTexts = storyboards.map((s: any, idx: number) => {
+        return `分镜 ${idx + 1}: ${s.text || '（无描述）'}`;
+      }).join('\n');
+    } else if (videoName) {
+      storyboardTexts = `视频名称/场景内容: ${videoName}`;
+    } else {
+      storyboardTexts = `视频场景内容: 这是一个精美的创意视频作品`;
+    }
 
-      if (!openCodeApiKey) {
-        return res.status(400).json({ error: '请先在系统设置中配置 OpenCode API Key 并保存' });
-      }
-
-      // Build specific storyboards list or fall back to videoName
-      let storyboardTexts = '';
-      if (storyboards && Array.isArray(storyboards) && storyboards.length > 0) {
-        storyboardTexts = storyboards.map((s: any, idx: number) => {
-          return `分镜 ${idx + 1}: ${s.text || '（无描述）'}`;
-        }).join('\n');
-      } else if (videoName) {
-        storyboardTexts = `视频名称/场景内容: ${videoName}`;
-      } else {
-        storyboardTexts = `视频场景内容: 这是一个精美的创意视频作品`;
-      }
-
-      const model = 'abab6.5s-chat';
-
-      const prompt = `你是一个小红书爆款文案专家。请根据以下提供的视频分镜画面描述，为我制作一个小红书发布的标题、正文和话题标签：
+    const prompt = `你是一个小红书爆款文案专家。请根据以下提供的视频分镜画面描述，为我制作一个小红书发布的标题、正文和话题标签：
 
 视频分镜详情：
 ${storyboardTexts}
@@ -1272,76 +1304,153 @@ ${storyboardTexts}
 2. **正文**（xhsBody）：正文要求生动活泼，语气要像小红书个人博主日常分享，分段清晰，善用表情符号/emoji。**绝对不能出现任何营销、导流、推广、购买、加好友、链接、加微信等政治敏感/营销广告引导语**，以天然真实原生态分享为主。
 3. **话题**（xhsTags）：精选**刚好 10 个**极具热度和深度相关的爆款小红书话题。格式为“#话题1 #话题2 ...”，每个话题带#号，空格隔开，严格返回正好 10 个，不能多也不能少。
 
-请使用以下标准的纯JSON格式返回，不需要有任何其他解释文字或Markdown包裹：
+请使用以下标准的纯JSON格式返回：
 {
   "xhsTitle": "20字内极富吸引力小红书标题",
   "xhsBody": "元气活泼的小红书正文...",
   "xhsTags": "#话题1 #话题2 #话题3 #话题4 #话题5 #话题6 #话题7 #话题8 #话题9 #话题10"
 }`;
 
-      const apiResponse = await fetch('https://api.opencode.ai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${openCodeApiKey}`
-        },
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            { role: 'system', content: 'You are a professional social media marketing assistant for Xiaohongshu.' },
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0.7,
-          response_format: { type: 'json_object' }
-        })
-      });
+    // Read config
+    let openCodeApiKey = '';
+    let openCodeApiUrl = '';
+    if (fs.existsSync(configPath)) {
+      try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        openCodeApiKey = config.openCodeApiKey || '';
+        openCodeApiUrl = config.openCodeApiUrl || '';
+      } catch (e) {}
+    }
 
-      if (!apiResponse.ok) {
-        const errText = await apiResponse.text();
-        console.error('OpenCode API error response:', errText);
-        // Retry fallback with minimax/abab6.5s-chat model id
-        if (apiResponse.status === 404 || apiResponse.status === 400) {
-          console.log('Retrying with minimax/abab6.5s-chat...');
-          const retryResponse = await fetch('https://api.opencode.ai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${openCodeApiKey}`
-            },
-            body: JSON.stringify({
-              model: 'minimax/abab6.5s-chat',
-              messages: [
-                { role: 'system', content: 'You are an expert social media assistant.' },
-                { role: 'user', content: prompt }
-              ],
-              temperature: 0.7
-            })
-          });
-          if (retryResponse.ok) {
-            const data = await retryResponse.json();
-            return parseAndRespond(data, res);
-          }
-        }
-        return res.status(apiResponse.status).json({ error: `大模型 API 调用失败: (状态码 ${apiResponse.status})` });
+    // fallback triggers indicator
+    let fallbackToGemini = false;
+    let fallbackReason = '';
+
+    if (!openCodeApiKey) {
+      fallbackToGemini = true;
+      fallbackReason = 'OpenCode API Key 未在系统设置中配置，已自动接入全内置、免密钥配置的 Gemini 极速生成。';
+    }
+
+    if (!fallbackToGemini) {
+      // Clean and format the base URL
+      let baseUrl = (openCodeApiUrl || 'https://api.opencode.ai/v1').trim();
+      if (baseUrl.endsWith('/')) {
+        baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+      }
+      
+      const endpointIdx = baseUrl.lastIndexOf('/chat/completions');
+      let apiEndpoint = baseUrl;
+      if (endpointIdx === -1) {
+        apiEndpoint = `${baseUrl}/chat/completions`;
       }
 
-      const data = await apiResponse.json();
-      return parseAndRespond(data, res);
+      console.log(`[AI-GEN] Attempting OpenCode API generation via ${apiEndpoint}...`);
+      try {
+        const apiResponse = await fetch(apiEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${openCodeApiKey}`
+          },
+          body: JSON.stringify({
+            model: 'abab6.5s-chat',
+            messages: [
+              { role: 'system', content: 'You are a professional social media marketing assistant for Xiaohongshu.' },
+              { role: 'user', content: prompt }
+            ],
+            temperature: 0.7,
+            response_format: { type: 'json_object' }
+          })
+        });
 
-    } catch (err: any) {
-      console.error('Failed to generate XHS metadata:', err);
-      res.status(500).json({ error: `大模型请求异常: ${err.message || '网络连接或请求超时'}` });
+        // Parse status or get retry fallback for common 404 / 400 structures
+        if (!apiResponse.ok) {
+          const errText = await apiResponse.text();
+          console.warn(`[AI-GEN] OpenCode primary model call failed (Status ${apiResponse.status}): ${errText}`);
+          
+          let successfullyRetried = false;
+          if (apiResponse.status === 404 || apiResponse.status === 400) {
+            console.log('[AI-GEN] Retrying OpenCode with alternative model id "minimax/abab6.5s-chat"...');
+            try {
+              const retryResponse = await fetch(apiEndpoint, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${openCodeApiKey}`
+                },
+                body: JSON.stringify({
+                  model: 'minimax/abab6.5s-chat',
+                  messages: [
+                    { role: 'system', content: 'You are an expert social media assistant.' },
+                    { role: 'user', content: prompt }
+                  ],
+                  temperature: 0.7
+                })
+              });
+
+              if (retryResponse.ok) {
+                const bodyText = await retryResponse.text();
+                const data = JSON.parse(bodyText);
+                parseAndRespond(data, res);
+                successfullyRetried = true;
+              } else {
+                const retryErrText = await retryResponse.text();
+                console.warn(`[AI-GEN] OpenCode retry model call also failed: ${retryErrText}`);
+              }
+            } catch (retryErr: any) {
+              console.warn(`[AI-GEN] OpenCode retry request model exception: ${retryErr.message}`);
+            }
+          }
+
+          if (!successfullyRetried) {
+            fallbackToGemini = true;
+            fallbackReason = `配置的第三方 API 响应异常 (状态码 ${apiResponse.status})，系统已自动无缝托管给内置 Gemini 闪电生成。`;
+          } else {
+            return; // Already resolved via retry
+          }
+        } else {
+          // It was ok! Let's read text first and then parse
+          const rawText = await apiResponse.text();
+          try {
+            const data = JSON.parse(rawText);
+            parseAndRespond(data, res);
+          } catch (jsonErr: any) {
+            console.warn(`[AI-GEN] OpenCode returned invalid JSON structure: "${rawText.substring(0, 100)}..."`);
+            fallbackToGemini = true;
+            fallbackReason = `配置的大模型端点未能在响应中返回 JSON 结构（可能是代理服务器拦截）。已被系统自动无感重定向到内置 Gemini 闪电生成。`;
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[AI-GEN] OpenCode API request encountered exception: ${err.message}`);
+        fallbackToGemini = true;
+        fallbackReason = `连接第三方 AI 服务失败或网络超时，系统已自动降级降噪，托管给内置 Gemini 护航生成。`;
+      }
+    }
+
+    // Execute fallback if triggered
+    if (fallbackToGemini) {
+      console.log(`[AI-GEN-FALLBACK] Executing automatic Gemini model fallback. Reason: ${fallbackReason}`);
+      try {
+        const geminiResult = await generateWithGemini(prompt);
+        if (geminiResult.xhsTitle && geminiResult.xhsTitle.length > 20) {
+          geminiResult.xhsTitle = geminiResult.xhsTitle.substring(0, 20);
+        }
+        return res.json({ success: true, ...geminiResult, fallbackUsed: true, fallbackMessage: fallbackReason });
+      } catch (geminiError: any) {
+        console.error('[AI-GEN-FAIL] Both OpenCode and Gemini fallback failed:', geminiError);
+        return res.status(500).json({ error: `大模型内容生成失败（中转端及内置降级大模型均不可用）: ${geminiError.message}` });
+      }
     }
   });
 
   function parseAndRespond(data: any, res: any) {
     if (!data.choices || data.choices.length === 0) {
-      return res.status(500).json({ error: '大模型返回内容空空如也' });
+      throw new Error('LLM 返回的 choices 列表为空。');
     }
 
     let content = data.choices[0].message?.content || '';
     if (!content) {
-      return res.status(500).json({ error: '没有生成有效的文本内容' });
+      throw new Error('LLM 返回的消息正文为空。');
     }
 
     content = content.trim();
@@ -1354,16 +1463,11 @@ ${storyboardTexts}
       content = content.substring(0, content.length - 3);
     }
 
-    try {
-      const parsed = JSON.parse(content.trim());
-      if (parsed.xhsTitle && parsed.xhsTitle.length > 20) {
-        parsed.xhsTitle = parsed.xhsTitle.substring(0, 20);
-      }
-      res.json({ success: true, ...parsed });
-    } catch (e) {
-      console.error('Failed to parse json:', content, e);
-      res.status(500).json({ error: '大模型未按要求的 JSON 格式返回，输出内容为:\n' + content });
+    const parsed = JSON.parse(content.trim());
+    if (parsed.xhsTitle && parsed.xhsTitle.length > 20) {
+      parsed.xhsTitle = parsed.xhsTitle.substring(0, 20);
     }
+    res.json({ success: true, ...parsed });
   }
 
   // Delete a downloaded video

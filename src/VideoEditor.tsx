@@ -126,6 +126,32 @@ export default function VideoEditor({
   const [isProcessingGrid, setIsProcessingGrid] = useState(false);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
 
+  const [localImages, setLocalImages] = useState<GalleryAsset[]>(galleryImages || []);
+
+  useEffect(() => {
+    if (galleryImages && galleryImages.length > 0) {
+      setLocalImages(galleryImages);
+    }
+  }, [galleryImages]);
+
+  const loadLocalImages = async () => {
+    try {
+      const res = await fetch('/api/images');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setLocalImages(data);
+      }
+    } catch (e) {
+      console.error('Failed to load local images:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (showGallery) {
+      loadLocalImages();
+    }
+  }, [showGallery]);
+
   useEffect(() => {
     fetch('/api/bgm').then(res => res.json()).then(data => setBgmList(data));
   }, []);
@@ -812,14 +838,14 @@ export default function VideoEditor({
               <button disabled={isProcessingGrid} onClick={() => setShowGallery(false)} className="text-gray-400 hover:text-gray-600 disabled:opacity-50"><X size={24}/></button>
             </div>
             <div className="flex-grow overflow-y-auto mb-6 pr-2">
-              {galleryImages.length === 0 ? (
+              {localImages.length === 0 ? (
                 <div className="text-center py-12 text-gray-500">
                   <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                   <p>图库中暂无图片</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
-                  {galleryImages.map(imgData => {
+                  {localImages.map(imgData => {
                     const img = typeof imgData === 'string' ? imgData : imgData.path;
                     return (
                     <div 

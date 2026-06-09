@@ -823,7 +823,8 @@ function MainApp() {
     imageQuality: 'performance',
     dispatchStrategy: 'server',
     globalConcurrency: 3,
-    openCodeApiKey: ''
+    openCodeApiKey: '',
+    openCodeApiUrl: ''
   });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
@@ -2512,7 +2513,10 @@ function MainApp() {
                       <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid.split('/').pop()}</span>
                       <div className="flex items-center gap-1">
                         <button
-                          onClick={() => setViewingXhsNotes({ videoId: vidData.path, jobId: vidData.jobId, taskData: vidData.taskData || {} as VideoTask })}
+                          onClick={() => {
+                            fetchGallery();
+                            setViewingXhsNotes({ videoId: vidData.path, jobId: vidData.jobId, taskData: vidData.taskData || {} as VideoTask });
+                          }}
                           className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
                           title="小红书配置"
                         >
@@ -2820,15 +2824,26 @@ function MainApp() {
                 </summary>
                 <div className="p-5 border-t border-gray-200 space-y-4">
                   <div>
-                    <label className="block mb-1 font-semibold text-gray-700">OpenCode API Key：</label>
+                    <label className="block mb-1 font-semibold text-gray-700">OpenCode API Base URL（API 接口地址）：</label>
+                    <input
+                      type="text"
+                      className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-sm"
+                      value={systemConfig.openCodeApiUrl || ''}
+                      onChange={(e) => setSystemConfig({...systemConfig, openCodeApiUrl: e.target.value})}
+                      placeholder="https://api.opencode.ai/v1"
+                    />
+                    <p className="text-xs text-gray-400 mt-2">※ 默认为 https://api.opencode.ai/v1。支持自定义代理中转或 OpenAI 兼容端点</p>
+                  </div>
+                  <div>
+                    <label className="block mb-1 font-semibold text-gray-700">OpenCode API Key（API 密钥）：</label>
                     <input
                       type="password"
-                      className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none"
+                      className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-purple-500 outline-none text-sm"
                       value={systemConfig.openCodeApiKey || ''}
                       onChange={(e) => setSystemConfig({...systemConfig, openCodeApiKey: e.target.value})}
                       placeholder="sk-..."
                     />
-                    <p className="text-xs text-gray-400 mt-2">※ 用于一键生成小红书笔记标题、话题和正文等内容</p>
+                    <p className="text-xs text-indigo-500 mt-2 font-medium">※ 温馨提示：即使不配置或其请求失效，系统也会自动无感切换到高品质的内置 Gemini (gemini-3.5-flash) 进行生成，零配置即可开箱即用！</p>
                   </div>
                 </div>
               </details>
