@@ -1304,6 +1304,39 @@ async function startServer() {
     }
   });
 
+  // Update an XHS Note record (title, content, tags, scheduled_at, publish_url)
+  app.post('/api/xhs-notes/update', requireAuth, checkAccess, (req: any, res) => {
+    const { id, title, content, tags, scheduledAt, publishUrl } = req.body;
+    const user = req.session.user;
+    if (!id) return res.status(400).json({ error: 'Missing note ID' });
+
+    try {
+      let runResult;
+      if (user.role === 'admin') {
+        runResult = db.prepare(`
+          UPDATE xhs_notes 
+          SET title = ?, content = ?, tags = ?, scheduled_at = ?, publish_url = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(title || null, content || null, tags || null, scheduledAt || null, publishUrl || null, id);
+      } else {
+        runResult = db.prepare(`
+          UPDATE xhs_notes 
+          SET title = ?, content = ?, tags = ?, scheduled_at = ?, publish_url = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND user_id = ?
+        `).run(title || null, content || null, tags || null, scheduledAt || null, publishUrl || null, id, user.id);
+      }
+      
+      if (runResult.changes === 0) {
+        return res.status(404).json({ error: '未找到该笔记或无权修改' });
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error('Failed to update note record:', err);
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
   // Get publishing status (polling endpoint for immediate publishing)
   app.get('/api/videos/xhs/publish/status/:id', requireAuth, (req: any, res) => {
     const noteId = parseInt(req.params.id, 10);
