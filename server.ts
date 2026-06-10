@@ -181,9 +181,24 @@ async function startServer() {
   });
 
   // Worker Management Routes (Admin Only)
-  app.get('/api/workers', requireAuth, (req, res) => {
+  app.get('/api/workers', requireAuth, (req: any, res) => {
     try {
-      const workers = db.prepare('SELECT id, name, status, last_seen, concurrency, capabilities FROM workers').all();
+      let workers;
+      if (req.session.user && req.session.user.role === 'admin') {
+        workers = db.prepare('SELECT id, name, status, last_seen, concurrency, capabilities FROM workers').all();
+      } else {
+        const userId = req.session.user.id;
+        const user = db.prepare('SELECT bound_worker_id FROM users WHERE id = ?').get(userId) as any;
+        const bound_worker_id = user ? (user.bound_worker_id || '') : '';
+        
+        workers = db.prepare(`
+          SELECT id, name, status, last_seen, concurrency, capabilities 
+          FROM workers 
+          WHERE id = ? OR id NOT IN (
+            SELECT DISTINCT bound_worker_id FROM users WHERE bound_worker_id IS NOT NULL AND bound_worker_id != ''
+          )
+        `).all(bound_worker_id);
+      }
       res.json(workers);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

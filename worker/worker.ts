@@ -133,6 +133,7 @@ socket.on("launch_chrome", async () => {
 socket.on("registered", async (info: any) => {
     console.log(`鉴权成功! 节点: ${info.name}. 正在执行 Chrome 浏览器 CDP 挂载自检及配置...`);
     try {
+        await syncScriptsFromServer(DEFAULT_SERVER_URL);
         await ensureBrowserLaunched();
     } catch(e) {
         console.error("[CDP自检] 自动检查/启动 Chrome 失败:", e);
@@ -141,8 +142,23 @@ socket.on("registered", async (info: any) => {
 
 // Helpers for cloud dynamic script syncing and media fetching
 async function syncScriptsFromServer(serverUrl: string) {
-    console.log(`[脚本同步] 正在从云端拉取最新的执行脚本并热加载...`);
+    console.log(`[数据同步] 正在从云端拉取最新的执行脚本与全局系统配置...`);
     try {
+        // 1. 同步系统配置到 data/config.json
+        const configRes = await fetch(`${serverUrl}/api/config`);
+        if (configRes.ok) {
+            const configData = await configRes.json();
+            const dataDir = path.join(process.cwd(), 'data');
+            if (!fs.existsSync(dataDir)) {
+                fs.mkdirSync(dataDir, { recursive: true });
+            }
+            fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify(configData, null, 2));
+            console.log(`[配置同步] ✅ 成功同步全局系统设置到本地: data/config.json`);
+        } else {
+            console.warn(`[配置同步] ⚠️ 无法从主服务器拉取系统设置: ${configRes.statusText}`);
+        }
+
+        // 2. 同步自动化脚本
         const scripts = ["xhs_automation.ts", "automation.ts"];
         for (const script of scripts) {
             const res = await fetch(`${serverUrl}/api/worker/script/${script}`);
@@ -155,7 +171,7 @@ async function syncScriptsFromServer(serverUrl: string) {
             }
         }
     } catch (e: any) {
-        console.error("[脚本同步] ❌ 同步异常:", e.message);
+        console.error("[数据同步] ❌ 同步异常:", e.message);
     }
 }
 

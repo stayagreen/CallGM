@@ -97,9 +97,70 @@ function isPortOpen(port: number): Promise<boolean> {
 export async function ensureBrowserLaunched() {
     const config = await getAutomationConfig();
     const port = 9222;
-    const chromePath = config.chromePath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    let chromePath = config.chromePath;
     const userDataDir = config.userDataDir || 'C:\\ChromeDebug';
     const logPath = path.join(__dirname, 'chrome_debug.log');
+
+    // 自动定位并发现 Chrome 安装路径，适用于不同的操作系统，以及宿主机器上不同权限的 Chrome 安装
+    if (!chromePath || !fs.existsSync(chromePath)) {
+        const potentialWindowsPaths = [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+        ];
+        const localAppData = process.env.LOCALAPPDATA;
+        if (localAppData) {
+            potentialWindowsPaths.push(path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe'));
+        }
+        const homeDir = os.homedir();
+        if (homeDir) {
+            potentialWindowsPaths.push(path.join(homeDir, 'AppData\\Local\\Google\\Chrome\\Application\\chrome.exe'));
+        }
+
+        const potentialMacPaths = [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        ];
+
+        const potentialLinuxPaths = [
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/google-chrome-unstable',
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser'
+        ];
+
+        const platform = os.platform();
+        let foundPath = '';
+
+        if (platform === 'win32') {
+            for (const p of potentialWindowsPaths) {
+                if (fs.existsSync(p)) {
+                    foundPath = p;
+                    break;
+                }
+            }
+        } else if (platform === 'darwin') {
+            for (const p of potentialMacPaths) {
+                if (fs.existsSync(p)) {
+                    foundPath = p;
+                    break;
+                }
+            }
+        } else {
+            for (const p of potentialLinuxPaths) {
+                if (fs.existsSync(p)) {
+                    foundPath = p;
+                    break;
+                }
+            }
+        }
+
+        if (foundPath) {
+            console.log(`[Chrome 自适应] 🎯 自动在系统默认位置检索并加载 Chrome 路径: ${foundPath}`);
+            chromePath = foundPath;
+        } else {
+            chromePath = chromePath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+        }
+    }
 
     const isOpen = await isPortOpen(port);
 
