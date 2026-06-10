@@ -10,12 +10,17 @@ let WORKER_TOKEN = "wk-YOUR_TOKEN_HERE";
 
 if (fs.existsSync(configPath)) {
     try {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        let configContent = fs.readFileSync(configPath, 'utf-8');
+        // Handle UTF-8 BOM if written by powershell/windows utilities
+        if (configContent.charCodeAt(0) === 0xFEFF) {
+            configContent = configContent.slice(1);
+        }
+        const config = JSON.parse(configContent);
         DEFAULT_SERVER_URL = config.SERVER_URL || DEFAULT_SERVER_URL;
         WORKER_TOKEN = config.WORKER_TOKEN || WORKER_TOKEN;
         console.log(`[配置] 已从 ${configPath} 加载配置: ${DEFAULT_SERVER_URL}`);
     } catch (e) {
-        console.warn("[配置] 读取 config.json 失败");
+        console.warn("[配置] 读取 config.json 失败:", e);
     }
 } else {
     fs.writeFileSync(configPath, JSON.stringify({ SERVER_URL: DEFAULT_SERVER_URL, WORKER_TOKEN }, null, 2));

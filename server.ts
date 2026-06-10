@@ -274,8 +274,13 @@ async function startServer() {
   app.get('/worker_install.ps1', (req, res) => {
     const psPath = path.join(__dirname, 'worker_install.ps1');
     if (fs.existsSync(psPath)) {
+        let content = fs.readFileSync(psPath, 'utf8');
+        // Prepend UTF-8 BOM so PowerShell parses Chinese characters correctly
+        if (!content.startsWith('\ufeff')) {
+            content = '\ufeff' + content;
+        }
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.sendFile(psPath);
+        res.send(content);
     } else {
         res.status(404).send('Script not found');
     }
