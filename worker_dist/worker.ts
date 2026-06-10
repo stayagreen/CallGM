@@ -15,7 +15,14 @@ if (fs.existsSync(configPath)) {
         if (configContent.charCodeAt(0) === 0xFEFF) {
             configContent = configContent.slice(1);
         }
-        const config = JSON.parse(configContent);
+        // Handle UTF-16 representation (which older PowerShell Out-File default creates)
+        if (configContent.includes('\u0000')) {
+            configContent = fs.readFileSync(configPath, 'utf16le');
+            if (configContent.charCodeAt(0) === 0xFEFF) {
+                configContent = configContent.slice(1);
+            }
+        }
+        const config = JSON.parse(configContent.trim());
         DEFAULT_SERVER_URL = config.SERVER_URL || DEFAULT_SERVER_URL;
         WORKER_TOKEN = config.WORKER_TOKEN || WORKER_TOKEN;
         console.log(`[配置] 已从 ${configPath} 加载配置: ${DEFAULT_SERVER_URL}`);
