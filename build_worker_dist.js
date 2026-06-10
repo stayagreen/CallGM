@@ -58,7 +58,7 @@ fs.writeFileSync(path.join(dist, 'package.json'), JSON.stringify({
     "sharp": "^0.33.3",
     "puppeteer": "^24.40.0",
     "opencv-wasm": "^4.3.0",
-    "@nut-tree-fork/nut-js": "^4.3.1",
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "open": "^10.1.0",
     "fluent-ffmpeg": "^2.1.2",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",

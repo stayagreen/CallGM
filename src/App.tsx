@@ -817,6 +817,7 @@ function MainApp() {
   const [personalXhsUrl, setPersonalXhsUrl] = useState('');
   const [personalBoundWorkerId, setPersonalBoundWorkerId] = useState('');
   const [availableWorkers, setAvailableWorkers] = useState<any[]>([]);
+  const [copiedInstall, setCopiedInstall] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [systemConfig, setSystemConfig] = useState<any>({ 
     systemDownloadsDir: '', 
@@ -3100,60 +3101,75 @@ function MainApp() {
 
       {showTemplateModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
-            <h2 className="text-2xl font-bold mb-6">模板管理</h2>
-            {templates.map(t => (
-              <div key={t.id} className="flex flex-col mb-3 p-3 bg-gray-50 rounded-lg">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="font-medium">{t.name}</span>
-                  <div className="flex gap-2">
-                    <button onClick={() => {
-                      (document.getElementById('new-t-name') as HTMLInputElement).value = t.name;
-                      (document.getElementById('new-t-prompt') as HTMLTextAreaElement).value = t.prompt;
-                      saveTemplates(templates.filter(x => x.id !== t.id));
-                    }} className="text-blue-500 hover:bg-blue-50 p-1 rounded"><Edit2 size={18}/></button>
-                    <button onClick={() => saveTemplates(templates.filter(x => x.id !== t.id))} className="text-red-500 hover:bg-red-50 p-1 rounded"><Trash2 size={18}/></button>
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-md">
+            <div className="flex justify-between items-center mb-4 pb-2 border-b">
+              <h2 className="text-lg font-bold text-gray-800">模板管理</h2>
+              <button type="button" onClick={() => setShowTemplateModal(false)} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X size={20}/></button>
+            </div>
+            <div className="max-h-[35vh] overflow-y-auto pr-1 space-y-2 mb-4">
+              {templates.map(t => (
+                <div key={t.id} className="flex flex-col p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-semibold text-sm text-gray-700">{t.name}</span>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => {
+                        const nameEl = document.getElementById('new-t-name') as HTMLInputElement;
+                        const promptEl = document.getElementById('new-t-prompt') as HTMLTextAreaElement;
+                        if (nameEl && promptEl) {
+                          nameEl.value = t.name;
+                          promptEl.value = t.prompt;
+                        }
+                        saveTemplates(templates.filter(x => x.id !== t.id));
+                      }} className="text-blue-500 hover:bg-blue-50 p-1 rounded-lg cursor-pointer"><Edit2 size={16}/></button>
+                      <button type="button" onClick={() => saveTemplates(templates.filter(x => x.id !== t.id))} className="text-red-500 hover:bg-red-50 p-1 rounded-lg cursor-pointer"><Trash2 size={16}/></button>
+                    </div>
                   </div>
+                  <p className="text-xs text-gray-500 line-clamp-2">{t.prompt}</p>
                 </div>
-                <p className="text-sm text-gray-600 truncate">{t.prompt}</p>
-              </div>
-            ))}
-            <input className="w-full p-3 border border-gray-200 rounded-xl mb-3" placeholder="模板名称" id="new-t-name" />
-            <textarea className="w-full p-3 border border-gray-200 rounded-xl mb-4" placeholder="提示词内容" id="new-t-prompt" />
-            <button 
-              onClick={() => {
-                const name = (document.getElementById('new-t-name') as HTMLInputElement).value;
-                const prompt = (document.getElementById('new-t-prompt') as HTMLTextAreaElement).value;
-                if (name && prompt) {
-                  saveTemplates([...templates, { id: Date.now().toString(), name, prompt }]);
-                  (document.getElementById('new-t-name') as HTMLInputElement).value = '';
-                  (document.getElementById('new-t-prompt') as HTMLTextAreaElement).value = '';
-                }
-              }}
-              className="bg-blue-600 text-white px-6 py-3 rounded-xl w-full font-bold hover:bg-blue-700"
-            >保存模板</button>
-            <button onClick={() => setShowTemplateModal(false)} className="mt-3 w-full text-gray-500 hover:text-gray-700">关闭</button>
+              ))}
+            </div>
+
+            <div className="space-y-3 border-t pt-3">
+              <h3 className="text-xs font-bold text-gray-700">添加/修改模板</h3>
+              <input
+                id="new-t-name"
+                placeholder="模板名称 (如: 小红书穿搭风)"
+                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <textarea
+                id="new-t-prompt"
+                placeholder="模板内容提示词"
+                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-xs h-20 outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const nameEl = document.getElementById('new-t-name') as HTMLInputElement;
+                  const promptEl = document.getElementById('new-t-prompt') as HTMLTextAreaElement;
+                  if (nameEl && promptEl && nameEl.value.trim() && promptEl.value.trim()) {
+                    saveTemplates([...templates, { id: Date.now().toString(), name: nameEl.value.trim(), prompt: promptEl.value.trim() }]);
+                    nameEl.value = '';
+                    promptEl.value = '';
+                  } else {
+                    alert('请完整填写名称 and 内容');
+                  }
+                }}
+                className="w-full py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+              >
+                保存模板
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {editingXhsNote && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999] overflow-y-auto">
-          <div className="relative bg-white p-6 rounded-2xl shadow-xl w-full max-w-xl my-8">
-            <div className="flex justify-between items-center mb-5 pb-3 border-b border-gray-100">
-              <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                <Edit2 className="text-red-500" size={20} />
-                编辑小红书笔记配置
-              </h2>
-              <button 
-                type="button"
-                onClick={() => setEditingXhsNote(null)} 
-                className="text-gray-400 hover:text-gray-600 transition cursor-pointer"
-              >
-                <X size={20} />
-              </button>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg">
+            <div className="flex justify-between items-center mb-4 pb-2 border-b">
+              <h2 className="text-lg font-bold text-gray-800">编辑小红书笔记配置</h2>
+              <button type="button" onClick={() => setEditingXhsNote(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X size={20}/></button>
             </div>
-
             <form onSubmit={async (e) => {
               e.preventDefault();
               try {
@@ -3169,113 +3185,72 @@ function MainApp() {
                     publishUrl: editingXhsNote.publish_url
                   })
                 });
-                const result = await res.json();
-                if (result.success) {
+                if (res.ok) {
                   setEditingXhsNote(null);
                   fetchXhsNotes();
                 } else {
-                  alert(result.error || '保存修改失败');
+                  const data = await res.json();
+                  alert(data.error || '保存失败');
                 }
-              } catch (err: any) {
-                alert('请求异常: ' + err.message);
+              } catch (err) {
+                alert('请求失败');
               }
             }} className="space-y-4">
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1">笔记标题 (Title)</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">笔记标题 (Title)</label>
                 <input
                   type="text"
-                  required
                   value={editingXhsNote.title || ''}
                   onChange={e => setEditingXhsNote({ ...editingXhsNote, title: e.target.value })}
-                  placeholder="笔记标题..."
+                  placeholder="请输入笔记标题"
                   className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1">笔记正文 (Description / Content)</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">笔记说明/正文 (Content)</label>
                 <textarea
                   rows={4}
-                  required
                   value={editingXhsNote.content || ''}
                   onChange={e => setEditingXhsNote({ ...editingXhsNote, content: e.target.value })}
-                  placeholder="笔记描述正文..."
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition font-sans"
+                  placeholder="请输入笔记说明/正文描述"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition h-24"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1">话题标签 (Tags)</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">正文话题标签 (Tags)</label>
                 <input
                   type="text"
                   value={editingXhsNote.tags || ''}
                   onChange={e => setEditingXhsNote({ ...editingXhsNote, tags: e.target.value })}
-                  placeholder="用空格或逗号分隔，不要带井号，系统会自动转换..."
+                  placeholder="用逗号分隔，如: 穿搭,日常,好物分享"
                   className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
                 />
-                <p className="text-[10px] text-gray-400 mt-1">系统在存储和发布时会自动补全小红书标签格式 `#标签`</p>
               </div>
 
               <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-sm font-bold text-gray-700">笔记发布链接 / 外部回传链接 (Publish Link)</label>
-                  {effectiveXhsHomepageUrl && (
-                    <a
-                      href={effectiveXhsHomepageUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-[11px] text-red-500 hover:underline font-bold flex items-center gap-1"
-                    >
-                      <ExternalLink size={11} />
-                      打开小红书主页找新笔记 ↗
-                    </a>
-                  )}
-                </div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">计划发布时间 (Scheduled Release Time)</label>
+                <input
+                  type="datetime-local"
+                  value={editingXhsNote.scheduled_at ? new Date(new Date(editingXhsNote.scheduled_at).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 16) : ''}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setEditingXhsNote({ ...editingXhsNote, scheduled_at: val ? new Date(val).getTime() : null });
+                  }}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">已发布笔记 URL (Publish Note Link)</label>
                 <input
                   type="text"
                   value={editingXhsNote.publish_url || ''}
                   onChange={e => setEditingXhsNote({ ...editingXhsNote, publish_url: e.target.value })}
-                  placeholder="例如: https://www.xiaohongshu.com/explore/..."
+                  placeholder="https://www.xiaohongshu.com/explore/xxxxxxxx"
                   className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
                 />
-                <p className="text-[10px] text-gray-400 mt-1">您可以在此处自主输入、修改或更新该笔记发布成功后的回传链接。</p>
-              </div>
-
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-sm font-bold text-gray-700">定时发布计划 (Scheduled Time)</label>
-                  {editingXhsNote.scheduled_at && (
-                    <button
-                      type="button"
-                      onClick={() => setEditingXhsNote({ ...editingXhsNote, scheduled_at: null })}
-                      className="text-[10px] text-red-500 hover:underline font-bold"
-                    >
-                      取消定时
-                    </button>
-                  )}
-                </div>
-                <input
-                  type="datetime-local"
-                  value={(() => {
-                    if (!editingXhsNote.scheduled_at) return '';
-                    const d = new Date(editingXhsNote.scheduled_at);
-                    if (isNaN(d.getTime())) return '';
-                    const tzoffset = d.getTimezoneOffset() * 60000;
-                    const localISOTime = (new Date(d.getTime() - tzoffset)).toISOString().slice(0, 16);
-                    return localISOTime;
-                  })()}
-                  onChange={e => {
-                    const localVal = e.target.value;
-                    if (!localVal) {
-                      setEditingXhsNote({ ...editingXhsNote, scheduled_at: null });
-                      return;
-                    }
-                    const isoStr = new Date(localVal).toISOString();
-                    setEditingXhsNote({ ...editingXhsNote, scheduled_at: isoStr });
-                  }}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition font-mono"
-                />
-                <p className="text-[10px] text-gray-400 mt-1">留空则代表等待手动触发或执行立即发布。指定时间后系统将自动在该时刻推送发布任务。</p>
               </div>
 
               <div className="bg-yellow-50 border border-yellow-100 p-3 rounded-lg text-[11px] text-yellow-800">
@@ -3353,9 +3328,61 @@ function MainApp() {
                     </option>
                   ))}
                 </select>
-                <p className="text-[11px] text-gray-400 mt-1.5">
-                  ※ 多账号隔离防封号：绑定后，本账号产生的<b>生图任务/文案生成</b>与<b>小红书自动/遥控发布</b>命令，将精准定向发送给您的这台本地设备，在您本地的 Chrome 浏览器及 CDP 端口中真实操作，完全符合防风控和单人单机需求。
+                <p className="text-[11px] text-gray-400 mt-1.5 border-b pb-3 border-gray-100">
+                  ※ 多账号隔离防封号：绑定后，本账号产生的<b>生图任务/文案生成</b>与<b>小红书自动/遥控发布</b>命令，将精准定向发送给您的这台本地设备，在您本地的 Chrome 浏览器及 CDP 端口中真实操作，完全符合防风控 and 单人单机需求。
                 </p>
+              </div>
+
+              {/* 绑定部署与极速绑定说明/下载 */}
+              <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 flex flex-col gap-2.5 shadow-inner">
+                <span className="text-xs font-bold text-blue-800 flex items-center gap-1.5">
+                  <Chrome size={14} className="text-blue-500" />
+                  新电脑极速绑定 & Worker 部署指南
+                </span>
+                
+                <p className="text-[11px] text-gray-600 leading-relaxed">
+                  在您用来运行小红书账号并登录的电脑上，部署并开启 <b>Worker 客户端</b>，系统会自动实现脚本同步，零配置托管发布。
+                </p>
+
+                <div className="flex gap-2">
+                  <a
+                    href="/api/worker/download"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 text-center py-2 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-sm transition flex items-center justify-center gap-1 hover:no-underline cursor-pointer"
+                  >
+                    <Download size={13} />
+                    下载最新版 Worker 客户端 (.zip)
+                  </a>
+                </div>
+
+                <div className="pt-2 border-t border-blue-100/70">
+                  <span className="block text-[11px] font-semibold text-blue-800 mb-1">
+                    或者：用 PowerShell 命令行一键自动安装 (极速推荐)
+                  </span>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      readOnly
+                      value={`iwr -useb ${window.location.protocol}//${window.location.host}/worker_install.ps1 | iex`}
+                      className="flex-1 px-2.5 py-1.5 text-[10px] font-mono bg-white border border-blue-200 rounded-lg text-gray-600 outline-none select-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(`iwr -useb ${window.location.protocol}//${window.location.host}/worker_install.ps1 | iex`);
+                        setCopiedInstall(true);
+                        setTimeout(() => setCopiedInstall(false), 2000);
+                      }}
+                      className="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-lg text-xs font-bold transition flex items-center justify-center whitespace-nowrap cursor-pointer"
+                    >
+                      {copiedInstall ? '已复制！' : '复制命令'}
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1.5 leading-snug">
+                    ※ 操作步骤：在目标电脑上打开 <b>PowerShell</b> 窗口，粘贴此命令按下回车。它将自动创建 <code>~/AI_Worker</code>、拉取客户端并连接此服务器。完成后在此界面下拉菜单刷新即可选择。
+                  </p>
+                </div>
               </div>
 
               <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
