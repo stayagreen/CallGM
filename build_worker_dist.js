@@ -10,6 +10,7 @@ if (!fs.existsSync(path.join(dist, 'src', 'db'))) fs.mkdirSync(path.join(dist, '
 fs.copyFileSync('automation.ts', path.join(dist, 'automation.ts'));
 if (fs.existsSync('video_automation.ts')) fs.copyFileSync('video_automation.ts', path.join(dist, 'video_automation.ts'));
 if (fs.existsSync('watermarkRemover.ts')) fs.copyFileSync('watermarkRemover.ts', path.join(dist, 'watermarkRemover.ts'));
+if (fs.existsSync('xhs_automation.ts')) fs.copyFileSync('xhs_automation.ts', path.join(dist, 'xhs_automation.ts'));
 
 // Copy worker.ts and fix imports (remove ../)
 let workerCode = fs.readFileSync('worker/worker.ts', 'utf-8');
@@ -17,26 +18,31 @@ workerCode = workerCode.replace(/from "\.\.\//g, 'from "./');
 fs.writeFileSync(path.join(dist, 'worker.ts'), workerCode);
 
 // Mock DB to prevent SQLite native bindings making the worker heavy
-fs.writeFileSync(path.join(dist, 'src', 'db', 'db.js'), `
-export default {
+const mockDbCode = `
+const dbStore = new Map();
+const dbMock = {
+    store: dbStore,
     prepare: (sql) => ({
         run: (...args) => ({ changes: 1, lastInsertRowid: 1 }),
-        get: (...args) => null,
+        get: (...args) => {
+            if (sql.includes('system_config') || (args[0] && typeof args[0] === 'string' && args[0].includes('config'))) {
+                return { value: JSON.stringify({
+                    chromePath: 'C:\\\\Program Files\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe',
+                    userDataDir: 'C:\\\\ChromeDebug',
+                    pasteMin: 5, pasteMax: 10, clickMin: 8, clickMax: 15, downloadMin: 120, downloadMax: 240
+                })};
+            }
+            return dbStore.get(args[0]) || null;
+        },
         all: (...args) => []
     }),
     exec: (sql) => {}
 };
-`);
-fs.writeFileSync(path.join(dist, 'src', 'db', 'db.ts'), `
-export default {
-    prepare: (sql: string) => ({
-        run: (...args: any[]) => ({ changes: 1, lastInsertRowid: 1 }),
-        get: (...args: any[]) => null,
-        all: (...args: any[]) => []
-    }),
-    exec: (sql: string) => {}
-};
-`);
+export default dbMock;
+`;
+
+fs.writeFileSync(path.join(dist, 'src', 'db', 'db.js'), mockDbCode);
+fs.writeFileSync(path.join(dist, 'src', 'db', 'db.ts'), mockDbCode);
 
 // package.json for worker
 fs.writeFileSync(path.join(dist, 'package.json'), JSON.stringify({

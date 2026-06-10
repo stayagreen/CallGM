@@ -5,6 +5,7 @@ interface User {
   username: string;
   role: string;
   xhs_homepage_url?: string;
+  bound_worker_id?: string;
 }
 
 interface AuthContextType {

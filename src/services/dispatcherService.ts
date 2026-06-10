@@ -75,6 +75,25 @@ export class DispatcherService {
         });
       });
 
+      socket.on("xhs_publish_progress", (data: { noteId: number, status: string, progress: number, message: string, url?: string, errorMessage?: string }) => {
+        import("../../xhs_automation.js").then(({ xhsProgressMap }) => {
+            xhsProgressMap.set(data.noteId, {
+                id: data.noteId,
+                status: data.status as any,
+                progress: data.progress,
+                message: data.message
+            });
+            // Update SQLite DB
+            if (data.status === 'success') {
+                db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(data.url || '', data.noteId);
+            } else if (data.status === 'failed') {
+                db.prepare("UPDATE xhs_notes SET publish_status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(data.errorMessage || '', data.noteId);
+            }
+        }).catch(err => {
+            console.error("[Dispatcher] Failed to pass xhs_publish_progress", err);
+        });
+      });
+
       socket.on("disconnect", () => {
         const token = this.connectedWorkers.get(socket.id);
         if (token) {
@@ -106,6 +125,20 @@ export class DispatcherService {
       } else {
           console.log(`[Dispatcher] Worker ${token} is not connected. Command '${action}' ignored.`);
       }
+  }
+
+  public sendXhsPublishToWorker(token: string, payload: any) {
+      if (!this.io) return false;
+      let targetSid: string | null = null;
+      for (const [sid, t] of this.connectedWorkers.entries()) {
+          if (t === token) { targetSid = sid; break; }
+      }
+      if (targetSid) {
+          console.log(`[Dispatcher] Sending xhs_publish to worker ${token}, noteId=${payload.noteId}`);
+          this.io.to(targetSid).emit('run_xhs_publish', payload);
+          return true;
+      }
+      return false;
   }
 
   private isDispatching = false;
@@ -171,7 +204,54 @@ export class DispatcherService {
          } else {
              console.log(`[Dispatcher] Task ${task.id} (${task.type}) strategy: ${strategy}`);
              
-             if (strategy === 'worker' || strategy === 'all') {
+             // Resolve bound worker first
+             const userRow = db.prepare('SELECT bound_worker_id FROM users WHERE id = ?').get(task.user_id) as any;
+             const boundWorkerId = userRow ? userRow.bound_worker_id : null;
+
+             if (boundWorkerId) {
+                 const worker = db.prepare('SELECT * FROM workers WHERE id = ?').get(boundWorkerId) as any;
+                 if (worker && worker.status === 'idle') {
+                     // Find socket
+                     let targetSocketId: string | null = null;
+                     for (const [sid, token] of this.connectedWorkers.entries()) {
+                         if (token === worker.token) { targetSocketId = sid; break; }
+                     }
+
+                     if (targetSocketId) {
+                         const socket = this.io!.sockets.sockets.get(targetSocketId);
+                         const host = socket?.handshake.headers.host || 'localhost:3000';
+                         let protocol = 'http';
+                         
+                         if (socket?.handshake.headers['x-forwarded-proto'] === 'https') {
+                             protocol = 'https';
+                         } else if (!host.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+/.test(host.split(':')[0])) {
+                             if (this.io!.engine.opts.cors) protocol = 'https';
+                         }
+
+                         const serverUrl = `${protocol}://${host}`;
+                         const taskPayload = {
+                             data: { ...taskData, systemConfig: config },
+                             id: task.id, 
+                             userId: task.user_id,
+                             serverUrl: serverUrl
+                         };
+
+                         db.prepare('UPDATE workers SET status = ? WHERE id = ?').run('running', worker.id);
+                         db.prepare('UPDATE tasks SET status = ?, worker_id = ? WHERE id = ?').run('running', worker.id, task.id);
+                         this.io!.to(targetSocketId).emit('run_task', taskPayload);
+                         console.log(`[Dispatcher] -> Dispatched task ${task.id} to BOUND WORKER ${worker.name}`);
+                         dispatched = true;
+                         runningImageCount++;
+                     }
+                 }
+                 
+                 // If bound but worker is currently offline or busy, hold the task in queue
+                 if (!dispatched) {
+                     console.log(`[Dispatcher] Task ${task.id} is bound to worker ${boundWorkerId} which is currently offline or busy. Holding in queue.`);
+                     dispatched = true; // Mark as handled to prevent local server fallback
+                     continue; // Skip next fallback handling
+                 }
+             } else if (strategy === 'worker' || strategy === 'all') {
                 const idleWorkers = db.prepare('SELECT * FROM workers WHERE status = ?').all('idle') as any[];
                 const matchedWorker = idleWorkers.find(w => {
                     try {

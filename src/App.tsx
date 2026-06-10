@@ -815,6 +815,8 @@ function MainApp() {
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [personalXhsUrl, setPersonalXhsUrl] = useState('');
+  const [personalBoundWorkerId, setPersonalBoundWorkerId] = useState('');
+  const [availableWorkers, setAvailableWorkers] = useState<any[]>([]);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [systemConfig, setSystemConfig] = useState<any>({ 
     systemDownloadsDir: '', 
@@ -917,9 +919,23 @@ function MainApp() {
   useEffect(() => {
     if (user) {
       setPersonalXhsUrl(user.xhs_homepage_url || '');
+      setPersonalBoundWorkerId(user.bound_worker_id || '');
       checkAndLaunchCDP();
     }
   }, [user]);
+
+  useEffect(() => {
+    if (showProfileModal) {
+      fetch('/api/admin/workers')
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setAvailableWorkers(data);
+          }
+        })
+        .catch(err => console.error('Failed to load workers list for binding', err));
+    }
+  }, [showProfileModal]);
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -928,7 +944,10 @@ function MainApp() {
       const res = await fetch('/api/user/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ xhsHomepageUrl: personalXhsUrl.trim() }),
+        body: JSON.stringify({ 
+          xhsHomepageUrl: personalXhsUrl.trim(),
+          boundWorkerId: personalBoundWorkerId
+        }),
       });
       const data = await res.json();
       if (data.success) {
@@ -1582,16 +1601,20 @@ function MainApp() {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto bg-gray-50 min-h-screen">
-      <div className="flex justify-between items-end border-b border-gray-200 mb-6 relative">
-        <div className="flex gap-6 w-full">
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto bg-gray-50 min-h-screen">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-end border-b border-gray-200 mb-6 pb-2 md:pb-0 gap-3 relative">
+        <div className="flex flex-wrap gap-x-2 gap-y-1.5 md:gap-6 items-center w-full md:w-auto">
           {/* Tasks Dropdown */}
           <div className="relative">
             <button 
               onClick={() => setShowNavDropdown(showNavDropdown === 'tasks' ? null : 'tasks')} 
-              className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['tasks', 'video_tasks'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+              className={`text-sm font-medium transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer rounded-lg md:rounded-none px-2.5 py-1.5 md:px-0 md:py-0 md:pb-3 ${
+                ['tasks', 'video_tasks'].includes(activeTab) 
+                  ? 'bg-blue-50 text-blue-600 md:bg-transparent md:border-b-2 md:border-blue-600 font-semibold' 
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 md:hover:bg-transparent'
+              }`}
             >
-              任务 <ChevronDown size={16}/>
+              任务 <ChevronDown size={14}/>
             </button>
             {showNavDropdown === 'tasks' && (
               <div className="absolute top-full left-0 mt-1 w-32 bg-white border border-gray-100 shadow-lg rounded-xl overflow-hidden z-50">
@@ -1615,9 +1638,13 @@ function MainApp() {
           <div className="relative">
             <button 
               onClick={() => setShowNavDropdown(showNavDropdown === 'records' ? null : 'records')} 
-              className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['records', 'video_records'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+              className={`text-sm font-medium transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer rounded-lg md:rounded-none px-2.5 py-1.5 md:px-0 md:py-0 md:pb-3 ${
+                ['records', 'video_records'].includes(activeTab) 
+                  ? 'bg-blue-50 text-blue-600 md:bg-transparent md:border-b-2 md:border-blue-600 font-semibold' 
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 md:hover:bg-transparent'
+              }`}
             >
-              任务记录 <ChevronDown size={16}/>
+              任务记录 <ChevronDown size={14}/>
             </button>
             {showNavDropdown === 'records' && (
               <div className="absolute top-full left-0 mt-1 w-32 bg-white border border-gray-100 shadow-lg rounded-xl overflow-hidden z-50">
@@ -1641,9 +1668,13 @@ function MainApp() {
           <div className="relative">
             <button 
               onClick={() => setShowNavDropdown(showNavDropdown === 'gallery' ? null : 'gallery')} 
-              className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['gallery', 'video_gallery'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+              className={`text-sm font-medium transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer rounded-lg md:rounded-none px-2.5 py-1.5 md:px-0 md:py-0 md:pb-3 ${
+                ['gallery', 'video_gallery'].includes(activeTab) 
+                  ? 'bg-blue-50 text-blue-600 md:bg-transparent md:border-b-2 md:border-blue-600 font-semibold' 
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 md:hover:bg-transparent'
+              }`}
             >
-              素材库 <ChevronDown size={16}/>
+              素材库 <ChevronDown size={14}/>
             </button>
             {showNavDropdown === 'gallery' && (
               <div className="absolute top-full left-0 mt-1 w-32 bg-white border border-gray-100 shadow-lg rounded-xl overflow-hidden z-50">
@@ -1667,18 +1698,27 @@ function MainApp() {
           <button 
             type="button"
             onClick={() => { setActiveTab('xhs_notes'); setShowNavDropdown(null); }}
-            className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 cursor-pointer ${activeTab === 'xhs_notes' ? 'border-b-2 border-red-500 text-red-500' : 'text-gray-500 hover:text-gray-800'}`}
+            className={`text-sm font-medium transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer rounded-lg md:rounded-none px-2.5 py-1.5 md:px-0 md:py-0 md:pb-3 ${
+              activeTab === 'xhs_notes' 
+                ? 'bg-red-50 text-red-600 md:bg-transparent md:border-b-2 md:border-red-500 md:text-red-500 font-semibold' 
+                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 md:hover:bg-transparent'
+            }`}
           >
             小红书发布
           </button>
+
           {/* Admin Dropdown */}
           {user?.role === 'admin' && (
             <div className="relative">
               <button 
                 onClick={() => setShowNavDropdown(showNavDropdown === 'admin' ? null : 'admin')} 
-                className={`pb-3 font-medium transition-colors whitespace-nowrap flex items-center gap-1 ${['users', 'proxy', 'workers'].includes(activeTab) ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+                className={`text-sm font-medium transition-all whitespace-nowrap flex items-center gap-1 cursor-pointer rounded-lg md:rounded-none px-2.5 py-1.5 md:px-0 md:py-0 md:pb-3 ${
+                  ['users', 'proxy', 'workers'].includes(activeTab) 
+                    ? 'bg-blue-50 text-blue-600 md:bg-transparent md:border-b-2 md:border-blue-600 font-semibold' 
+                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 md:hover:bg-transparent'
+                }`}
               >
-                管理员 <ChevronDown size={16}/>
+                管理员 <ChevronDown size={14}/>
               </button>
               {showNavDropdown === 'admin' && (
                 <div className="absolute top-full left-0 mt-1 w-32 bg-white border border-gray-100 shadow-lg rounded-xl overflow-hidden z-50">
@@ -1705,12 +1745,12 @@ function MainApp() {
             </div>
           )}
         </div>
-        <div className="flex gap-1.5 flex-shrink-0 items-center">
+        <div className="flex flex-wrap gap-1.5 items-center w-full md:w-auto justify-end md:justify-start">
           {/* Chrome CDP 智能诊断状态组件 */}
           <button
             onClick={checkAndLaunchCDP}
             disabled={cdpStatus === 'detecting' || cdpStatus === 'launching'}
-            className={`mb-2 px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer ${
+            className={`md:mb-2 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer ${
               cdpStatus === 'ready' 
                 ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
                 : cdpStatus === 'detecting' || cdpStatus === 'launching'
@@ -1732,7 +1772,7 @@ function MainApp() {
 
           <button 
             onClick={() => setShowProfileModal(true)} 
-            className="mb-2 p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition flex items-center gap-2" 
+            className="md:mb-2 p-1.5 md:p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition flex items-center gap-1.5" 
             title="个人设置"
           >
             <User size={18} />
@@ -1740,7 +1780,7 @@ function MainApp() {
           </button>
           <button 
             onClick={() => setShowConfigModal(true)} 
-            className="mb-2 p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-2" 
+            className="md:mb-2 p-1.5 md:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-1.5" 
             title="系统设置"
           >
             <Settings size={18} />
@@ -3297,6 +3337,25 @@ function MainApp() {
                     系统默认全局主页为：<span className="break-all underline">{systemConfig.xhsHomepageUrl}</span>。您在此处设置的链接将优先于系统全局设置。
                   </p>
                 )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">绑定本地电脑 / 虚拟机 (Device / Worker Binding)</label>
+                <select
+                  value={personalBoundWorkerId}
+                  onChange={e => setPersonalBoundWorkerId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none text-sm transition bg-white"
+                >
+                  <option value="">- 不绑定电脑 (默认：服务器本地或动态匹配任意在线节点) -</option>
+                  {availableWorkers.map(w => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} ({w.status === 'offline' ? '离线' : '在线'})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-gray-400 mt-1.5">
+                  ※ 多账号隔离防封号：绑定后，本账号产生的<b>生图任务/文案生成</b>与<b>小红书自动/遥控发布</b>命令，将精准定向发送给您的这台本地设备，在您本地的 Chrome 浏览器及 CDP 端口中真实操作，完全符合防风控和单人单机需求。
+                </p>
               </div>
 
               <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">

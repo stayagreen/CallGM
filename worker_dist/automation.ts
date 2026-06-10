@@ -68,7 +68,7 @@ const getRandomTime = (min: number, max: number) => {
     return Math.floor(Math.random() * (max - min + 1) + min) * 1000;
 };
 
-async function getAutomationConfig() {
+export async function getAutomationConfig() {
     const dataDir = path.join(__dirname, 'data');
     const configPath = path.join(dataDir, 'config.json');
     if (fs.existsSync(configPath)) {
@@ -94,7 +94,7 @@ function isPortOpen(port: number): Promise<boolean> {
 }
 
 // 自动启动浏览器
-async function ensureBrowserLaunched() {
+export async function ensureBrowserLaunched() {
     const config = await getAutomationConfig();
     const port = 9222;
     const chromePath = config.chromePath || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';

@@ -67,10 +67,11 @@ async function startServer() {
   // Auth routes
   app.get('/api/me', (req: any, res) => {
     if (req.session.user) {
-      const user = db.prepare('SELECT xhs_homepage_url FROM users WHERE id = ?').get(req.session.user.id) as any;
+      const user = db.prepare('SELECT xhs_homepage_url, bound_worker_id FROM users WHERE id = ?').get(req.session.user.id) as any;
       const xhs_homepage_url = user ? (user.xhs_homepage_url || '') : '';
+      const bound_worker_id = user ? (user.bound_worker_id || '') : '';
       res.json({
-        user: { ...req.session.user, xhs_homepage_url }
+        user: { ...req.session.user, xhs_homepage_url, bound_worker_id }
       });
     } else {
       res.json({ user: null });
@@ -78,14 +79,15 @@ async function startServer() {
   });
 
   app.post('/api/user/profile', requireAuth, (req: any, res) => {
-    const { xhsHomepageUrl } = req.body;
+    const { xhsHomepageUrl, boundWorkerId } = req.body;
     const userId = req.session.user.id;
     try {
-      db.prepare('UPDATE users SET xhs_homepage_url = ? WHERE id = ?').run(xhsHomepageUrl || '', userId);
+      db.prepare('UPDATE users SET xhs_homepage_url = ?, bound_worker_id = ? WHERE id = ?').run(xhsHomepageUrl || '', boundWorkerId || '', userId);
       if (req.session.user) {
         req.session.user.xhs_homepage_url = xhsHomepageUrl || '';
+        req.session.user.bound_worker_id = boundWorkerId || '';
       }
-      res.json({ success: true, xhsHomepageUrl });
+      res.json({ success: true, xhsHomepageUrl, boundWorkerId });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -296,6 +298,46 @@ async function startServer() {
       res.send(buffer);
     } catch (e: any) {
       res.status(500).send(e.message);
+    }
+  });
+
+  // Media endpoint so workers can download the required video / cover images
+  app.get('/api/worker/media', (req, res) => {
+    const { path: relativePath } = req.query as { path: string };
+    if (!relativePath) {
+      return res.status(400).send('Missing path');
+    }
+
+    // Resolve candidates
+    const cleanPath = relativePath.replace(/^\//, ''); // remove leading slash
+    const candidates = [
+      path.join(__dirname, cleanPath),
+      path.join(process.cwd(), cleanPath),
+      path.join(__dirname, 'download', cleanPath),
+      path.join(__dirname, 'uploads', cleanPath),
+      path.join(process.cwd(), 'download', cleanPath),
+      path.join(process.cwd(), 'uploads', cleanPath)
+    ];
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+        return res.sendFile(candidate);
+      }
+    }
+
+    res.status(404).send('Media file not found');
+  });
+
+  // Dynamic script delivery (Stateless / zero config update)
+  app.get('/api/worker/script/:name', (req, res) => {
+    const { name } = req.params;
+    const safeName = path.basename(name);
+    const scriptPath = path.join(__dirname, safeName);
+    
+    if (fs.existsSync(scriptPath)) {
+      res.sendFile(scriptPath);
+    } else {
+      res.status(404).send('Script not found');
     }
   });
 
