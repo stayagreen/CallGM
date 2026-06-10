@@ -93,6 +93,40 @@ function isPortOpen(port: number): Promise<boolean> {
     });
 }
 
+// 强制清除占用指定调试端口的本地 Chrome 进程，精确定位不误杀用户日常运行的普通 Chrome 窗口
+function killProcessOnPort(port: number): Promise<void> {
+    return new Promise((resolve) => {
+        const platform = os.platform();
+        if (platform === 'win32') {
+            try {
+                const output = execSync(`netstat -ano | findstr :${port}`).toString();
+                const lines = output.split('\n');
+                const pids = new Set<string>();
+                for (const line of lines) {
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length >= 5) {
+                        const pid = parts[parts.length - 1]; // PID 位于末尾
+                        if (pid && !isNaN(parseInt(pid)) && parseInt(pid) > 0) {
+                            pids.add(pid);
+                        }
+                    }
+                }
+                for (const pid of pids) {
+                    console.log(`[Chrome 清理] 正在强制结束占用端口 ${port} 的非受管进程, PID: ${pid}`);
+                    execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' });
+                }
+            } catch (e: any) {
+                console.warn(`[Chrome 清理] Windows 端口解析或清除过程中略过: ${e.message}`);
+            }
+        } else {
+            try {
+                execSync(`lsof -t -i:${port} | xargs kill -9`, { stdio: 'ignore' });
+            } catch (e) {}
+        }
+        setTimeout(resolve, 1500); // 留足 1.5 秒端口释放延迟
+    });
+}
+
 // 自动启动浏览器
 export async function ensureBrowserLaunched() {
     const config = await getAutomationConfig();
@@ -162,18 +196,39 @@ export async function ensureBrowserLaunched() {
         }
     }
 
-    const isOpen = await isPortOpen(port);
+    let isOpen = await isPortOpen(port);
 
-    // 1. 如果端口开了，先做健康检查
+    // 1. 如果端口开了，先做健康检查和无头/有头模式兼容性自检
     if (isOpen) {
         try {
             const response = await fetch(`http://localhost:${port}/json/version`).catch(() => null);
             if (response && response.ok) {
-                console.log(`✅ 检测到端口 ${port} 且浏览器响应正常。`);
-                return true;
+                const versionData = await response.json().catch(() => null);
+                if (versionData) {
+                    const isCurrentHeadless = !!(versionData.Browser?.toLowerCase().includes('headless') || 
+                                              versionData['User-Agent']?.toLowerCase().includes('headless'));
+                    const expectedHeadless = config.headless !== false;
+                    
+                    if (isCurrentHeadless !== expectedHeadless) {
+                        console.log(`[Chrome 自检] ⚠️ 检测到当前运行的 Chrome 模式 (${isCurrentHeadless ? '无头' : '有头'}) 与配置期望 (${expectedHeadless ? '无头' : '有头'}) 不一致！准备彻底清理该端口残留并重新拉起...`);
+                        await killProcessOnPort(port);
+                        isOpen = false;
+                    } else {
+                        console.log(`✅ 检测到端口 ${port} 且浏览器状态完全匹配，模式: ${isCurrentHeadless ? '无头' : '有头'}。`);
+                        return true;
+                    }
+                } else {
+                    console.log(`✅ 检测到端口 ${port} 且浏览器响应正常。`);
+                    return true;
+                }
+            } else {
+                console.warn(`⚠️ 检测到端口 ${port} 响应异常，正在清理残留进程...`);
+                await killProcessOnPort(port);
+                isOpen = false;
             }
-            console.warn(`⚠️ 检测到端口 ${port} 响应异常，准备执行强制清理...`);
-        } catch (e) {}
+        } catch (e) {
+            console.error(`[Chrome 自检] 检查占用端口出错:`, e);
+        }
     }
 
     // 2. 强制进程清理逻辑已按照用户要求取消，避免关闭非关联的 Chrome 浏览器
@@ -300,6 +355,7 @@ async function smoothMoveAndClick(Input: any, endX: number, endY: number, click:
 }
 
 async function executeWithCDP(tasks: any[], filename: string, userId?: string | number) {
+    filename = filename.replace('.json', '');
     const totalLoops = tasks.reduce((acc: number, t: any) => acc + (parseInt(t.count) || 1), 0);
     let completedLoops = 0;
     jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running', message: '🚀 正在初始化引擎...' });
@@ -1251,6 +1307,7 @@ async function waitForAndMoveDownloads(clickTime: number, systemDownloadsDir: st
 }
 
 async function executeWithPhysicalSimulation(tasks: any, filename: string, userId?: string | number) {
+  filename = filename.replace('.json', '');
   const totalLoops = tasks.reduce((acc: number, t: any) => acc + t.count, 0);
   let completedLoops = 0;
   jobProgress.set(filename, { completed: completedLoops, total: totalLoops, status: 'running' });
@@ -1355,6 +1412,28 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
         await keyboard.releaseKey(Key.Enter);
         await new Promise(r => setTimeout(r, 1000));
     };
+
+    // JS模式安全隔离：如果当前有后台无头 Chrome 实例在 9222 端口运行，必须先行关闭，防止其拦截系统默认浏览器的 open 动作
+    try {
+        const port = 9222;
+        const isPortActive = await isPortOpen(port);
+        if (isPortActive) {
+            const response = await fetch(`http://localhost:${port}/json/version`).catch(() => null);
+            if (response && response.ok) {
+                const versionData = await response.json().catch(() => null);
+                if (versionData) {
+                    const isCurrentHeadless = !!(versionData.Browser?.toLowerCase().includes('headless') || 
+                                              versionData['User-Agent']?.toLowerCase().includes('headless'));
+                    if (isCurrentHeadless) {
+                        console.log(`[JS 模式隔离] ⚠️ 检测到正在运行后台无头 Chrome (CDP 无头模式)，为防止其拦截默认浏览器标签页，正在强制关闭它...`);
+                        await killProcessOnPort(port);
+                    }
+                }
+            }
+        }
+    } catch (e: any) {
+        console.warn(`[JS 模式隔离] 尝试清理后台无头 Chrome 异常 (非致命):`, e.message);
+    }
 
     console.log('\n====================================================');
     console.log('准备开始【物理键鼠模拟】执行！');
