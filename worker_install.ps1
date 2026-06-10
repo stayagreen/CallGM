@@ -3,6 +3,9 @@
 
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+if (Get-Command chcp -ErrorAction SilentlyContinue) {
+    chcp 65001 | Out-Null
+}
 
 $SERVER_BASE_URL = "http://192.168.1.100:4000" # 请在此修改你的主服务器初始地址
 $INSTALL_DIR = Join-Path $HOME "AI_Worker"
@@ -85,7 +88,11 @@ function Update-Files {
         # 📦 自动检测并安装依赖
         Write-Host "[依赖] 正在为您自动检测并补全节点运行依赖 (npm install)..." -ForegroundColor Cyan
         if (Get-Command npm -ErrorAction SilentlyContinue) {
-            npm install --no-audit --no-fund
+            # 跳过 Chromium 下载并使用国内加速源避免卡死挂起
+            $env:PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+            $env:PUPPETEER_SKIP_DOWNLOAD = "true"
+            Write-Host "[加速] 自动切换至国内淘宝/npmmirror高速依赖源..." -ForegroundColor Yellow
+            npm install --registry=https://registry.npmmirror.com --no-audit --no-fund
         } else {
             Write-Host "[错误] 无法在系统 PATH 中找到 'npm'。请确保此电脑已安装 Node.js (推荐 v18+)。" -ForegroundColor Red
         }
@@ -100,7 +107,10 @@ function Update-Files {
             if (!(Test-Path "$INSTALL_DIR\node_modules")) {
                 Write-Host "[依赖] 未找到 node_modules，正在尝试自动安装依赖..." -ForegroundColor Yellow
                 if (Get-Command npm -ErrorAction SilentlyContinue) {
-                    npm install --no-audit --no-fund
+                    $env:PUPPETEER_SKIP_CHROMIUM_DOWNLOAD = "true"
+                    $env:PUPPETEER_SKIP_DOWNLOAD = "true"
+                    Write-Host "[加速] 自动切换至国内淘宝/npmmirror高速依赖源..." -ForegroundColor Yellow
+                    npm install --registry=https://registry.npmmirror.com --no-audit --no-fund
                 } else {
                     Write-Host "[错误] 未找到 'npm' Command！请手动安装 Node.js 后重试。" -ForegroundColor Red
                 }
