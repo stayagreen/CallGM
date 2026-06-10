@@ -1440,8 +1440,80 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     console.log('正在自动唤起默认浏览器并打开 Gemini...');
     console.log('====================================================\n');
     
-    // 1. 使用系统命令自动打开/唤起浏览器，直接进入 Gemini
-    await open('https://gemini.google.com/');
+    // 1. 显式定位并拉起有头、可见的 Chrome 浏览器（方案 1），有效防止系统关联到后台无头 CDP 实例
+    const getChromePath = () => {
+        const potentialWindowsPaths = [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'
+        ];
+        const localAppData = process.env.LOCALAPPDATA;
+        if (localAppData) {
+            potentialWindowsPaths.push(path.join(localAppData, 'Google\\Chrome\\Application\\chrome.exe'));
+        }
+        const homeDir = os.homedir();
+        if (homeDir) {
+            potentialWindowsPaths.push(path.join(homeDir, 'AppData\\Local\\Google\\Chrome\\Application\\chrome.exe'));
+        }
+
+        const potentialMacPaths = [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+        ];
+
+        const potentialLinuxPaths = [
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+            '/usr/bin/google-chrome-unstable',
+            '/usr/bin/chromium',
+            '/usr/bin/chromium-browser'
+        ];
+
+        const platform = os.platform();
+        if (platform === 'win32') {
+            for (const p of potentialWindowsPaths) {
+                if (fs.existsSync(p)) return p;
+            }
+        } else if (platform === 'darwin') {
+            for (const p of potentialMacPaths) {
+                if (fs.existsSync(p)) return p;
+            }
+        } else {
+            for (const p of potentialLinuxPaths) {
+                if (fs.existsSync(p)) return p;
+            }
+        }
+        return '';
+    };
+
+    const launchVisibleChrome = async (url: string) => {
+        const { exec } = await import('child_process');
+        const chromePath = getChromePath();
+        const platform = os.platform();
+        if (chromePath && fs.existsSync(chromePath)) {
+            try {
+                console.log(`[JS 模式] 🎯 自动在系统检测到 Chrome 路径: ${chromePath}，正在显式拉起有头(可见)浏览器新窗口并导航到 Gemini...`);
+                if (platform === 'win32') {
+                    exec(`"${chromePath}" --new-window "${url}"`, (err) => {
+                        if (err) console.error('[JS 模式] 显式启动 Chrome 失败:', err);
+                    });
+                } else if (platform === 'darwin') {
+                    exec(`open -a "Google Chrome" --args --new-window "${url}"`, (err) => {
+                        if (err) console.error('[JS 模式] macOS 显式启动 Chrome 失败:', err);
+                    });
+                } else {
+                    exec(`"${chromePath}" --new-window "${url}"`, (err) => {
+                        if (err) console.error('[JS 模式] Linux 显式启动 Chrome 失败:', err);
+                    });
+                }
+                return;
+            } catch (e: any) {
+                console.warn(`[JS 模式] 显式启动 Chrome 异常，将回退到系统默认 open 方法:`, e.message);
+            }
+        }
+        console.log(`[JS 模式] 未检测到 Chrome 路径，正在以系统关联默认 open 方式打开: ${url}`);
+        await open(url);
+    };
+
+    await launchVisibleChrome('https://gemini.google.com/');
     
     // 等待浏览器启动、窗口唤起并自动获取焦点
     console.log('等待浏览器启动并聚焦 (5秒)...');
@@ -1749,7 +1821,19 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
                 await keyboard.releaseKey(Key.LeftControl, Key.T);
             }
             await new Promise(r => setTimeout(r, 2000));
-            await open('https://gemini.google.com/');
+            // 纯物理按键模式：直接在刚刚物理新建的标签页（自动聚焦在地址栏）中物理复制粘贴 Gemini 网址并回车
+            console.log('⌨️ [循环导航] 正在新标签页地址栏中物理粘贴 Gemini 网址并回车，规避进程启动拦截...');
+            await clipboard.setContent('https://gemini.google.com/');
+            if (isMac) {
+                await keyboard.pressKey(Key.LeftSuper, Key.V);
+                await keyboard.releaseKey(Key.LeftSuper, Key.V);
+            } else {
+                await keyboard.pressKey(Key.LeftControl, Key.V);
+                await keyboard.releaseKey(Key.LeftControl, Key.V);
+            }
+            await new Promise(r => setTimeout(r, 500));
+            await keyboard.pressKey(Key.Enter);
+            await keyboard.releaseKey(Key.Enter);
             await new Promise(r => setTimeout(r, 8000));
         }
       }
