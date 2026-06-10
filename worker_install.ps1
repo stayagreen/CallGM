@@ -1,6 +1,9 @@
 # AI Worker Professional Installation & Daemon Script
 # 用法: 在节点机器上打开 PowerShell，运行此脚本。
 
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
 $SERVER_BASE_URL = "http://192.168.1.100:4000" # 请在此修改你的主服务器初始地址
 $INSTALL_DIR = Join-Path $HOME "AI_Worker"
 $CONFIG_FILE = Join-Path $INSTALL_DIR "config.json"
@@ -59,11 +62,30 @@ function Update-Files {
         # 清理压缩包
         Remove-Item "$ZIP_PATH" -ErrorAction SilentlyContinue
         Write-Host "[更新] 成功同步最新代码！" -ForegroundColor Green
+        
+        # 📦 自动检测并安装依赖
+        Write-Host "[依赖] 正在为您自动检测并补全节点运行依赖 (npm install)..." -ForegroundColor Cyan
+        if (Get-Command npm -ErrorAction SilentlyContinue) {
+            npm install --no-audit --no-fund
+        } else {
+            Write-Host "[错误] 无法在系统 PATH 中找到 'npm'。请确保此电脑已安装 Node.js (推荐 v18+)。" -ForegroundColor Red
+        }
+        
         return $true
     } catch {
         Write-Host "[错误] 无法获取更新: $($_.Exception.Message)" -ForegroundColor Red
         if (Test-Path "$INSTALL_DIR\worker.js" -or Test-Path "$INSTALL_DIR\worker.ts") {
             Write-Host "[警告] 将尝试使用本地缓存的代码启动..." -ForegroundColor Yellow
+            
+            # 本地依赖检测兜底
+            if (!(Test-Path "$INSTALL_DIR\node_modules")) {
+                Write-Host "[依赖] 未找到 node_modules，正在尝试自动安装依赖..." -ForegroundColor Yellow
+                if (Get-Command npm -ErrorAction SilentlyContinue) {
+                    npm install --no-audit --no-fund
+                } else {
+                    Write-Host "[错误] 未找到 'npm' Command！请手动安装 Node.js 后重试。" -ForegroundColor Red
+                }
+            }
             return $true
         }
         return $false
