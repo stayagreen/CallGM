@@ -1,7 +1,7 @@
 import io from "socket.io-client";
 import fs from "fs";
 import path from "path";
-import { jobProgress, executeBatch, cancelledJobs, downloadDir } from "../automation.js";
+import { jobProgress, executeBatch, cancelledJobs, downloadDir, ensureBrowserLaunched } from "../automation.js";
 
 // ========= 配置加载逻辑 =========
 const configPath = path.join(process.cwd(), "config.json");
@@ -103,6 +103,28 @@ socket.on("cancel_task", (payload: any) => {
     const jobId = payload.jobId;
     cancelledJobs.add(jobId);
     console.log(`[任务] 已加入取消队列: ${jobId}`);
+});
+
+socket.on("admin_command", async (data: any) => {
+    if (data && (data.action === 'launch_chrome' || data.action === 'reset_chrome')) {
+        console.log(`[Worker] 收到管理命令 '${data.action}', 正在检测并配置 Chrome CDP 端口 9222...`);
+        await ensureBrowserLaunched();
+    }
+});
+
+socket.on("launch_chrome", async () => {
+    console.log("[Worker] 收到前端按键请求: 正在初始化并启动 Chrome CDP...");
+    await ensureBrowserLaunched();
+});
+
+// 登陆即启动：客户端连接成功后，自动做一次 Chrome 端口 9222 的环境自检与静默拉起
+socket.on("registered", async (info: any) => {
+    console.log(`鉴权成功! 节点: ${info.name}. 正在执行 Chrome 浏览器 CDP 挂载自检及配置...`);
+    try {
+        await ensureBrowserLaunched();
+    } catch(e) {
+        console.error("[CDP自检] 自动检查/启动 Chrome 失败:", e);
+    }
 });
 
 socket.on("disconnect", () => console.log("与服务器断开连接..."));

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -813,8 +813,12 @@ function MainApp() {
   const [editingXhsNote, setEditingXhsNote] = useState<any | null>(null);
   const [showNavDropdown, setShowNavDropdown] = useState<'tasks' | 'records' | 'gallery' | 'admin' | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [personalXhsUrl, setPersonalXhsUrl] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [systemConfig, setSystemConfig] = useState<any>({ 
     systemDownloadsDir: '', 
+    xhsHomepageUrl: '',
     chromePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     userDataDir: 'C:\\ChromeDebug',
     pasteMin: 5, 
@@ -858,8 +862,87 @@ function MainApp() {
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<any>(null);
 
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set([user?.username || 'admin']));
+
+  const [cdpStatus, setCdpStatus] = useState<'detecting' | 'ready' | 'launching' | 'failed' | 'not_running'>('detecting');
+  const [cdpMessage, setCdpMessage] = useState('正在为您自动体检并配置 CDP 调试环境...');
+
+  const checkAndLaunchCDP = async () => {
+    try {
+      setCdpStatus('detecting');
+      setCdpMessage('正在检测当前环境 CDP 端口 (9222)...');
+      
+      const res = await fetch('/api/chrome/status');
+      const data = await res.json();
+      
+      if (data.localCdpActive) {
+        setCdpStatus('ready');
+        setCdpMessage('CDP 远程操控环境已就绪，Chrome 正常响应中！');
+        return;
+      }
+      
+      // If not active, trigger auto-launch!
+      setCdpStatus('launching');
+      setCdpMessage('未见激活的调试端口，正在为您自动初始化并拉起 Chrome 浏览器...');
+      
+      const launchRes = await fetch('/api/chrome/launch', { method: 'POST' });
+      const launchData = await launchRes.json();
+      
+      // Wait 4 seconds to let Chrome boot, then check status again
+      setCdpMessage('已发出唤醒命令，正在等待 Chrome 进程初始化并监听端口 9222...');
+      await new Promise(r => setTimeout(r, 4000));
+      
+      const finalRes = await fetch('/api/chrome/status');
+      const finalData = await finalRes.json();
+      
+      if (finalData.localCdpActive) {
+        setCdpStatus('ready');
+        setCdpMessage('自动配置成功！Chrome 浏览器已被成功打开并可受控。');
+      } else if (finalData.onlineWorkersCount > 0) {
+        setCdpStatus('ready');
+        setCdpMessage('已成功向您的本地 Worker 节点广播调起指令，请检查本地电脑客户端运行。');
+      } else {
+        setCdpStatus('not_running');
+        setCdpMessage('无可用连接。如果您在本地客户端运行，请点击此处重新进行自检/唤醒。');
+      }
+    } catch (e: any) {
+      setCdpStatus('failed');
+      setCdpMessage('诊断 CDP 失败，请确认服务器网络状态：' + e.message);
+    }
+  };
+
+  const effectiveXhsHomepageUrl = user?.xhs_homepage_url || systemConfig?.xhsHomepageUrl || '';
+
+  useEffect(() => {
+    if (user) {
+      setPersonalXhsUrl(user.xhs_homepage_url || '');
+      checkAndLaunchCDP();
+    }
+  }, [user]);
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setIsSavingProfile(true);
+      const res = await fetch('/api/user/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ xhsHomepageUrl: personalXhsUrl.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await refreshUser();
+        setShowProfileModal(false);
+      } else {
+        alert(data.error || '保存失败');
+      }
+    } catch (err: any) {
+      alert('保存异常: ' + err.message);
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   const toggleUserExpand = (username: string) => {
     setExpandedUsers(prev => {
@@ -1622,14 +1705,48 @@ function MainApp() {
             </div>
           )}
         </div>
-        <button 
-          onClick={() => setShowConfigModal(true)} 
-          className="mb-2 p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-2 flex-shrink-0" 
-          title="系统设置"
-        >
-          <Settings size={18} />
-          <span className="text-sm font-medium hidden sm:inline">系统设置</span>
-        </button>
+        <div className="flex gap-1.5 flex-shrink-0 items-center">
+          {/* Chrome CDP 智能诊断状态组件 */}
+          <button
+            onClick={checkAndLaunchCDP}
+            disabled={cdpStatus === 'detecting' || cdpStatus === 'launching'}
+            className={`mb-2 px-3 py-2 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer ${
+              cdpStatus === 'ready' 
+                ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
+                : cdpStatus === 'detecting' || cdpStatus === 'launching'
+                ? 'bg-amber-50 text-amber-700 animate-pulse border border-amber-200'
+                : 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
+            }`}
+            title={cdpMessage}
+          >
+            <Chrome size={14} className={cdpStatus === 'detecting' || cdpStatus === 'launching' ? 'animate-spin' : ''} />
+            <span className="hidden md:inline">
+              {cdpStatus === 'ready' && 'Chrome调试 (CDP) 就绪'}
+              {(cdpStatus === 'detecting' || cdpStatus === 'launching') && '配置/唤醒 Chrome 中...'}
+              {(cdpStatus === 'failed' || cdpStatus === 'not_running') && 'CDP 环境未就绪 (点击极速配置)'}
+            </span>
+            <span className="inline md:hidden">
+              {cdpStatus === 'ready' ? 'CDP就绪' : 'CDP错误/自检'}
+            </span>
+          </button>
+
+          <button 
+            onClick={() => setShowProfileModal(true)} 
+            className="mb-2 p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition flex items-center gap-2" 
+            title="个人设置"
+          >
+            <User size={18} />
+            <span className="text-sm font-medium hidden sm:inline">个人设置</span>
+          </button>
+          <button 
+            onClick={() => setShowConfigModal(true)} 
+            className="mb-2 p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-2" 
+            title="系统设置"
+          >
+            <Settings size={18} />
+            <span className="text-sm font-medium hidden sm:inline">系统设置</span>
+          </button>
+        </div>
       </div>
       
       {activeTab === 'tasks' && (
@@ -2657,7 +2774,18 @@ function MainApp() {
               <p className="text-xs text-gray-500 mt-1">汇总全部本地定时及立即发布的小红书笔记（支持查看发布进度与回传链接）。</p>
             </div>
             
-            <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200">
+            <div className="flex bg-gray-100 p-0.5 rounded-lg border border-gray-200 items-center gap-1.5">
+              {effectiveXhsHomepageUrl && (
+                <a
+                  href={effectiveXhsHomepageUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3 py-1.5 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-md flex items-center gap-1 cursor-pointer transition"
+                >
+                  <ExternalLink size={12} />
+                  打开小红书账号主页 ↗
+                </a>
+              )}
               <button 
                 type="button"
                 onClick={fetchXhsNotes}
@@ -3049,7 +3177,20 @@ function MainApp() {
               </div>
 
               <div>
-                <label className="block text-sm font-bold text-gray-700 mb-1">笔记发布链接 / 外部回传链接 (Publish Link)</label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-sm font-bold text-gray-700">笔记发布链接 / 外部回传链接 (Publish Link)</label>
+                  {effectiveXhsHomepageUrl && (
+                    <a
+                      href={effectiveXhsHomepageUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] text-red-500 hover:underline font-bold flex items-center gap-1"
+                    >
+                      <ExternalLink size={11} />
+                      打开小红书主页找新笔记 ↗
+                    </a>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={editingXhsNote.publish_url || ''}
@@ -3114,6 +3255,64 @@ function MainApp() {
                   className="px-5 py-2 bg-red-500 hover:bg-red-600 active:scale-95 text-white rounded-xl text-sm font-bold shadow-sm transition cursor-pointer"
                 >
                   保存配置
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showProfileModal && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
+          <div className="relative bg-white p-6 rounded-2xl shadow-xl w-full max-w-md animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-100">
+              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <User className="text-red-500" size={18} />
+                个人设置
+              </h2>
+              <button 
+                type="button"
+                onClick={() => setShowProfileModal(false)}
+                className="text-gray-400 hover:text-gray-600 transition cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProfile} className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">您的小红书账号主页链接 (Personal Homepage URL)</label>
+                <input
+                  type="text"
+                  value={personalXhsUrl}
+                  onChange={e => setPersonalXhsUrl(e.target.value)}
+                  placeholder="例如: https://www.xiaohongshu.com/user/profile/xxxxxxxxxxxx"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition font-sans"
+                />
+                <p className="text-[11px] text-gray-400 mt-2">
+                  ※ 填入您的小红书个人主页链接。设置后，发布操作中将自动关联并支持一键跳转到您对应的小红书账号，方便手动/自动提取最新笔记链接。
+                </p>
+                {systemConfig.xhsHomepageUrl && (
+                  <p className="text-[10px] text-amber-600 mt-1">
+                    系统默认全局主页为：<span className="break-all underline">{systemConfig.xhsHomepageUrl}</span>。您在此处设置的链接将优先于系统全局设置。
+                  </p>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setShowProfileModal(false)}
+                  className="px-4 py-2 border border-gray-200 text-gray-600 bg-white hover:bg-gray-50 rounded-xl text-sm font-medium transition cursor-pointer"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingProfile}
+                  className="px-5 py-2 bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-sm transition cursor-pointer"
+                >
+                  {isSavingProfile ? '保存中...' : '保存修改'}
                 </button>
               </div>
             </form>
@@ -3339,6 +3538,26 @@ function MainApp() {
                       placeholder="opencode-go/minimax-m3"
                     />
                     <p className="text-xs text-indigo-500 mt-2 font-medium">※ 默认模型为 opencode-go/minimax-m3，同时支持各种 MiniMax、OpenCode 等兼容的模型名称（如 minimax-m3，abab6.5s-chat ）。</p>
+                  </div>
+                </div>
+              </details>
+
+              <details className="group border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm" open>
+                <summary className="font-bold text-gray-800 bg-gray-50 p-4 cursor-pointer list-none flex justify-between items-center hover:bg-gray-100 transition-colors">
+                  <div className="flex items-center gap-2"><Share2 size={18} className="text-red-500"/> 小红书平台配置</div>
+                  <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="p-5 border-t border-gray-200 space-y-4">
+                  <div>
+                    <label className="block mb-1 font-semibold text-gray-700">小红书作者主页链接 (Homepage URL)：</label>
+                    <input
+                      type="text"
+                      className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none text-sm font-sans"
+                      value={systemConfig.xhsHomepageUrl || ''}
+                      onChange={(e) => setSystemConfig({...systemConfig, xhsHomepageUrl: e.target.value})}
+                      placeholder="例如: https://www.xiaohongshu.com/user/profile/xxxxxxxxxxxx"
+                    />
+                    <p className="text-xs text-gray-400 mt-2">※ 用于在视频发布成功或发布异常时，一键跳转到您对应的小红书主页，以便手动/自动提取并回填最新发布的笔记链接。</p>
                   </div>
                 </div>
               </details>

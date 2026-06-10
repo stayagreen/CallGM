@@ -21,7 +21,8 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
-    role TEXT DEFAULT 'user'
+    role TEXT DEFAULT 'user',
+    xhs_homepage_url TEXT
   );
   
   CREATE TABLE IF NOT EXISTS tasks (
@@ -106,6 +107,7 @@ try { db.exec('ALTER TABLE assets ADD COLUMN type TEXT NOT NULL DEFAULT "image";
 try { db.exec('ALTER TABLE assets ADD COLUMN job_id TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE tasks ADD COLUMN worker_id TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE system_config ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;'); } catch (e) {}
+try { db.exec('ALTER TABLE users ADD COLUMN xhs_homepage_url TEXT;'); } catch (e) {}
 try {
   db.exec(`
     CREATE TABLE IF NOT EXISTS xhs_notes (

@@ -21,7 +21,7 @@ declare module 'express-session' {
   }
 }
 
-import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages, cancelledJobs } from "./automation.js";
+import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages, cancelledJobs, ensureBrowserLaunched } from "./automation.js";
 import { videoJobProgress, cancelledVideoJobs, startVideoAutomationWatcher } from "./video_automation.js";
 import { executeXhsPublish, startXhsAutomationWatcher, xhsProgressMap } from "./xhs_automation.js";
 
@@ -65,8 +65,30 @@ async function startServer() {
   };
 
   // Auth routes
-  app.get('/api/me', (req, res) => {
-    res.json({ user: req.session.user || null });
+  app.get('/api/me', (req: any, res) => {
+    if (req.session.user) {
+      const user = db.prepare('SELECT xhs_homepage_url FROM users WHERE id = ?').get(req.session.user.id) as any;
+      const xhs_homepage_url = user ? (user.xhs_homepage_url || '') : '';
+      res.json({
+        user: { ...req.session.user, xhs_homepage_url }
+      });
+    } else {
+      res.json({ user: null });
+    }
+  });
+
+  app.post('/api/user/profile', requireAuth, (req: any, res) => {
+    const { xhsHomepageUrl } = req.body;
+    const userId = req.session.user.id;
+    try {
+      db.prepare('UPDATE users SET xhs_homepage_url = ? WHERE id = ?').run(xhsHomepageUrl || '', userId);
+      if (req.session.user) {
+        req.session.user.xhs_homepage_url = xhsHomepageUrl || '';
+      }
+      res.json({ success: true, xhsHomepageUrl });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   app.post('/api/login', async (req, res) => {
@@ -1038,6 +1060,68 @@ async function startServer() {
     
     res.status(404).json({ error: "Image not found" });
   });
+
+  // CDP (Chrome DevTools Protocol) Chrome Browser Status and Auto-Launcher APIs
+  app.get('/api/chrome/status', requireAuth, async (req: any, res) => {
+    try {
+      // 1. Check if server local port 9222 is active
+      let localCdpActive = false;
+      try {
+        const response = await fetch('http://localhost:9222/json/version', { signal: AbortSignal.timeout(1000) });
+        if (response.ok) {
+          localCdpActive = true;
+        }
+      } catch (e) {}
+
+      // 2. Fetch if any workers are currently online
+      const activeWorkers = db.prepare("SELECT name, token, status FROM workers WHERE last_seen > datetime('now', '-30 seconds')").all() as any[];
+      const onlineWorkersCount = activeWorkers.filter(w => w.status !== 'offline').length;
+
+      res.json({
+        localCdpActive,
+        onlineWorkersCount,
+        activeWorkers: activeWorkers.map(w => ({ name: w.name, status: w.status }))
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/chrome/launch', requireAuth, async (req: any, res) => {
+    try {
+      console.log('🔮 触发 CDP 静默配置与 Chrome 启动指令...');
+      
+      // 1. 尝试在服务器本地调起 Chrome (适用于本地化单机运行场景)
+      let localLaunchResult = false;
+      const isLocal = req.hostname === 'localhost' || req.hostname === '127.0.0.1';
+      if (isLocal) {
+        console.log('   🖥️ 检测到本地单机访问模式，正在本地尝试调起 Chrome...');
+        localLaunchResult = await ensureBrowserLaunched();
+      } else {
+        // 如果是云端运行，我们也静默尝试 (不阻碍后面向 worker 队列广播指令)
+        ensureBrowserLaunched().catch(() => {});
+      }
+
+      // 2. 向所有活跃的节点 (Worker) 广播 Chrome CDP 调起指令
+      const workers = db.prepare("SELECT token FROM workers WHERE last_seen > datetime('now', '-1 minute')").all() as any[];
+      let workerCount = 0;
+      for (const w of workers) {
+        dispatcherService.sendCommandToWorker(w.token, 'launch_chrome');
+        workerCount++;
+      }
+
+      res.json({
+        success: true,
+        localLaunch: localLaunchResult,
+        broadcastedWorkersCount: workerCount,
+        message: `Chrome CDP 启动指令已成功处理并广播到 ${workerCount} 个活动节点！`
+      });
+    } catch (e: any) {
+      console.error('❌ CDP 智能唤醒 Chrome 异常:', e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   const oldConfigPath = path.join(__dirname, 'config.json');
   
   // 迁移逻辑
@@ -1049,6 +1133,7 @@ async function startServer() {
 
   const defaultConfig = { 
     systemDownloadsDir: path.join(os.homedir(), 'Downloads'),
+    xhsHomepageUrl: '',
     pasteMin: 5,
     pasteMax: 5,
     clickMin: 8,
