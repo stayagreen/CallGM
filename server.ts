@@ -181,6 +181,15 @@ async function startServer() {
   });
 
   // Worker Management Routes (Admin Only)
+  app.get('/api/workers', requireAuth, (req, res) => {
+    try {
+      const workers = db.prepare('SELECT id, name, status, last_seen, concurrency, capabilities FROM workers').all();
+      res.json(workers);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get('/api/admin/workers', requireAdmin, (req, res) => {
     try {
       const workers = db.prepare('SELECT * FROM workers').all();

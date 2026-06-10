@@ -3,6 +3,12 @@
 
 $OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+
+# 自动为当前 PowerShell 进程设置运行策略，无需管理员权限，彻底解决加载 npm.ps1 被禁止的报错
+try {
+    Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+} catch {}
+
 if (Get-Command chcp -ErrorAction SilentlyContinue) {
     chcp 65001 | Out-Null
 }
@@ -109,7 +115,7 @@ function Update-Files {
         return $true
     } catch {
         Write-Host "[错误/Error] 无法获取更新 (Failed to download updates): $($_.Exception.Message)" -ForegroundColor Red
-        if (Test-Path "$INSTALL_DIR\worker.js" -or Test-Path "$INSTALL_DIR\worker.ts") {
+        if ((Test-Path "$INSTALL_DIR\worker.js") -or (Test-Path "$INSTALL_DIR\worker.ts")) {
             Write-Host "[警告/Warning] 将尝试使用本地缓存的代码启动... (Will attempt to run from local cached code...)" -ForegroundColor Yellow
             
             # 本地依赖检测兜底 (Fallback local dependency checker)
