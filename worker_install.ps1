@@ -15,6 +15,25 @@ if (!(Test-Path "$INSTALL_DIR")) {
 }
 Set-Location "$INSTALL_DIR"
 
+# 1.5 环境依赖前置检查
+if (!(Get-Command node -ErrorAction SilentlyContinue) -or !(Get-Command npm -ErrorAction SilentlyContinue)) {
+    Write-Host ""
+    Write-Host "========================= [错误] Node.js 环境缺失 =========================" -ForegroundColor Red
+    Write-Host "检测到您的电脑尚未安装 Node.js，或者尚未将其加入系统环境变量 (PATH)！" -ForegroundColor Red
+    Write-Host "运行 AI Worker 节点必须在本地部署 Node.js 运行环境 (推荐 v18 或 v20 以上)。" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "请按以下步骤简单配置即可运行:" -ForegroundColor Cyan
+    Write-Host "  1. 打开官方网站下载: https://nodejs.org/" -ForegroundColor White
+    Write-Host "  2. 推荐选择并下载「LTS」(长期支持稳定版本) 的 Windows Installer (.msi) 包。" -ForegroundColor White
+    Write-Host "  3. 运行安装包，一路点击 'Next' (确保勾选了 Add to PATH，安装工具默认会自动勾选)。" -ForegroundColor White
+    Write-Host "  4. 安装成功后，请【关闭并重新启动一个新的 PowerShell】窗口！" -ForegroundColor White
+    Write-Host "  5. 重新粘贴并运行您的安装指令，即可一键完美运行！" -ForegroundColor White
+    Write-Host "=========================================================================" -ForegroundColor Red
+    Write-Host ""
+    Read-Host "请安装完成后，按回车键退出当前窗口并重新打开 PowerShell..."
+    exit
+}
+
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "   AI Worker 节点管理器 (增强型)          " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
