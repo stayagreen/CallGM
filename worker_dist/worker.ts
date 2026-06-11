@@ -64,6 +64,11 @@ socket.on("run_task", async (taskData: any) => {
     console.log(`[任务] 收到新任务: ${jobId}, Server: ${finalServerUrl}`);
     
     try {
+        // 挂载主服务器地址，供 automation.ts 异步拉取缺失的参考图
+        if (data && typeof data === 'object') {
+            data.serverUrl = finalServerUrl;
+        }
+        
         // 执行任务
         const resultFiles = await executeBatch(data, `${jobId}.json`, jobId);
         console.log(`[任务] 执行完成, 产生文件: ${resultFiles.length}`);

@@ -618,6 +618,26 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                                 }
                             }
                             
+                            if (!fs.existsSync(localPath) && task.serverUrl) {
+                                const downloadUrl = task.serverUrl.replace(/\/$/, '') + '/' + (imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl);
+                                console.log(`${stepPrefix} 🌐 尝试从主服务器下载缺失的参考图 (CDP): ${downloadUrl}`);
+                                try {
+                                    const imgRes = await fetch(downloadUrl);
+                                    if (imgRes.ok) {
+                                        const buffer = await imgRes.arrayBuffer();
+                                        const tempDir = os.tmpdir();
+                                        const tempPath = path.join(tempDir, `ref_${Date.now()}_${path.basename(imgUrl)}`);
+                                        fs.writeFileSync(tempPath, Buffer.from(buffer));
+                                        localPath = tempPath;
+                                        console.log(`${stepPrefix} ✅ 成功从参考地址拉取并缓存至 (CDP): ${localPath} (${buffer.byteLength} 字节)`);
+                                    } else {
+                                        console.error(`${stepPrefix} ❌ 拉取服务器图片错误 (CDP): HTTP ${imgRes.status}`);
+                                    }
+                                } catch (e: any) {
+                                    console.error(`${stepPrefix} ❌ 拉取服务器图片捕获异常 (CDP):`, e.message);
+                                }
+                            }
+                            
                             if (fs.existsSync(localPath)) {
                                 console.log(`${stepPrefix} 📂 准备处理本地文件: ${localPath}`);
                                 
@@ -966,6 +986,13 @@ export async function executeBatch(input: any, filename: string, userId?: string
     if (input.systemConfig) {
         tasks.forEach((t: any) => {
             if (!t.systemConfig) t.systemConfig = input.systemConfig;
+        });
+    }
+
+    // Attach serverUrl to each task so they can download reference images if missing locally
+    if (input.serverUrl) {
+        tasks.forEach((t: any) => {
+            if (!t.serverUrl) t.serverUrl = input.serverUrl;
         });
     }
 
@@ -1585,6 +1612,26 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
                         if (fs.existsSync(fallbackPath)) {
                             localPath = fallbackPath;
                         }
+                    }
+                }
+                
+                if (!fs.existsSync(localPath) && task.serverUrl) {
+                    const downloadUrl = task.serverUrl.replace(/\/$/, '') + '/' + (imgUrl.startsWith('/') ? imgUrl.slice(1) : imgUrl);
+                    console.log(`🌐 尝试从主服务器下载缺失的参考图 (JS 模式): ${downloadUrl}`);
+                    try {
+                        const imgRes = await fetch(downloadUrl);
+                        if (imgRes.ok) {
+                            const buffer = await imgRes.arrayBuffer();
+                            const tempDir = os.tmpdir();
+                            const tempPath = path.join(tempDir, `ref_${Date.now()}_${path.basename(imgUrl)}`);
+                            fs.writeFileSync(tempPath, Buffer.from(buffer));
+                            localPath = tempPath;
+                            console.log(`✅ 成功从参考地址拉取并缓存至 (JS 模式): ${localPath} (${buffer.byteLength} 字节)`);
+                        } else {
+                            console.error(`❌ 拉取服务器图片错误 (JS 模式): HTTP ${imgRes.status}`);
+                        }
+                    } catch (e: any) {
+                        console.error(`❌ 拉取服务器图片捕获异常 (JS 模式):`, e.message);
                     }
                 }
                 

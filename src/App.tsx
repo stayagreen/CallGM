@@ -1836,14 +1836,16 @@ function MainApp() {
             <User size={18} />
             <span className="text-sm font-medium hidden sm:inline">个人设置</span>
           </button>
-          <button 
-            onClick={() => setShowConfigModal(true)} 
-            className="md:mb-2 p-1.5 md:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-1.5" 
-            title="系统设置"
-          >
-            <Settings size={18} />
-            <span className="text-sm font-medium hidden sm:inline">系统设置</span>
-          </button>
+          {user?.role === 'admin' && (
+            <button 
+              onClick={() => setShowConfigModal(true)} 
+              className="md:mb-2 p-1.5 md:p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition flex items-center gap-1.5" 
+              title="系统设置"
+            >
+              <Settings size={18} />
+              <span className="text-sm font-medium hidden sm:inline">系统设置</span>
+            </button>
+          )}
         </div>
       </div>
       
@@ -3463,7 +3465,7 @@ function MainApp() {
         </div>
       )}
 
-      {showConfigModal && (
+      {showConfigModal && user?.role === 'admin' && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
           <div className="relative bg-white p-8 rounded-2xl shadow-xl w-full max-w-lg">
             {isSavingConfig && (
