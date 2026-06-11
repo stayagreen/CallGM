@@ -495,7 +495,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                         });
                         
                         const config = await getAutomationConfig();
-                        const sysDir = (task.systemConfig && task.systemConfig.systemDownloadsDir) || config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
+                        const sysDir = config.systemDownloadsDir || (task.systemConfig && task.systemConfig.systemDownloadsDir) || path.join(os.homedir(), 'Downloads');
                         if (!fs.existsSync(sysDir)) fs.mkdirSync(sysDir, { recursive: true });
 
                         await client.send('Page.setDownloadBehavior', {
@@ -872,7 +872,7 @@ async function executeWithCDP(tasks: any[], filename: string, userId?: string | 
                             // 实际的文件移动逻辑
                             const config = await getAutomationConfig();
                             const timeoutSeconds = parseConfigNumber(config.downloadTimeout, 35); // 默认缩短到 35 秒
-                            const sysDir = (task.systemConfig && task.systemConfig.systemDownloadsDir) || config.systemDownloadsDir || path.join(os.homedir(), 'Downloads');
+                            const sysDir = config.systemDownloadsDir || (task.systemConfig && task.systemConfig.systemDownloadsDir) || path.join(os.homedir(), 'Downloads');
                             const userDownloadDir = userId ? path.join(downloadDir, userId.toString()) : downloadDir;
                             if (!fs.existsSync(userDownloadDir)) fs.mkdirSync(userDownloadDir, { recursive: true });
                             
@@ -1372,9 +1372,10 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
       try {
           const configContent = fs.readFileSync(configPath, 'utf-8');
           config = { ...config, ...JSON.parse(configContent) };
-          if (config.systemDownloadsDir) {
+          const chosenDir = config.systemDownloadsDir || (tasks[0]?.systemConfig && tasks[0]?.systemConfig.systemDownloadsDir);
+          if (chosenDir) {
               // 增强路径清理：移除所有不可见字符、控制字符，并统一路径分隔符
-              systemDownloadsDir = config.systemDownloadsDir
+              systemDownloadsDir = chosenDir
                 .replace(/[\u200B-\u200D\uFEFF\u200E\u200F]/g, '')
                 .replace(/[\x00-\x1F\x7F-\x9F]/g, '')
                 .trim();
