@@ -921,29 +921,84 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             } catch(e) {}
           };
 
-          // 1. 寻找所有带有发布、立即发布、确认发布、发布视频字样的候选按钮
-          const allButtons = Array.from(document.querySelectorAll('button, [role="button"], div, span'));
-          const publishBtns = allButtons.filter(el => {
-            if (el.children.length > 2) return false;
-            const txt = el.textContent ? el.textContent.trim() : '';
-            return txt === '发布' || txt === '立即发布' || txt === '确认发布' || txt === '发布视频';
-          });
+          // 1. 定义匹配目标与排除规则
+          const targetTexts = ['发布', '立即发布', '确认发布', '发布视频', '发表'];
+          const forbiddenTexts = ['草稿', '保存', '定时', '取消', '返回', '上一步', '预览', '设置', '说明', '须知', '声明'];
 
-          console.log('Found publish button candidates:', publishBtns.length);
+          // 获取页面上所有的潜在点击按钮
+          const clickableElements = Array.from(document.querySelectorAll('button, [role="button"], .semi-button, a[class*="btn"], button[class*="btn"], [class*="publish-btn"], [class*="btn-publish"]'));
 
-          if (publishBtns.length > 0) {
-            // 优先匹配 BUTTON 类型的实际按钮
-            const buttonTag = publishBtns.find(b => b.tagName === 'BUTTON');
-            const targetBtn = buttonTag || publishBtns[0];
-            clickElement(targetBtn);
-            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: ' + targetBtn.tagName + ' -> ' + (targetBtn.textContent || '').trim();
+          let targetBtn = null;
+          let matchedStrategy = '';
+
+          // 策略 A: 精确匹配文本（去除所有类型的主干/前后零散空格），在可点击或按钮级元素上过滤
+          for (const el of clickableElements) {
+            const cleanText = el.textContent ? el.textContent.replace(/\s+/g, '') : '';
+            if (targetTexts.includes(cleanText)) {
+              targetBtn = el;
+              matchedStrategy = 'A (Clickable Element Exact Match -> "' + cleanText + '")';
+              break;
+            }
           }
 
-          // 2. 备用：按类名匹配等找发布按钮
-          const fallbackBtns = Array.from(document.querySelectorAll('button[class*="publish"], [class*="btn-publish"], button[class*="submit"], [class*="publish-btn"]'));
-          if (fallbackBtns.length > 0) {
-            clickElement(fallbackBtns[0]);
-            return 'PUBLISH_BUTTON_CLICKED_BY_SELECTOR_SUCCESS';
+          // 策略 B: 原逻辑继承兜底：对没有任何特定类名的基本 span/div 元素限制子集节点数 <= 2 展开精确匹配
+          if (!targetBtn) {
+            const allElements = Array.from(document.querySelectorAll('button, [role="button"], div, span'));
+            for (const el of allElements) {
+              if (el.children.length > 2) continue;
+              const cleanText = el.textContent ? el.textContent.replace(/\s+/g, '') : '';
+              if (targetTexts.includes(cleanText)) {
+                targetBtn = el;
+                matchedStrategy = 'B (Generic Element Exact Match + Children<=2 -> "' + cleanText + '")';
+                break;
+              }
+            }
+          }
+
+          // 策略 C: 模糊匹配：对可点击的合法候选，只要包含“发布”文字词且不含任何不相干或回退的否定关键词（如草稿、定时等）
+          if (!targetBtn) {
+            for (const el of clickableElements) {
+              const cleanText = el.textContent ? el.textContent.replace(/\s+/g, '') : '';
+              if (cleanText.includes('发布') && !forbiddenTexts.some(fw => cleanText.includes(fw))) {
+                targetBtn = el;
+                matchedStrategy = 'C (Clickable Element Fuzzy Match -> "' + cleanText + '")';
+                break;
+              }
+            }
+          }
+
+          // 策略 D: 经典类名及属性选择器定位（小红书自定义防跌退方案）
+          if (!targetBtn) {
+            const fallbackSelector = 'button[class*="publish"], [class*="btn-publish"], button[class*="submit"], [class*="publish-btn"], .semi-button-primary';
+            const fallbackBtns = Array.from(document.querySelectorAll(fallbackSelector));
+            const validFallback = fallbackBtns.find(itm => {
+              const clean = itm.textContent ? itm.textContent.replace(/\s+/g, '') : '';
+              return !forbiddenTexts.some(fw => clean.includes(fw));
+            });
+            if (validFallback) {
+              targetBtn = validFallback;
+              matchedStrategy = 'D (Class/Selector Match -> "' + (validFallback.className || '') + '")';
+            }
+          }
+
+          // 策略 E: 最强辅助适配：寻找未被禁用的、且最符合主提交行为特质的 Primary 核心按钮
+          if (!targetBtn) {
+            const primaryBtns = Array.from(document.querySelectorAll('.semi-button-primary, button[type="submit"], button[class*="-primary"]'));
+            for (const btn of primaryBtns) {
+              const clean = btn.textContent ? btn.textContent.replace(/\s+/g, '') : '';
+              if (!forbiddenTexts.some(fw => clean.includes(fw))) {
+                targetBtn = btn;
+                matchedStrategy = 'E (Adaptive Core Primary Button -> "' + clean + '")';
+                break;
+              }
+            }
+          }
+
+          console.log('Publish Button Match Evaluation:', matchedStrategy);
+
+          if (targetBtn) {
+            clickElement(targetBtn);
+            return 'PUBLISH_BUTTON_CLICKED_SUCCESS using Strategy ' + matchedStrategy + ' | Tag: ' + targetBtn.tagName;
           }
 
           return 'PUBLISH_BUTTON_NOT_FOUND';
