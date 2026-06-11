@@ -335,25 +335,77 @@ async function startServer() {
 
     // Resolve candidates
     const cleanPath = relativePath.replace(/^\//, ''); // remove leading slash
+    const normalizedPath = cleanPath.replace(/\\/g, '/');
+
     // Convert 'downloads/' web routing prefix to local 'download/' filesystem directory representation
-    const localDirMappedPath = cleanPath.startsWith('downloads/')
-      ? cleanPath.replace(/^downloads\//, 'download/')
-      : cleanPath;
+    const localDirMappedPath = normalizedPath.startsWith('downloads/')
+      ? normalizedPath.replace(/^downloads\//, 'download/')
+      : normalizedPath;
 
     const candidates = [
-      path.join(__dirname, cleanPath),
-      path.join(process.cwd(), cleanPath),
+      path.join(__dirname, normalizedPath),
+      path.join(process.cwd(), normalizedPath),
       path.join(__dirname, localDirMappedPath),
       path.join(process.cwd(), localDirMappedPath),
-      path.join(__dirname, 'download', cleanPath),
-      path.join(__dirname, 'uploads', cleanPath),
-      path.join(process.cwd(), 'download', cleanPath),
-      path.join(process.cwd(), 'uploads', cleanPath)
+      path.join(__dirname, 'download', 'videos', normalizedPath),
+      path.join(process.cwd(), 'download', 'videos', normalizedPath),
+      path.join(__dirname, 'download', normalizedPath),
+      path.join(__dirname, 'uploads', normalizedPath),
+      path.join(process.cwd(), 'download', normalizedPath),
+      path.join(process.cwd(), 'uploads', normalizedPath)
     ];
 
     for (const candidate of candidates) {
       if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
         return res.sendFile(candidate);
+      }
+    }
+
+    // Deep recursive fallback matching to prevent 404s for any moved or nested media files
+    const baseDirs = [
+      path.join(__dirname, 'download'),
+      path.join(__dirname, 'uploads'),
+      path.join(process.cwd(), 'download'),
+      path.join(process.cwd(), 'uploads')
+    ];
+
+    const searchFileRecursively = (dir: string, suffix: string): string | null => {
+      if (!fs.existsSync(dir)) return null;
+      try {
+        const files = fs.readdirSync(dir);
+        for (const file of files) {
+          const fullPath = path.join(dir, file);
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory()) {
+            const found = searchFileRecursively(fullPath, suffix);
+            if (found) return found;
+          } else if (stat.isFile()) {
+            const normFull = fullPath.replace(/\\/g, '/');
+            if (normFull.endsWith(suffix)) {
+              return fullPath;
+            }
+          }
+        }
+      } catch (e) {}
+      return null;
+    };
+
+    // Try matching using full relative path first
+    for (const base of baseDirs) {
+      const found = searchFileRecursively(base, normalizedPath);
+      if (found) {
+        console.log(`[Media API] Deep match found (path suffix): ${found}`);
+        return res.sendFile(found);
+      }
+    }
+
+    // Try matching using just the basename as absolute fallback
+    const baseName = path.basename(normalizedPath);
+    for (const base of baseDirs) {
+      const found = searchFileRecursively(base, baseName);
+      if (found) {
+        console.log(`[Media API] Deep match found (basename suffix): ${found}`);
+        return res.sendFile(found);
       }
     }
 
