@@ -8,6 +8,20 @@ export class DispatcherService {
   private io: Server | null = null;
   private connectedWorkers = new Map<string, string>(); // socket.id -> worker.token
 
+  private getServerUrl(socket: any): string {
+    if (process.env.APP_URL && process.env.APP_URL !== "MY_APP_URL" && process.env.APP_URL.trim() !== "") {
+      return process.env.APP_URL.replace(/\/$/, "");
+    }
+    const host = socket?.handshake?.headers?.['x-forwarded-host'] || socket?.handshake?.headers?.host || 'localhost:3000';
+    let protocol = 'http';
+    if (socket?.handshake?.headers?.['x-forwarded-proto'] === 'https') {
+      protocol = 'https';
+    } else if (!host.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+/.test(host.split(':')[0])) {
+      protocol = 'https';
+    }
+    return `${protocol}://${host}`;
+  }
+
   public attach(httpServer: any) {
     this.io = new Server(httpServer, {
       cors: { origin: "*" },
@@ -232,16 +246,7 @@ export class DispatcherService {
 
                      if (targetSocketId) {
                          const socket = this.io!.sockets.sockets.get(targetSocketId);
-                         const host = socket?.handshake.headers.host || 'localhost:3000';
-                         let protocol = 'http';
-                         
-                         if (socket?.handshake.headers['x-forwarded-proto'] === 'https') {
-                             protocol = 'https';
-                         } else if (!host.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+/.test(host.split(':')[0])) {
-                             if (this.io!.engine.opts.cors) protocol = 'https';
-                         }
-
-                         const serverUrl = `${protocol}://${host}`;
+                         const serverUrl = this.getServerUrl(socket);
                          const taskPayload = {
                              data: { ...taskData, systemConfig: { ...config, ...(typeof worker.config === 'string' ? JSON.parse(worker.config || '{}') : (worker.config || {})) } },
                              id: task.id, 
@@ -282,16 +287,7 @@ export class DispatcherService {
 
                     if (targetSocketId) {
                         const socket = this.io!.sockets.sockets.get(targetSocketId);
-                        const host = socket?.handshake.headers.host || 'localhost:4000';
-                        let protocol = 'http';
-                        
-                        if (socket?.handshake.headers['x-forwarded-proto'] === 'https') {
-                            protocol = 'https';
-                        } else if (!host.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+/.test(host.split(':')[0])) {
-                            if (this.io!.engine.opts.cors) protocol = 'https';
-                        }
-
-                        const serverUrl = `${protocol}://${host}`;
+                        const serverUrl = this.getServerUrl(socket);
                         console.log(`[Dispatcher] Found task ${task.id}, preparing payload with serverUrl: ${serverUrl}`);
 
                         const taskPayload = {

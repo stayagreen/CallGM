@@ -1406,10 +1406,29 @@ async function startServer() {
     if (!videoPath) return res.status(400).json({ error: '请指定视频路径' });
 
     try {
+      let finalCoverPath = coverPath;
+      if (!finalCoverPath) {
+        try {
+          const dbPath = videoPath.replace(/\//g, '\\');
+          const asset = db.prepare('SELECT * FROM assets WHERE file_path = ? OR file_path = ?').get(videoPath, dbPath) as any;
+          if (asset && asset.job_id) {
+            const taskRow = db.prepare('SELECT data FROM tasks WHERE id = ?').get(asset.job_id) as any;
+            if (taskRow && taskRow.data) {
+              const data = JSON.parse(taskRow.data);
+              if (data.storyboards && Array.isArray(data.storyboards) && data.storyboards.length > 0) {
+                finalCoverPath = data.storyboards[0].image;
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Failed to get database fallback cover path:', e);
+        }
+      }
+
       const result = db.prepare(`
         INSERT INTO xhs_notes (user_id, video_path, cover_path, title, content, tags, scheduled_at, publish_status)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(user.id, videoPath, coverPath || null, title || null, content || null, tags || null, scheduledAt || null, 'pending');
+      `).run(user.id, videoPath, finalCoverPath || null, title || null, content || null, tags || null, scheduledAt || null, 'pending');
 
       const noteId = result.lastInsertRowid as number;
 

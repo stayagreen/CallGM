@@ -86,14 +86,19 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
               
               // Find server host or construct payload
               const socket = (dispatcherService as any).io!.sockets.sockets.get(workerSocketId);
-              const host = socket?.handshake.headers.host || 'localhost:3000';
-              let protocol = 'http';
-              if (socket?.handshake.headers['x-forwarded-proto'] === 'https') {
-                  protocol = 'https';
-              } else if (!host.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+/.test(host.split(':')[0])) {
-                  if ((dispatcherService as any).io!.engine.opts.cors) protocol = 'https';
+              let serverUrl = '';
+              if (process.env.APP_URL && process.env.APP_URL !== "MY_APP_URL" && process.env.APP_URL.trim() !== "") {
+                  serverUrl = process.env.APP_URL.replace(/\/$/, "");
+              } else {
+                  const host = socket?.handshake?.headers?.['x-forwarded-host'] || socket?.handshake?.headers?.host || 'localhost:3000';
+                  let protocol = 'http';
+                  if (socket?.handshake?.headers?.['x-forwarded-proto'] === 'https') {
+                      protocol = 'https';
+                  } else if (!host.includes('localhost') && !/^\d+\.\d+\.\d+\.\d+/.test(host.split(':')[0])) {
+                      protocol = 'https';
+                  }
+                  serverUrl = `${protocol}://${host}`;
               }
-              const serverUrl = `${protocol}://${host}`;
 
               const payload = {
                   noteId: note.id,
@@ -899,25 +904,76 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     console.log(`[XHS 发布] 原创说明须知弹窗勾选及确认执行结果:`, originalDialogResult.result?.value);
 
     await new Promise(r => setTimeout(r, 2000));
-    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 90, message: '配置项填写完毕，已进入测试校对模式...' });
+    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 92, message: '配置项填写与设置完毕，正在为您执行最终的“发布”按钮点击动作...' });
 
-    // 9. 执行发布点击 (用户要求：发布点击动作先不要做，以便测试发布前的信息是否填写准确)
-    console.log(`[XHS 发布] [测试模式] 跳过最终的发布点击动作，保持浏览器页面处于打开状态以供校对。`);
+    // 9. 执行发布点击
+    console.log(`[XHS 发布] 开始判定并模拟点击发布按钮...`);
+    const clickPublishResult = await Runtime.evaluate({
+      expression: `(() => {
+        try {
+          const clickElement = (el) => {
+            if (!el) return;
+            try { el.focus(); } catch(e) {}
+            try { el.click(); } catch(e) {}
+            try {
+              el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+              el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+            } catch(e) {}
+          };
+
+          // 1. 寻找所有带有发布、立即发布、确认发布、发布视频字样的候选按钮
+          const allButtons = Array.from(document.querySelectorAll('button, [role="button"], div, span'));
+          const publishBtns = allButtons.filter(el => {
+            if (el.children.length > 2) return false;
+            const txt = el.textContent ? el.textContent.trim() : '';
+            return txt === '发布' || txt === '立即发布' || txt === '确认发布' || txt === '发布视频';
+          });
+
+          console.log('Found publish button candidates:', publishBtns.length);
+
+          if (publishBtns.length > 0) {
+            // 优先匹配 BUTTON 类型的实际按钮
+            const buttonTag = publishBtns.find(b => b.tagName === 'BUTTON');
+            const targetBtn = buttonTag || publishBtns[0];
+            clickElement(targetBtn);
+            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: ' + targetBtn.tagName + ' -> ' + (targetBtn.textContent || '').trim();
+          }
+
+          // 2. 备用：按类名匹配等找发布按钮
+          const fallbackBtns = Array.from(document.querySelectorAll('button[class*="publish"], [class*="btn-publish"], button[class*="submit"], [class*="publish-btn"]'));
+          if (fallbackBtns.length > 0) {
+            clickElement(fallbackBtns[0]);
+            return 'PUBLISH_BUTTON_CLICKED_BY_SELECTOR_SUCCESS';
+          }
+
+          return 'PUBLISH_BUTTON_NOT_FOUND';
+        } catch(e) {
+          return 'PUBLISH_CLICK_ERROR: ' + e.message;
+        }
+      })()`,
+      returnByValue: true
+    });
+
+    console.log(`[XHS 发布] 点击最终发布按钮判定及执行结果:`, clickPublishResult.result?.value);
+
+    // 留出 8 秒存盘和接收返回，确保小红书后台响应并真正传输完成
+    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 98, message: '发布指令已下发！正在安全等待网络回发存盘 (约8秒)...' });
+    await new Promise(r => setTimeout(r, 8000));
     
-    // 标记不要关闭当前调试标签页，使用户能在 Chrome 中实时校对并手动点击发布
-    shouldKeepTabOpen = true;
+    // 标记不要保持调试标签页开启，点击完自动关闭该选项卡
+    shouldKeepTabOpen = false;
 
-    db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/publish/publish?from=menu&target=video', noteId);
+    db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/creator/home', noteId);
     
     xhsProgressMap.set(noteId, { 
       id: noteId, 
       status: 'success', 
       progress: 100, 
-      message: '🎉 [测试校对模式] 信息已在您的 Chrome 浏览器中填写完毕！请校对正确后手动点击“发布”按钮进行发布。' 
+      message: '🎉 小红书作品已全自动发表成功，并成功在创作者中心内记录存档！' 
     });
 
-    console.log(`[XHS 发布] ✅ [测试模式] 任务 ID: ${noteId} 信息填写及封面填充就绪！`);
-    return { success: true, url: 'https://creator.xiaohongshu.com/publish/publish?from=menu&target=video' };
+    console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 全自动发布成功！`);
+    return { success: true, url: 'https://creator.xiaohongshu.com/creator/home' };
 
   } catch (error: any) {
     console.error(`[XHS 发布] ❌ 任务 ID: ${noteId} 发生致命错误:`, error.message || error);

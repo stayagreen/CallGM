@@ -863,6 +863,7 @@ function MainApp() {
   const [activeTab, setActiveTab] = useState<'tasks' | 'video_tasks' | 'records' | 'video_records' | 'gallery' | 'video_gallery' | 'users' | 'proxy' | 'workers' | 'xhs_notes'>('tasks');
   const [xhsNotesList, setXhsNotesList] = useState<any[]>([]);
   const [xhsSearchText, setXhsSearchText] = useState('');
+  const [xhsSelectedUser, setXhsSelectedUser] = useState('全部');
   const [isXhsNotesLoading, setIsXhsNotesLoading] = useState(false);
   const [scheduledPublishTime, setScheduledPublishTime] = useState('');
   const [publishingXhsNoteId, setPublishingXhsNoteId] = useState<number | null>(null);
@@ -2896,15 +2897,55 @@ function MainApp() {
             </div>
           </div>
 
-          {/* Search bar */}
-          <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center gap-3">
-            <input 
-              type="text" 
-              placeholder="搜索标题或正文关键字..." 
-              value={xhsSearchText}
-              onChange={e => setXhsSearchText(e.target.value)}
-              className="flex-grow px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-red-400 transition"
-            />
+          {/* Search bar & Username Classification */}
+          <div className="space-y-3">
+            <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex items-center gap-3">
+              <input 
+                type="text" 
+                placeholder="搜索标题或正文关键字..." 
+                value={xhsSearchText}
+                onChange={e => setXhsSearchText(e.target.value)}
+                className="flex-grow px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-red-400 transition"
+              />
+            </div>
+
+            {/* Username categorization tabs */}
+            {(() => {
+              const uniqueUsers = Array.from(new Set(xhsNotesList.map(n => n.username || '未知用户')));
+              if (uniqueUsers.length <= 1) return null;
+
+              return (
+                <div className="flex gap-2 flex-wrap items-center bg-gray-100/60 p-1.5 rounded-xl border border-gray-150">
+                  <span className="text-xs font-bold text-gray-500 px-2.5">按用户名分类:</span>
+                  <button
+                    onClick={() => setXhsSelectedUser('全部')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                      xhsSelectedUser === '全部' 
+                        ? 'bg-red-500 text-white shadow-sm' 
+                        : 'text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    全部 ({xhsNotesList.length})
+                  </button>
+                  {uniqueUsers.map(uname => {
+                    const count = xhsNotesList.filter(n => (n.username || '未知用户') === uname).length;
+                    return (
+                      <button
+                        key={uname}
+                        onClick={() => setXhsSelectedUser(uname)}
+                        className={`px-3 py-1 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                          xhsSelectedUser === uname 
+                            ? 'bg-red-500 text-white shadow-sm' 
+                            : 'text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        👤 {uname} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
 
           {isXhsNotesLoading ? (
@@ -2913,189 +2954,233 @@ function MainApp() {
               <span>正在获取发布摘要列表...</span>
             </div>
           ) : (() => {
-            const list = xhsNotesList.filter(note => {
+            const filteredList = xhsNotesList.filter(note => {
               const matchesSearch = !xhsSearchText || 
                 (note.title && note.title.toLowerCase().includes(xhsSearchText.toLowerCase())) ||
                 (note.content && note.content.toLowerCase().includes(xhsSearchText.toLowerCase()));
-              return matchesSearch;
+              
+              const matchesUser = xhsSelectedUser === '全部' || (note.username || '未知用户') === xhsSelectedUser;
+              
+              return matchesSearch && matchesUser;
             });
 
-            if (list.length === 0) {
+            if (filteredList.length === 0) {
               return (
                 <div className="text-center py-16 bg-white border border-gray-150 rounded-2xl">
                   <Share2 className="w-12 h-12 mx-auto mb-3 text-red-400" />
-                  <p className="text-sm font-medium text-gray-500">暂无任何小红书发布记录</p>
+                  <p className="text-sm font-medium text-gray-500">暂无符合条件的小红书发布记录</p>
                   <p className="text-xs text-gray-400 mt-1">您可以在“素材库” - “本地视频库”中选择视频，点击“小红书配置”进行发布或定时计划。</p>
                 </div>
               );
             }
 
+            const groups = groupByUser(filteredList);
+
             return (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {list.map(note => {
-                  const coverUrl = note.cover_path 
-                    ? (note.cover_path.startsWith('/') ? note.cover_path : `/${note.cover_path}`) 
-                    : '/placeholder_cover.jpg';
-                  
+              <div className="space-y-6">
+                {Object.entries(groups).map(([uname, groupNotes]: [string, any[]]) => {
+                  const key = uname + '_xhs';
+                  const isExpanded = expandedUsers.has(key) || 
+                                     uname === user?.username || 
+                                     xhsSelectedUser === uname || 
+                                     Object.keys(groups).length <= 1;
+
                   return (
-                    <div key={note.id} className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition flex flex-col justify-between sm:flex-row gap-4">
-                      {/* Left side info block with preview */}
-                      <div className="flex gap-4 flex-grow min-w-0">
-                        {/* Cover preview */}
-                        <div className="w-24 h-32 rounded-lg overflow-hidden bg-gray-100 border border-gray-150 relative flex-shrink-0">
-                          {note.cover_path ? (
-                            <img 
-                              referrerPolicy="no-referrer"
-                              src={coverUrl} 
-                              alt="cover" 
-                              className="w-full h-full object-cover" 
-                              onError={(e) => { e.currentTarget.src = '/placeholder_cover.jpg'; }}
-                            />
-                          ) : (
-                            <div className="w-full h-full flex flex-col items-center justify-center text-gray-300">
-                              <ImageIcon size={24} />
-                              <span className="text-[10px] mt-1">无封面</span>
-                            </div>
-                          )}
-                          <div className="absolute top-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[10px] text-white">
-                            ID: {note.id}
-                          </div>
-                        </div>
-
-                        {/* Text fields & badges */}
-                        <div className="flex-grow min-w-0 flex flex-col justify-between">
-                          <div>
-                            <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
-                              {/* Status badge */}
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                note.publish_status === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
-                                note.publish_status === 'failed' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
-                                note.publish_status === 'publishing' ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse' :
-                                'bg-gray-50 text-gray-600 border border-gray-200'
-                              }`}>
-                                {note.publish_status === 'success' ? '发布成功' :
-                                 note.publish_status === 'failed' ? '发布失败' :
-                                 note.publish_status === 'publishing' ? '发布中...' : '定时/等待中'}
-                              </span>
-                              
-                              {/* User indicator for admin */}
-                              {user?.role === 'admin' && note.username && (
-                                <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">
-                                  👤 {note.username}
-                                </span>
-                              )}
-                            </div>
-
-                            <h3 className="font-bold text-gray-800 text-sm truncate" title={note.title}>{note.title || '（未命名标题）'}</h3>
-                            <p className="text-xs text-gray-500 line-clamp-2 mt-1 whitespace-pre-line" title={note.content}>{note.content || '（无描述正文）'}</p>
-                            {note.tags && (
-                              <p className="text-[10px] text-red-500 font-medium truncate mt-1">
-                                {note.tags.split(/[\s,，]+/).map((t: string) => t.startsWith('#') ? t : `#${t}`).join(' ')}
-                              </p>
-                            )}
-                          </div>
-
-                          <div className="mt-2 pt-2 border-t border-gray-50">
-                            {/* Schedule/Publish time */}
-                            <div className="flex items-center gap-1 text-[10px] text-gray-400 mb-1 font-mono">
-                              <Clock size={11} />
-                              <span>
-                                {note.scheduled_at 
-                                  ? `计划发布: ${new Date(note.scheduled_at).toLocaleString()}` 
-                                  : `发布提交: ${new Date(note.created_at).toLocaleString()}`}
-                              </span>
-                            </div>
-
-                            {/* Show error if failed */}
-                            {note.publish_status === 'failed' && note.error_message && (
-                              <p className="text-[10px] text-rose-500 font-medium truncate max-w-full" title={note.error_message}>
-                                ⚠️ 错误: {note.error_message}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Right/Bottom side action buttons */}
-                      <div className="flex sm:flex-col justify-end gap-1.5 min-w-[100px] border-t sm:border-t-0 pt-2 sm:pt-0 sm:border-l sm:pl-3 border-gray-100">
-                        {note.publish_url && (
-                          <a 
-                            href={note.publish_url} 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            className="flex-grow py-1 px-2 text-[11px] font-bold text-red-500 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition hover:scale-[1.02]"
-                          >
-                            <ExternalLink size={11} />
-                            打开笔记
-                          </a>
-                        )}
-
-                        <button 
-                          type="button"
-                          onClick={() => setEditingXhsNote({ ...note })}
-                          className="flex-grow py-1 px-2 text-[11px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition hover:scale-[1.02]"
+                    <div key={uname} className="space-y-4">
+                      {/* Section header for user classification */}
+                      {Object.keys(groups).length > 1 && (
+                        <div 
+                          onClick={() => toggleUserExpand(key)}
+                          className="flex justify-between items-center bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 cursor-pointer hover:bg-gray-100 transition shadow-sm"
                         >
-                          <Edit2 size={11} />
-                          编辑笔记
-                        </button>
+                          <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                            <span className="text-red-500">👤</span>
+                            <span>{uname}</span>
+                            <span className="bg-red-50 text-red-600 text-[11px] px-2 py-0.5 rounded-full font-bold border border-red-100">
+                              {groupNotes.length} 个笔记
+                            </span>
+                          </h3>
+                          <div className="flex items-center text-gray-400">
+                            {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                          </div>
+                        </div>
+                      )}
 
-                        {(note.publish_status === 'failed' || note.publish_status === 'pending') && (
-                          <button 
-                            type="button"
-                            onClick={async () => {
-                              try {
-                                setPublishingXhsNoteId(note.id);
-                                const res = await fetch('/api/videos/xhs/publish', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({
-                                    videoPath: note.video_path,
-                                    coverPath: note.cover_path,
-                                    title: note.title,
-                                    content: note.content,
-                                    tags: note.tags
-                                  })
-                                });
-                                const result = await res.json();
-                                if (result.success) {
-                                  setPublishingXhsNoteId(result.noteId);
-                                } else {
-                                  alert('发布触发失败: ' + result.error);
-                                  setPublishingXhsNoteId(null);
-                                }
-                              } catch (err: any) {
-                                alert('重试触发异常: ' + (err.message || err));
-                                setPublishingXhsNoteId(null);
+                      {/* Notes grid */}
+                      {isExpanded && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {groupNotes.map(note => {
+                            let coverUrl = '/placeholder_cover.jpg';
+                            if (note.cover_path) {
+                              if (note.cover_path.startsWith('data:') || note.cover_path.startsWith('http')) {
+                                coverUrl = note.cover_path;
+                              } else {
+                                coverUrl = note.cover_path.startsWith('/') ? note.cover_path : `/${note.cover_path}`;
                               }
-                            }}
-                            className="flex-grow py-1 px-2 text-[11px] font-bold text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition hover:scale-[1.02]"
-                          >
-                            <Share2 size={11} />
-                            {note.publish_status === 'failed' ? '重新发布' : '立即发布'}
-                          </button>
-                        )}
-
-                        <button 
-                          type="button"
-                          onClick={async () => {
-                            if (!window.confirm('确定要删除这档小红书笔记记录吗？（仅删除数据库发布概览）')) return;
-                            try {
-                              await fetch('/api/xhs-notes/delete', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ id: note.id })
-                              });
-                              fetchXhsNotes();
-                            } catch (e) {
-                              alert('删除失败');
                             }
-                          }}
-                          className="py-1 px-2 text-[11px] font-medium text-gray-500 hover:text-red-500 hover:bg-red-50 border border-transparent hover:border-red-150 rounded-lg cursor-pointer flex items-center justify-center gap-1 transition"
-                        >
-                          <Trash2 size={11} />
-                          删除记录
-                        </button>
-                      </div>
+                            
+                            return (
+                              <div key={note.id} className="bg-white border border-gray-200 rounded-2xl p-4 shadow-sm hover:shadow-md transition flex flex-col justify-between sm:flex-row gap-4">
+                                {/* Left side info block with preview */}
+                                <div className="flex gap-4 flex-grow min-w-0">
+                                  {/* Cover preview */}
+                                  <div className="w-24 h-32 rounded-lg overflow-hidden bg-gray-100 border border-gray-150 relative flex-shrink-0">
+                                    <img 
+                                      referrerPolicy="no-referrer"
+                                      src={coverUrl} 
+                                      alt="cover" 
+                                      className="w-full h-full object-cover" 
+                                      onError={(e) => { e.currentTarget.src = '/placeholder_cover.jpg'; }}
+                                    />
+                                    <div className="absolute top-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[10px] text-white font-mono">
+                                      ID: {note.id}
+                                    </div>
+                                  </div>
+
+                                  {/* Text fields & badges */}
+                                  <div className="flex-grow min-w-0 flex flex-col justify-between">
+                                    <div>
+                                      <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+                                        {/* Status badge */}
+                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                          note.publish_status === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
+                                          note.publish_status === 'failed' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                                          note.publish_status === 'publishing' ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse' :
+                                          'bg-gray-50 text-gray-600 border border-gray-200'
+                                        }`}>
+                                          {note.publish_status === 'success' ? '已发布' :
+                                           note.publish_status === 'failed' ? '发布失败' :
+                                           note.publish_status === 'publishing' ? '发布中...' : '定时发布 / 任务排队中'}
+                                        </span>
+                                        
+                                        {/* User indicator for admin */}
+                                        {note.username && (
+                                          <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">
+                                            👤 {note.username}
+                                          </span>
+                                        )}
+                                      </div>
+
+                                      <h3 className="font-bold text-gray-800 text-sm truncate" title={note.title}>{note.title || '（未命名标题）'}</h3>
+                                      <p className="text-xs text-gray-500 line-clamp-2 mt-1 whitespace-pre-line" title={note.content}>{note.content || '（无描述正文）'}</p>
+                                      {note.tags && (
+                                        <p className="text-[10px] text-red-500 font-medium truncate mt-1">
+                                          {note.tags.split(/[\s,，]+/).map((t: string) => t.startsWith('#') ? t : `#${t}`).join(' ')}
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    <div className="mt-2 pt-2 border-t border-gray-50">
+                                      {/* Schedule/Publish time */}
+                                      <div className="flex items-center gap-1 text-[10px] text-gray-400 mb-1 font-mono">
+                                        <Clock size={11} />
+                                        <span>
+                                          {note.scheduled_at 
+                                            ? `计划发布: ${new Date(note.scheduled_at).toLocaleString()}` 
+                                            : `发布提交: ${new Date(note.created_at).toLocaleString()}`}
+                                        </span>
+                                      </div>
+
+                                      {/* Show error if failed */}
+                                      {note.publish_status === 'failed' && note.error_message && (
+                                        <p className="text-[10px] text-rose-500 font-medium truncate max-w-full" title={note.error_message}>
+                                          ⚠️ 错误: {note.error_message}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Right/Bottom side action buttons */}
+                                <div className="flex sm:flex-col justify-end gap-1.5 min-w-[100px] border-t sm:border-t-0 pt-2 sm:pt-0 sm:border-l sm:pl-3 border-gray-100">
+                                  {note.publish_url && (
+                                    <a 
+                                      href={note.publish_url} 
+                                      target="_blank" 
+                                      rel="noreferrer" 
+                                      className="flex-grow py-1 px-2 text-[11px] font-bold text-red-500 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition hover:scale-[1.02]"
+                                    >
+                                      <ExternalLink size={11} />
+                                      打开笔记
+                                    </a>
+                                  )}
+
+                                  <button 
+                                    type="button"
+                                    onClick={() => setEditingXhsNote({ ...note })}
+                                    className="flex-grow py-1 px-2 text-[11px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition hover:scale-[1.02]"
+                                  >
+                                    <Edit2 size={11} />
+                                    编辑笔记
+                                  </button>
+
+                                  {(note.publish_status === 'failed' || note.publish_status === 'pending') && (
+                                    <button 
+                                      type="button"
+                                      onClick={async () => {
+                                        try {
+                                          setPublishingXhsNoteId(note.id);
+                                          const res = await fetch('/api/videos/xhs/publish', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({
+                                              videoPath: note.video_path,
+                                              coverPath: note.cover_path,
+                                              title: note.title,
+                                              content: note.content,
+                                              tags: note.tags
+                                            })
+                                          });
+                                          const result = await res.json();
+                                          if (result.success) {
+                                            setPublishingXhsNoteId(result.noteId);
+                                          } else {
+                                            alert('发布触发失败: ' + result.error);
+                                            setPublishingXhsNoteId(null);
+                                          }
+                                        } catch (err: any) {
+                                          alert('重试触发异常: ' + (err.message || err));
+                                          setPublishingXhsNoteId(null);
+                                        }
+                                      }}
+                                      className="flex-grow py-1 px-2 text-[11px] font-bold text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition hover:scale-[1.02]"
+                                    >
+                                      <Share2 size={11} />
+                                      {note.publish_status === 'failed' ? '重新发布' : '立即发布'}
+                                    </button>
+                                  )}
+
+                                  <button 
+                                    type="button"
+                                    onClick={async () => {
+                                      const isPending = note.publish_status !== 'success' && note.publish_status !== 'failed';
+                                      const confirmMessage = isPending
+                                        ? '您确定要删除这档定时发布的小红书作品记录吗？此任务还未发布，删除该记录将【同步取消并彻底删除定时发布任务】，到点将不再自动执行发布。'
+                                        : '确定要删除这档已发布的小红书发布记录吗？';
+                                      
+                                      if (!window.confirm(confirmMessage)) return;
+                                      try {
+                                        await fetch('/api/xhs-notes/delete', {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ id: note.id })
+                                        });
+                                        fetchXhsNotes();
+                                      } catch (e) {
+                                        alert('删除失败');
+                                      }
+                                    }}
+                                    className="py-1 px-2 text-[11px] font-medium text-gray-500 hover:text-red-500 hover:bg-red-50 border border-transparent hover:border-red-150 rounded-lg cursor-pointer flex items-center justify-center gap-1 transition"
+                                  >
+                                    <Trash2 size={11} />
+                                    删除记录
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -4073,7 +4158,7 @@ function MainApp() {
                               body: JSON.stringify({ videoPath: viewingXhsNotes.videoId, taskData: viewingXhsNotes.taskData })
                             });
                             const saveResult = await saveRes.json();
-                            const resolvedCoverPath = saveResult.coverImage || viewingXhsNotes.taskData.xhsCoverImage;
+                            const resolvedCoverPath = saveResult.coverImage || viewingXhsNotes.taskData.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards[0]?.image);
                             
                             // 2. Trigger Publish API
                             const res = await fetch('/api/videos/xhs/publish', {

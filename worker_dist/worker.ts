@@ -81,10 +81,10 @@ socket.on("registered", (info: any) => {
 });
 
 socket.on("run_task", async (taskData: any) => {
-    const { id: jobId, data, serverUrl } = taskData;
+    const { id: jobId, data, serverUrl, userId } = taskData;
     const finalServerUrl = serverUrl || DEFAULT_SERVER_URL;
     
-    console.log(`[任务] 收到新任务: ${jobId}, Server: ${finalServerUrl}`);
+    console.log(`[任务] 收到新任务: ${jobId}, Server: ${finalServerUrl}, User: ${userId}`);
     
     try {
         // 挂载主服务器地址，供 automation.ts 异步拉取缺失的参考图
@@ -93,7 +93,7 @@ socket.on("run_task", async (taskData: any) => {
         }
         
         // 执行任务
-        const updatedTaskData = await executeBatch(data, `${jobId}.json`, jobId);
+        const updatedTaskData = await executeBatch(data, `${jobId}.json`, userId);
         
         let filesToUpload: string[] = [];
         let finalStatus = 'completed';
