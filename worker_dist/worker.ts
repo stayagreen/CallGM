@@ -93,8 +93,24 @@ socket.on("run_task", async (taskData: any) => {
         }
         
         // 执行任务
-        const resultFiles = await executeBatch(data, `${jobId}.json`, jobId);
-        console.log(`[任务] 执行完成, 产生文件: ${resultFiles.length}`);
+        const updatedTaskData = await executeBatch(data, `${jobId}.json`, jobId);
+        
+        let filesToUpload: string[] = [];
+        let finalStatus = 'completed';
+        
+        if (updatedTaskData) {
+            const tasksList = Array.isArray(updatedTaskData) ? updatedTaskData : (updatedTaskData.tasks || []);
+            if (tasksList.some((t: any) => t.status === 'failed')) {
+                finalStatus = 'failed';
+            }
+            tasksList.forEach((t: any) => {
+                if (t.downloadedFiles && Array.isArray(t.downloadedFiles)) {
+                    filesToUpload.push(...t.downloadedFiles);
+                }
+            });
+        }
+        
+        console.log(`[任务] 执行完成, 状态: ${finalStatus}, 收集到待上传文件: ${filesToUpload.length}`);
 
         // 上传文件函数
         const uploadFile = async (filePath: string) => {
@@ -128,11 +144,11 @@ socket.on("run_task", async (taskData: any) => {
             }
         };
 
-        for (const f of resultFiles) {
+        for (const f of filesToUpload) {
             await uploadFile(f);
         }
 
-        socket.emit("task_status", { jobId, progress: { status: 'completed', progress: 100 }, status: 'completed' });
+        socket.emit("task_status", { jobId, progress: { status: finalStatus, progress: 100 }, status: finalStatus });
     } catch (err: any) {
         console.error(`[任务] 失败: ${jobId}`, err);
         socket.emit("task_status", { jobId, progress: { status: 'error', progress: 0, error: err.message }, status: 'error' });
