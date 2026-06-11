@@ -77,6 +77,7 @@ db.exec(`
     content TEXT,
     tags TEXT,
     scheduled_at DATETIME,
+    is_draft INTEGER DEFAULT 0,
     publish_status TEXT DEFAULT 'pending',
     publish_url TEXT,
     error_message TEXT,
@@ -110,6 +111,7 @@ try { db.exec('ALTER TABLE tasks ADD COLUMN worker_id TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE system_config ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;'); } catch (e) {}
 try { db.exec('ALTER TABLE users ADD COLUMN xhs_homepage_url TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE users ADD COLUMN bound_worker_id TEXT;'); } catch (e) {}
+try { db.exec('ALTER TABLE xhs_notes ADD COLUMN is_draft INTEGER DEFAULT 0;'); } catch (e) {}
 try {
   db.exec(`
     CREATE TABLE IF NOT EXISTS xhs_notes (
@@ -121,6 +123,7 @@ try {
       content TEXT,
       tags TEXT,
       scheduled_at DATETIME,
+      is_draft INTEGER DEFAULT 0,
       publish_status TEXT DEFAULT 'pending',
       publish_url TEXT,
       error_message TEXT,

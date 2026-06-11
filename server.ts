@@ -1460,7 +1460,7 @@ async function startServer() {
 
   // Schedule or Publish a Xiaohongshu Note
   app.post('/api/videos/xhs/publish', requireAuth, checkAccess, async (req: any, res) => {
-    const { videoPath, coverPath, title, content, tags, scheduledAt } = req.body;
+    const { videoPath, coverPath, title, content, tags, scheduledAt, isDraft } = req.body;
     const user = req.session.user;
     if (!videoPath) return res.status(400).json({ error: '请指定视频路径' });
 
@@ -1484,15 +1484,18 @@ async function startServer() {
         }
       }
 
+      const finalIsDraft = isDraft ? 1 : 0;
+      const finalScheduledAt = finalIsDraft ? null : (scheduledAt || null);
+
       const result = db.prepare(`
-        INSERT INTO xhs_notes (user_id, video_path, cover_path, title, content, tags, scheduled_at, publish_status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(user.id, videoPath, finalCoverPath || null, title || null, content || null, tags || null, scheduledAt || null, 'pending');
+        INSERT INTO xhs_notes (user_id, video_path, cover_path, title, content, tags, scheduled_at, is_draft, publish_status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(user.id, videoPath, finalCoverPath || null, title || null, content || null, tags || null, finalScheduledAt, finalIsDraft, 'pending');
 
       const noteId = result.lastInsertRowid as number;
 
       // If scheduledAt is null or empty, publish immediately in the background
-      if (!scheduledAt) {
+      if (!finalScheduledAt) {
         executeXhsPublish(noteId).catch(err => {
           console.error(`Error executing immediate publish for note ${noteId}:`, err);
         });
@@ -1546,26 +1549,29 @@ async function startServer() {
     }
   });
 
-  // Update an XHS Note record (title, content, tags, scheduled_at, publish_url)
+  // Update an XHS Note record (title, content, tags, scheduled_at, publish_url, is_draft)
   app.post('/api/xhs-notes/update', requireAuth, checkAccess, (req: any, res) => {
-    const { id, title, content, tags, scheduledAt, publishUrl } = req.body;
+    const { id, title, content, tags, scheduledAt, publishUrl, isDraft } = req.body;
     const user = req.session.user;
     if (!id) return res.status(400).json({ error: 'Missing note ID' });
 
     try {
+      const finalIsDraft = isDraft ? 1 : 0;
+      const finalScheduledAt = finalIsDraft ? null : (scheduledAt || null);
+
       let runResult;
       if (user.role === 'admin') {
         runResult = db.prepare(`
           UPDATE xhs_notes 
-          SET title = ?, content = ?, tags = ?, scheduled_at = ?, publish_url = ?, updated_at = CURRENT_TIMESTAMP
+          SET title = ?, content = ?, tags = ?, scheduled_at = ?, is_draft = ?, publish_url = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ?
-        `).run(title || null, content || null, tags || null, scheduledAt || null, publishUrl || null, id);
+        `).run(title || null, content || null, tags || null, finalScheduledAt, finalIsDraft, publishUrl || null, id);
       } else {
         runResult = db.prepare(`
           UPDATE xhs_notes 
-          SET title = ?, content = ?, tags = ?, scheduled_at = ?, publish_url = ?, updated_at = CURRENT_TIMESTAMP
+          SET title = ?, content = ?, tags = ?, scheduled_at = ?, is_draft = ?, publish_url = ?, updated_at = CURRENT_TIMESTAMP
           WHERE id = ? AND user_id = ?
-        `).run(title || null, content || null, tags || null, scheduledAt || null, publishUrl || null, id, user.id);
+        `).run(title || null, content || null, tags || null, finalScheduledAt, finalIsDraft, publishUrl || null, id, user.id);
       }
       
       if (runResult.changes === 0) {

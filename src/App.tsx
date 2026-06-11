@@ -866,6 +866,7 @@ function MainApp() {
   const [xhsSelectedUser, setXhsSelectedUser] = useState('全部');
   const [isXhsNotesLoading, setIsXhsNotesLoading] = useState(false);
   const [scheduledPublishTime, setScheduledPublishTime] = useState('');
+  const [xhsIsDraft, setXhsIsDraft] = useState(false);
   const [publishingXhsNoteId, setPublishingXhsNoteId] = useState<number | null>(null);
   const [xhsPublishProgress, setXhsPublishProgress] = useState<any>(null);
   const [editingXhsNote, setEditingXhsNote] = useState<any | null>(null);
@@ -1312,6 +1313,13 @@ function MainApp() {
     if (activeTab === 'video_gallery') fetchVideoGallery();
     if (activeTab === 'xhs_notes') fetchXhsNotes();
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!viewingXhsNotes) {
+      setScheduledPublishTime('');
+      setXhsIsDraft(false);
+    }
+  }, [viewingXhsNotes]);
 
   // Polling for Xiaohongshu Publishing progress
   useEffect(() => {
@@ -3042,16 +3050,23 @@ function MainApp() {
                                     <div>
                                       <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
                                         {/* Status badge */}
-                                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                          note.publish_status === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
-                                          note.publish_status === 'failed' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
-                                          note.publish_status === 'publishing' ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse' :
-                                          'bg-gray-50 text-gray-600 border border-gray-200'
-                                        }`}>
-                                          {note.publish_status === 'success' ? '已发布' :
-                                           note.publish_status === 'failed' ? '发布失败' :
-                                           note.publish_status === 'publishing' ? '发布中...' : '定时发布 / 任务排队中'}
-                                        </span>
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                            note.publish_status === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
+                                            note.publish_status === 'failed' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                                            note.publish_status === 'publishing' ? 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse' :
+                                            'bg-gray-50 text-gray-600 border border-gray-200'
+                                          }`}>
+                                            {note.publish_status === 'success' ? '已发布' :
+                                             note.publish_status === 'failed' ? '发布失败' :
+                                             note.publish_status === 'publishing' ? '发布中...' : '定时发布 / 任务排队中'}
+                                          </span>
+                                          {note.is_draft === 1 && (
+                                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                                              草稿
+                                            </span>
+                                          )}
+                                        </div>
                                         
                                         {/* User indicator for admin */}
                                         {note.username && (
@@ -3128,7 +3143,8 @@ function MainApp() {
                                               coverPath: note.cover_path,
                                               title: note.title,
                                               content: note.content,
-                                              tags: note.tags
+                                              tags: note.tags,
+                                              isDraft: note.is_draft
                                             })
                                           });
                                           const result = await res.json();
@@ -4127,17 +4143,48 @@ function MainApp() {
                 </h3>
                 
                 <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm">
+                  <div className="mb-4 flex items-center gap-2 border-b border-gray-50 pb-3">
+                    <label className="flex items-center gap-2 text-xs font-bold text-gray-750 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={xhsIsDraft}
+                        onChange={e => {
+                          const val = e.target.checked;
+                          setXhsIsDraft(val);
+                          if (val) {
+                            setScheduledPublishTime('');
+                          }
+                        }}
+                        className="w-4 h-4 text-red-500 border-gray-300 rounded focus:ring-red-400 accent-red-500 cursor-pointer"
+                        id="modal-xhs-is-draft-checkbox"
+                      />
+                      <span className="flex items-center gap-1.5 text-red-600 font-bold text-sm">
+                        📦 仅存为小红书草稿 (勾选后自动禁用定时，启动后自动化将点击“暂存离开”)
+                      </span>
+                    </label>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 mb-2 flex items-center gap-1">
-                        <Calendar size={13} />
-                        选择定时发布时间 (不选则为立即开始自动化发布)
-                      </label>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="block text-xs font-bold text-gray-700 flex items-center gap-1">
+                          <Calendar size={13} />
+                          选择定时发布时间 (不选则为立即开始自动化发布)
+                        </label>
+                        {xhsIsDraft && (
+                          <span className="text-[10px] text-amber-600 font-semibold bg-amber-50 px-1.5 py-0.5 rounded">
+                            草稿已禁用定时
+                          </span>
+                        )}
+                      </div>
                       <input 
                         type="datetime-local" 
-                        value={scheduledPublishTime}
+                        value={xhsIsDraft ? '' : scheduledPublishTime}
                         onChange={e => setScheduledPublishTime(e.target.value)}
-                        className="w-full px-3 py-2 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-red-400 transition"
+                        disabled={xhsIsDraft}
+                        className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:border-red-400 transition ${
+                          xhsIsDraft ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-50 border-gray-200'
+                        }`}
                       />
                     </div>
                     
@@ -4170,7 +4217,8 @@ function MainApp() {
                                 title: viewingXhsNotes.taskData.xhsTitle,
                                 content: viewingXhsNotes.taskData.xhsBody,
                                 tags: viewingXhsNotes.taskData.xhsTags,
-                                scheduledAt: scheduledPublishTime ? new Date(scheduledPublishTime).toISOString() : null
+                                scheduledAt: xhsIsDraft ? null : (scheduledPublishTime ? new Date(scheduledPublishTime).toISOString() : null),
+                                isDraft: xhsIsDraft
                               })
                             });
                             const result = await res.json();
@@ -4196,7 +4244,7 @@ function MainApp() {
                         className="flex-1 py-2 px-4 text-sm font-bold text-white bg-red-500 hover:bg-red-600 active:bg-red-700 rounded-lg transition shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
                       >
                         <Share2 size={16}/>
-                        {scheduledPublishTime ? '确认定时发布' : '立即开始自动化发布'}
+                        {xhsIsDraft ? '立即暂存为草稿' : (scheduledPublishTime ? '确认定时发布' : '立即开始自动化发布')}
                       </button>
                       {scheduledPublishTime && (
                         <button
