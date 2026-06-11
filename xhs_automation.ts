@@ -790,7 +790,97 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     });
 
     console.log(`[XHS 发布] 原创声明开关触发尝试结果:`, originalTriggerResult.result?.value);
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 1500));
+
+    // 8d. 自动勾选并同意“我已阅读并同意 《原创声明须知》”以及处理可能的对话框
+    const agreementResult = await Runtime.evaluate({
+      expression: `(() => {
+        try {
+          const clickElement = (el) => {
+            if (!el) return;
+            try { el.focus(); } catch(e) {}
+            try { el.click(); } catch(e) {}
+            try {
+              el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+              el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            } catch(e) {}
+          };
+
+          // 1. 寻找匹配“我已阅读并同意”、“原创声明须知”、“阅读并同意”、“声明协议”字样的节点
+          const agreementKeywords = ['我已阅读并同意', '原创声明须知', '阅读并同意', '声明协议'];
+          const agreementLabels = Array.from(document.querySelectorAll('*')).filter(el => {
+            if (el.children.length > 2) return false;
+            const text = el.textContent ? el.textContent.trim() : '';
+            return agreementKeywords.some(kw => text.includes(kw));
+          });
+
+          console.log('[XHS 协议] 找到匹配声明须知的文本标签数量:', agreementLabels.length);
+
+          let checkClicked = 0;
+          for (const label of agreementLabels) {
+            // 首先判断文字本身或父级是否已处于 active/checked 状态，避免二次点击取消勾选
+            let labelOrParentIsChecked = false;
+            let current = label;
+            for (let d = 0; d < 3 && current; d++) {
+              if (current.className && (current.className.includes('checked') || current.className.includes('agree-active') || current.className.includes('selected'))) {
+                labelOrParentIsChecked = true;
+                break;
+              }
+              current = current.parentElement;
+            }
+
+            if (labelOrParentIsChecked) {
+              console.log('[XHS 协议] 文字或其容器已有选中特征，跳过文本点击');
+            } else {
+              // 点击文本本身，有些 checkbox 的触发区是文字
+              clickElement(label);
+              checkClicked++;
+            }
+
+            // 深度向祖先寻找真正的 checkbox 或 input，并模拟点击
+            let parent = label.parentElement;
+            for (let d = 0; d < 3 && parent; d++) {
+              const sws = Array.from(parent.querySelectorAll('input[type="checkbox"], .semi-checkbox, .checkbox, [class*="checkbox"], [role="checkbox"]'));
+              for (const sw of sws) {
+                if (sw.tagName === 'INPUT' && sw.checked) {
+                  console.log('[XHS 协议] 原生勾选框已经是选中状态，跳过');
+                  continue;
+                }
+                const isAlreadyChecked = sw.className && (sw.className.includes('checked') || sw.className.includes('agree-active'));
+                if (isAlreadyChecked) {
+                  console.log('[XHS 协议] 自定义勾选框已带有 checked 属性或样式，跳过');
+                  continue;
+                }
+                clickElement(sw);
+                console.log('[XHS 协议] 点击了其所属父级容器内的勾选框:', sw.className);
+                checkClicked++;
+              }
+              parent = parent.parentElement;
+            }
+          }
+
+          // 2. 自动检测并点击可能弹窗中的“确认”、“确定”、“同意并继续”、“同意”等按钮
+          let confirmClicked = 0;
+          const confirmTexts = ['我知道了', '确认', '确定', '同意并发布', '同意并继续', '同意'];
+          const buttons = Array.from(document.querySelectorAll('button, [class*="btn"], .semi-button'));
+          for (const btn of buttons) {
+            const btnText = btn.textContent ? btn.textContent.trim() : '';
+            if (confirmTexts.includes(btnText)) {
+              clickElement(btn);
+              console.log('[XHS 协议] 点击了确认/弹窗/须知按钮:', btnText);
+              confirmClicked++;
+            }
+          }
+
+          return 'SUCCESS: clickCount=' + checkClicked + ', confirmCount=' + confirmClicked;
+        } catch(e) {
+          return 'ERROR: ' + e.message;
+        }
+      })()`,
+      returnByValue: true
+    });
+    console.log(`[XHS 发布] 原创协议勾选与弹框同意执行结果:`, agreementResult.result?.value);
+    await new Promise(r => setTimeout(r, 1000));
     // isDraftTask and actionLabel are defined at the top of executeXhsPublish
     xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 92, message: `配置项填写与设置完毕，正在为您执行最终的“${actionLabel}”按钮点击动作...` });
 

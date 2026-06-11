@@ -65,6 +65,9 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     return { success: false, error: err };
   }
 
+  const isDraftTask = !!note.is_draft;
+  const actionLabel = isDraftTask ? '暂存离开' : '发布';
+
   // Intercept if user is bound to a worker computer!
   const userRow = db.prepare('SELECT bound_worker_id FROM users WHERE id = ?').get(note.user_id) as any;
   const boundWorkerId = userRow ? userRow.bound_worker_id : null;
@@ -107,6 +110,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
                   title: note.title,
                   content: note.content,
                   tags: note.tags,
+                  is_draft: note.is_draft,
                   serverUrl: serverUrl
               };
               
@@ -786,128 +790,102 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     });
 
     console.log(`[XHS 发布] 原创声明开关触发尝试结果:`, originalTriggerResult.result?.value);
+    await new Promise(r => setTimeout(r, 1500));
 
-    // 留出 2.0 秒充分安全时间，确保小红书的“声明须知”对话框弹窗完全挂载打开
-    await new Promise(r => setTimeout(r, 2000));
-
-    // 8d. 勾选“声名须知”复选逻辑，并确认点击“声明原创”按钮
-    const originalDialogResult = await Runtime.evaluate({
+    // 8d. 自动勾选并同意“我已阅读并同意 《原创声明须知》”以及处理可能的对话框
+    const agreementResult = await Runtime.evaluate({
       expression: `(() => {
         try {
           const clickElement = (el) => {
             if (!el) return;
             try { el.focus(); } catch(e) {}
             try { el.click(); } catch(e) {}
+            try {
+              el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+              el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            } catch(e) {}
           };
 
-          // 1. 寻找弹出的对话框容器（Modal 或 Dialog）
-          const dialog = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"], [role="dialog"]') || document;
-          
-          // 2. 在对话框中寻找“声明须知”、“我已阅读”、“同意”等字样的条约文字标签
-          const checkboxLabel = Array.from(dialog.querySelectorAll('span, label, p, div, a')).find(el => {
-            const txt = el.textContent || '';
-            return txt.includes('声明须知') || txt.includes('我已阅读') || txt.includes('同意') || txt.includes('及相关处置');
+          // 1. 寻找匹配“我已阅读并同意”、“原创声明须知”、“阅读并同意”、“声明协议”字样的节点
+          const agreementKeywords = ['我已阅读并同意', '原创声明须知', '阅读并同意', '声明协议'];
+          const agreementLabels = Array.from(document.querySelectorAll('*')).filter(el => {
+            if (el.children.length > 2) return false;
+            const text = el.textContent ? el.textContent.trim() : '';
+            return agreementKeywords.some(kw => text.includes(kw));
           });
 
-          if (checkboxLabel) {
-            console.log('Found agreement text:', checkboxLabel.textContent);
-            
-            // 3. 在其文字本身或它的父辈元素链条内搜寻复选项按钮，保障 100% 连带判定
-            let foundCheckbox = null;
-            const selectors = ['.semi-checkbox', 'input[type="checkbox"]', '.checkbox', '[role="checkbox"]', '[class*="checkbox"]', '[class*="check"]'];
-            
-            let current = checkboxLabel;
-            for (let d = 0; d < 4 && current; d++) {
-              for (const sel of selectors) {
-                const cbEl = current.querySelector(sel);
-                if (cbEl && cbEl !== checkboxLabel) {
-                  foundCheckbox = cbEl;
-                  break;
-                }
+          console.log('[XHS 协议] 找到匹配声明须知的文本标签数量:', agreementLabels.length);
+
+          let checkClicked = 0;
+          for (const label of agreementLabels) {
+            // 首先判断文字本身或父级是否已处于 active/checked 状态，避免二次点击取消勾选
+            let labelOrParentIsChecked = false;
+            let current = label;
+            for (let d = 0; d < 3 && current; d++) {
+              if (current.className && (current.className.includes('checked') || current.className.includes('agree-active') || current.className.includes('selected'))) {
+                labelOrParentIsChecked = true;
+                break;
               }
-              if (foundCheckbox) break;
               current = current.parentElement;
             }
 
-            // 如果找到独立的 checkbox 控件，我们就仅点击 checkbox，以防同时点击 label 和 checkbox 导致极速双击又取消勾选
-            const targetCb = foundCheckbox || checkboxLabel;
-            
-            // 4. 精准状态检查：如果通过类名和属性发现已经是 checked/active 状态，千万不要重复点击！
-            let isAlreadyChecked = false;
-            if (targetCb.tagName === 'INPUT') {
-              isAlreadyChecked = targetCb.checked;
+            if (labelOrParentIsChecked) {
+              console.log('[XHS 协议] 文字或其容器已有选中特征，跳过文本点击');
             } else {
-              const cls = targetCb.className || '';
-              isAlreadyChecked = cls.includes('checked') || 
-                                 targetCb.getAttribute('aria-checked') === 'true' || 
-                                 cls.includes('active') ||
-                                 !!targetCb.querySelector('[class*="checked"]') ||
-                                 !!targetCb.querySelector('input[type="checkbox"]:checked');
+              // 点击文本本身，有些 checkbox 的触发区是文字
+              clickElement(label);
+              checkClicked++;
             }
 
-            console.log('Agreement checkbox checked status:', isAlreadyChecked);
-            if (!isAlreadyChecked) {
-              clickElement(targetCb);
-              console.log('Clicked agreement checkbox successfully!');
-            } else {
-              console.log('Agreement checkbox was already checked. Skipped click.');
+            // 深度向祖先寻找真正的 checkbox 或 input，并模拟点击
+            let parent = label.parentElement;
+            for (let d = 0; d < 3 && parent; d++) {
+              const sws = Array.from(parent.querySelectorAll('input[type="checkbox"], .semi-checkbox, .checkbox, [class*="checkbox"], [role="checkbox"]'));
+              for (const sw of sws) {
+                if (sw.tagName === 'INPUT' && sw.checked) {
+                  console.log('[XHS 协议] 原生勾选框已经是选中状态，跳过');
+                  continue;
+                }
+                const isAlreadyChecked = sw.className && (sw.className.includes('checked') || sw.className.includes('agree-active'));
+                if (isAlreadyChecked) {
+                  console.log('[XHS 协议] 自定义勾选框已带有 checked 属性或样式，跳过');
+                  continue;
+                }
+                clickElement(sw);
+                console.log('[XHS 协议] 点击了其所属父级容器内的勾选框:', sw.className);
+                checkClicked++;
+              }
+              parent = parent.parentElement;
             }
-          } else {
-            // 兜底方案：如果任一没有找到，就对所有的 checkbox 进行一次勾选动作
-            const checkboxes = Array.from(dialog.querySelectorAll('input[type="checkbox"], .semi-checkbox, .checkbox, [class*="checkbox"]'));
-            checkboxes.forEach(cb => {
-              try {
-                let isChecked = false;
-                if (cb.tagName === 'INPUT') {
-                  isChecked = cb.checked;
-                } else {
-                  isChecked = cb.classList.contains('semi-checkbox-checked') || cb.getAttribute('aria-checked') === 'true';
-                }
-                if (!isChecked) {
-                  clickElement(cb);
-                }
-              } catch(e) {}
-            });
           }
 
-          // 稍加延迟，确认勾选转换时间
-          return new Promise(resolve => {
-            setTimeout(() => {
-              try {
-                // 5. 寻找并点击二次确认按钮（如：“声明原创”、“确认声明”、“确认”、“确定”、“同意”）
-                const dialogContext = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"]') || document;
-                const confirmBtns = Array.from(dialogContext.querySelectorAll('button, [role="button"], span, div')).filter(el => {
-                  const txt = el.textContent ? el.textContent.trim() : '';
-                  return txt === '声明原创' || txt === '确认声明' || txt === '确认' || txt === '确定' || txt === '同意' || txt.includes('确定');
-                });
+          // 2. 自动检测并点击可能弹窗中的“确认”、“确定”、“同意并继续”、“同意”等按钮
+          let confirmClicked = 0;
+          const confirmTexts = ['我知道了', '确认', '确定', '同意并发布', '同意并继续', '同意'];
+          const buttons = Array.from(document.querySelectorAll('button, [class*="btn"], .semi-button'));
+          for (const btn of buttons) {
+            const btnText = btn.textContent ? btn.textContent.trim() : '';
+            if (confirmTexts.includes(btnText)) {
+              clickElement(btn);
+              console.log('[XHS 协议] 点击了确认/弹窗/须知按钮:', btnText);
+              confirmClicked++;
+            }
+          }
 
-                if (confirmBtns.length > 0) {
-                  // 优先寻找 BUTTON 标签，若无则取首个
-                  const targetBtn = confirmBtns.find(el => el.tagName === 'BUTTON') || confirmBtns[0];
-                  clickElement(targetBtn);
-                  resolve('DECLARED_ORIGINAL_DIALOG_CONFIRMED_SUCCESS');
-                } else {
-                  resolve('NO_CONFIRM_BUTTON_FOUND_IN_DIALOG');
-                }
-              } catch(e) {
-                resolve('CONFIRM_BTN_STEP_ERROR: ' + e.message);
-              }
-            }, 500);
-          });
+          return 'SUCCESS: clickCount=' + checkClicked + ', confirmCount=' + confirmClicked;
         } catch(e) {
           return 'ERROR: ' + e.message;
         }
       })()`,
       returnByValue: true
     });
-
-    console.log(`[XHS 发布] 原创说明须知弹窗勾选及确认执行结果:`, originalDialogResult.result?.value);
-
-    await new Promise(r => setTimeout(r, 2000));
-    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 92, message: '配置项填写与设置完毕，正在为您执行最终的“发布”按钮点击动作...' });
+    console.log(`[XHS 发布] 原创协议勾选与弹框同意执行结果:`, agreementResult.result?.value);
+    await new Promise(r => setTimeout(r, 1000));
+    // isDraftTask and actionLabel are defined at the top of executeXhsPublish
+    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 92, message: `配置项填写与设置完毕，正在为您执行最终的“${actionLabel}”按钮点击动作...` });
 
     // 9. 执行发布点击
-    console.log(`[XHS 发布] 开始判定并模拟点击发布按钮...`);
+    console.log(`[XHS 发布] 开始判定并模拟点击${actionLabel}按钮... (草稿状态: ${isDraftTask})`);
     
     let clickedSuccess = false;
     let clickedMethod = '';
@@ -959,35 +937,44 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           const buttons = des.filter(n => n.nodeName.toLowerCase() === 'button' || n.localName === 'button');
           for (const btn of buttons) {
             const btnDes = getDescendants(btn.nodeId);
-            // 检查它的文本子孙节点，寻找内容包含 "发布" 的字样
-            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && n.nodeValue.trim() === '发布');
             
-            // 或者看它的类名是否含有 bg-red
+            // 检查它的文本子孙节点，寻找内容包含对应字样
+            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && (
+              isDraftTask 
+                ? (n.nodeValue.includes('暂存') || n.nodeValue.includes('草稿'))
+                : (n.nodeValue.trim() === '发布' || n.nodeValue.trim() === '立即发布')
+            ));
+            
+            // 或者看它的类名是否含有特定指示
             const attrs = btn.attributes || [];
             const classIdx = attrs.indexOf('class');
             const classVal = classIdx !== -1 ? attrs[classIdx + 1] : '';
             
-            if (hasPubText || classVal.includes('bg-red')) {
+            if (hasPubText || (!isDraftTask && classVal.includes('bg-red')) || (isDraftTask && classVal.includes('white'))) {
               targetNodeId = btn.nodeId;
-              console.log(`[XHS 发布] 精确命中 Shadow Root 内部发布按钮: Node ID ${targetNodeId}, 样式: ${classVal}`);
+              console.log(`[XHS 发布] 精确命中 Shadow Root 内部目标按钮 (${actionLabel}): Node ID ${targetNodeId}, 样式: ${classVal}`);
               break;
             }
           }
           if (targetNodeId) break;
         }
 
-        // 2. 兜底：如果没找到 xhs-publish-btn，寻找全局列表内的含有 bg-red class 或文字为 "发布" 的 BUTTON
+        // 2. 兜底：如果没找到 xhs-publish-btn，寻找全局列表内的匹配 BUTTON
         if (!targetNodeId) {
           const allButtons = nodes.filter(n => n.nodeName.toLowerCase() === 'button' || n.localName === 'button');
           for (const btn of allButtons) {
             const btnDes = getDescendants(btn.nodeId);
-            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && n.nodeValue.trim() === '发布');
+            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && (
+              isDraftTask 
+                ? (n.nodeValue.includes('暂存') || n.nodeValue.includes('草稿'))
+                : (n.nodeValue.trim() === '发布' || n.nodeValue.trim() === '立即发布')
+            ));
             const attrs = btn.attributes || [];
             const classIdx = attrs.indexOf('class');
             const classVal = classIdx !== -1 ? attrs[classIdx + 1] : '';
-            if (hasPubText && classVal.includes('bg-red')) {
+            if (hasPubText || (!isDraftTask && classVal.includes('bg-red')) || (isDraftTask && classVal.includes('white') && classVal.includes('ce-btn'))) {
               targetNodeId = btn.nodeId;
-              console.log(`[XHS 发布] 全局兜底命中 Shadow Root 内发布按钮: Node ID ${targetNodeId}`);
+              console.log(`[XHS 发布] 全局兜底命中 Shadow Root 内目标按钮 (${actionLabel}): Node ID ${targetNodeId}`);
               break;
             }
           }
@@ -1027,7 +1014,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     // --- 【方法 B】: 精准屏幕坐标模拟真实鼠标轨迹点击（完全不受任何 DOM 或 Shadow Root 限制） ---
     if (!clickedSuccess) {
       try {
-        console.log(`[XHS 发布] [方法 B] 启动精准视口坐标物理点击...`);
+        console.log(`[XHS 发布] [方法 B] 启动精准视口坐标物理点击... (目标：${actionLabel})`);
         // 询问浏览器此组件或当前视口的大小，用于估测绝对按钮在底部吸底通栏中的物理坐标
         const coordResult = await Runtime.evaluate({
           expression: `(() => {
@@ -1036,14 +1023,15 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             
             // 100% 对应小红书官方布局设置：
             // bottom 粘性 bottom: 0，高 90px。发布按钮为红色，宽 120px，在吸底排布两个按钮中的右侧（居中对齐，gap 24px）。
-            // 故其中心点 X 为 屏幕水平中心/吸底栏水平中心 + 72px。
+            // 故其中心点 X 为 屏幕水平中心/吸底栏水平中心 + 72px。草稿暂存离开按钮在左侧，X 为中心点 - 72px。
             // 中心点 Y 为 屏幕底部向上 45px 处。
-            const x_publish_btn = window.innerWidth / 2 + 72;
+            const isDraftTask = ${isDraftTask};
+            const x_publish_btn = isDraftTask ? (window.innerWidth / 2 - 72) : (window.innerWidth / 2 + 72);
             const y_publish_btn = window.innerHeight - 45;
 
             if (rect && rect.width > 0 && rect.height > 0) {
               return {
-                x: rect.left + rect.width / 2 + 72,
+                x: rect.left + rect.width / 2 + (isDraftTask ? -72 : 72),
                 y: rect.top + rect.height / 2,
                 source: 'host_bounding_box'
               };
@@ -1058,7 +1046,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
         });
 
         const coords = coordResult.result?.value || { x: 0, y: 0, source: 'none' };
-        console.log(`[XHS 发布] [方法 B] 计算出来的发布按钮物理坐标为:`, coords);
+        console.log(`[XHS 发布] [方法 B] 计算出来的目标按钮物理坐标为:`, coords);
 
         if (coords.x > 0 && coords.y > 0) {
           // 模拟完整的物理移动与点击事件流
@@ -1077,104 +1065,164 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     }
 
     // --- 【方法 C】: 传统万能 Selector 与备用方案遍历（可处理非 Shadow DOM / 重构普通形态页) ---
-    const clickPublishResult = await Runtime.evaluate({
-      expression: `(() => {
-        try {
-          const clickElement = (el) => {
-            if (!el) return;
-            try { el.focus(); } catch(e) {}
-            try { el.click(); } catch(e) {}
-            try {
-              el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-              el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-            } catch(e) {}
-          };
-
-          // 1. 优先寻找用户反馈的特定容器 .publish-page-publish-btn 及其专属发布按钮
-          const pContainer = document.querySelector('.publish-page-publish-btn');
-          if (pContainer) {
-            const btns = Array.from(pContainer.querySelectorAll('button'));
-            console.log('[XHS 发布] 找到特定发布按钮容器内按钮数量:', btns.length);
-            
-            // 匹配文本为 "发布" 的按钮
-            const pubBtn = btns.find(b => b.textContent && b.textContent.trim() === '发布');
-            if (pubBtn) {
-              clickElement(pubBtn);
-              return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> Exact Text "发布"';
-            }
-            
-            // 匹配类名为 bg-red 的按钮 (根据 <button type="button" class="ce-btn bg-red">发布</button>)
-            const redBtn = btns.find(b => b.classList.contains('bg-red') || b.className.includes('bg-red'));
-            if (redBtn) {
-              clickElement(redBtn);
-              return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> bg-red class';
-            }
-            
-            // 匹配末尾/非白色的按钮
-            const targetBtn = btns.find(b => !b.className.includes('white')) || btns[btns.length - 1];
-            if (targetBtn) {
-              clickElement(targetBtn);
-              return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> non-white button';
-            }
-          }
-
-          // 2. 查找页面上含有 bg-red 且精确文本为 "发布" 的 button 元素
-          const redBtns = Array.from(document.querySelectorAll('button.bg-red, button[class*="bg-red"]'));
-          const exactRedBtn = redBtns.find(b => b.textContent && b.textContent.trim() === '发布');
-          if (exactRedBtn) {
-            clickElement(exactRedBtn);
-            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Exact bg-red button with text';
-          }
-
-          // 3. 寻找真正属于发布/编辑区域（如类名包含 edit / publish / main / content）内的 "发布" 按钮，规避全局侧边栏
-          const contentAreaSelectors = [
-            '.main-content', '#main-content', '.editor-container', '.publish-container', 
-            '.creator-content', '.content-body', '#app-container'
-          ];
-          for (const cSel of contentAreaSelectors) {
-            const cEl = document.querySelector(cSel);
-            if (cEl) {
-              const innerBtns = Array.from(cEl.querySelectorAll('button'));
-              const innerPubBtn = innerBtns.find(b => b.textContent && b.textContent.trim() === '发布');
-              if (innerPubBtn) {
-                clickElement(innerPubBtn);
-                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Inner content publish button near ' + cSel;
+    if (!clickedSuccess) {
+      const clickPublishResult = await Runtime.evaluate({
+        expression: `(() => {
+          try {
+            const clickElement = (el) => {
+              if (!el) return;
+              try { el.focus(); } catch(e) {}
+              try { el.click(); } catch(e) {}
+              try {
+                el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+              } catch(e) {}
+            };
+  
+            const isDraftTask = ${isDraftTask};
+  
+            // 1. 优先寻找用户反馈的特定容器 .publish-page-publish-btn 及其专属按钮
+            const pContainer = document.querySelector('.publish-page-publish-btn');
+            if (pContainer) {
+              const btns = Array.from(pContainer.querySelectorAll('button'));
+              console.log('[XHS 发布] 找到特定发布按钮容器内按钮数量:', btns.length);
+              
+              if (isDraftTask) {
+                const draftBtn = btns.find(b => b.textContent && (b.textContent.includes('暂存') || b.textContent.includes('草稿')));
+                if (draftBtn) {
+                  clickElement(draftBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> Text containing 暂存/草稿';
+                }
+                const whiteBtn = btns.find(b => b.classList.contains('ce-btn-white') || b.className.includes('white'));
+                if (whiteBtn) {
+                  clickElement(whiteBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> white button';
+                }
+                if (btns.length >= 2) {
+                  clickElement(btns[0]);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> first button';
+                }
+              } else {
+                // 匹配文本为 "发布" 的按钮
+                const pubBtn = btns.find(b => b.textContent && b.textContent.trim() === '发布');
+                if (pubBtn) {
+                  clickElement(pubBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> Exact Text "发布"';
+                }
+                
+                // 匹配类名为 bg-red 的按钮
+                const redBtn = btns.find(b => b.classList.contains('bg-red') || b.className.includes('bg-red'));
+                if (redBtn) {
+                  clickElement(redBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> bg-red class';
+                }
+                
+                // 匹配末尾/非白色的按钮
+                const targetBtn = btns.find(b => !b.className.includes('white')) || btns[btns.length - 1];
+                if (targetBtn) {
+                  clickElement(targetBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> non-white button';
+                }
               }
             }
+
+            // 2. 查找页面上匹配的 button 元素 / 红色发布
+            if (isDraftTask) {
+              const draftBtns = Array.from(document.querySelectorAll('button')).filter(b => b.textContent && (b.textContent.includes('暂存') || b.textContent.includes('草稿')));
+              if (draftBtns.length > 0) {
+                clickElement(draftBtns[0]);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Exact draft/save button with text';
+              }
+            } else {
+              const redBtns = Array.from(document.querySelectorAll('button.bg-red, button[class*="bg-red"]'));
+              const exactRedBtn = redBtns.find(b => b.textContent && b.textContent.trim() === '发布');
+              if (exactRedBtn) {
+                clickElement(exactRedBtn);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Exact bg-red button with text';
+              }
+            }
+
+            // 3. 寻找真正属于发布/编辑区域（如类名包含 edit / publish / main / content）内的按钮
+            const contentAreaSelectors = [
+              '.main-content', '#main-content', '.editor-container', '.publish-container', 
+              '.creator-content', '.content-body', '#app-container'
+            ];
+            for (const cSel of contentAreaSelectors) {
+              const cEl = document.querySelector(cSel);
+              if (cEl) {
+                const innerBtns = Array.from(cEl.querySelectorAll('button'));
+                if (isDraftTask) {
+                  const innerDraftBtn = innerBtns.find(b => b.textContent && (b.textContent.includes('暂存') || b.textContent.includes('草稿')));
+                  if (innerDraftBtn) {
+                    clickElement(innerDraftBtn);
+                    return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Inner content draft button near ' + cSel;
+                  }
+                } else {
+                  const innerPubBtn = innerBtns.find(b => b.textContent && b.textContent.trim() === '发布');
+                  if (innerPubBtn) {
+                    clickElement(innerPubBtn);
+                    return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Inner content publish button near ' + cSel;
+                  }
+                }
+              }
+            }
+
+            // 4. 寻找所有带有特定候选字样的按钮
+            const allButtons = Array.from(document.querySelectorAll('button'));
+            if (isDraftTask) {
+              const exactBtns = allButtons.filter(b => {
+                const txt = b.textContent ? b.textContent.trim() : '';
+                return txt.includes('暂存') || txt.includes('草稿');
+              });
+              if (exactBtns.length > 0) {
+                clickElement(exactBtns[0]);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Button text fallback (draft) -> ' + (exactBtns[0].textContent || '').trim();
+              }
+            } else {
+              const exactBtns = allButtons.filter(b => {
+                const txt = b.textContent ? b.textContent.trim() : '';
+                return txt === '发布' || txt === '立即发布' || txt === '确认发布';
+              });
+              if (exactBtns.length > 0) {
+                const preferred = exactBtns.find(b => b.className.includes('bg-') || b.className.includes('btn-') || !b.className.includes('menu'));
+                const targetBtn = preferred || exactBtns[0];
+                clickElement(targetBtn);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Button text fallback -> ' + (targetBtn.textContent || '').trim();
+              }
+            }
+
+            // 5. 极度兜底：类名模糊搜索
+            if (isDraftTask) {
+              const fallbackBtns = Array.from(document.querySelectorAll('button[class*="draft"], [class*="btn-draft"], button[class*="save"], [class*="draft-btn"]'));
+              if (fallbackBtns.length > 0) {
+                clickElement(fallbackBtns[0]);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Fallback draft class selector';
+              }
+            } else {
+              const fallbackBtns = Array.from(document.querySelectorAll('button[class*="publish"], [class*="btn-publish"], button[class*="submit"], [class*="publish-btn"]'));
+              if (fallbackBtns.length > 0) {
+                clickElement(fallbackBtns[0]);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Fallback class selector';
+              }
+            }
+
+            return 'PUBLISH_BUTTON_NOT_FOUND';
+          } catch(e) {
+            return 'PUBLISH_CLICK_ERROR: ' + e.message;
           }
+        })()`,
+        returnByValue: true
+      });
 
-          // 4. 寻找所有带有发布、立即发布、确认发布、发布视频字样的候选按钮 (尽力限制在 button，规避 div, span 的侧边栏导航)
-          const allButtons = Array.from(document.querySelectorAll('button'));
-          const exactBtns = allButtons.filter(b => {
-            const txt = b.textContent ? b.textContent.trim() : '';
-            return txt === '发布' || txt === '立即发布' || txt === '确认发布';
-          });
-          if (exactBtns.length > 0) {
-            const preferred = exactBtns.find(b => b.className.includes('bg-') || b.className.includes('btn-') || !b.className.includes('menu'));
-            const targetBtn = preferred || exactBtns[0];
-            clickElement(targetBtn);
-            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Button text fallback -> ' + (targetBtn.textContent || '').trim();
-          }
-
-          // 5. 极度兜底：类名模糊搜索
-          const fallbackBtns = Array.from(document.querySelectorAll('button[class*="publish"], [class*="btn-publish"], button[class*="submit"], [class*="publish-btn"]'));
-          if (fallbackBtns.length > 0) {
-            clickElement(fallbackBtns[0]);
-            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Fallback class selector';
-          }
-
-          return 'PUBLISH_BUTTON_NOT_FOUND';
-        } catch(e) {
-          return 'PUBLISH_CLICK_ERROR: ' + e.message;
-        }
-      })()`,
-      returnByValue: true
-    });
-
-    console.log(`[XHS 发布] [方法 C] 传统 DOM 检索与执行结果:`, clickPublishResult.result?.value);
+      console.log(`[XHS 发布] [方法 C] 传统 DOM 检索与执行结果:`, clickPublishResult.result?.value);
+      if (clickPublishResult.result?.value && clickPublishResult.result.value.startsWith('PUBLISH_BUTTON_CLICKED_SUCCESS')) {
+        clickedSuccess = true;
+        clickedMethod = `DOM_METHOD_C_CLICK (${clickPublishResult.result.value})`;
+      }
+    }
 
     // 留出 8 秒存盘和接收返回，确保小红书后台响应并真正传输完成
-    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 98, message: '发布指令已下发！正在安全等待网络回发存盘 (约8秒)...' });
+    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 98, message: `${actionLabel}指令已下发！正在安全等待网络回发存盘 (约8秒)...` });
     await new Promise(r => setTimeout(r, 8000));
     
     // 标记不要保持调试标签页开启，点击完自动关闭该选项卡
@@ -1182,22 +1230,26 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/creator/home', noteId);
     
+    const finalSuccessMessage = isDraftTask 
+      ? '🎉 小红书作品已成功保存为草稿存档！'
+      : '🎉 小红书作品已全自动发表成功，并成功在创作者中心内记录存档！';
+
     xhsProgressMap.set(noteId, { 
       id: noteId, 
       status: 'success', 
       progress: 100, 
-      message: '🎉 小红书作品已全自动发表成功，并成功在创作者中心内记录存档！' 
+      message: finalSuccessMessage
     });
 
-    console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 全自动发布成功！`);
+    console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 全自动${actionLabel}成功！`);
     return { success: true, url: 'https://creator.xiaohongshu.com/creator/home' };
 
   } catch (error: any) {
     console.error(`[XHS 发布] ❌ 任务 ID: ${noteId} 发生致命错误:`, error.message || error);
-    const errMessage = error.message || "小红书自动化发布发生未设定的错误";
+    const errMessage = error.message || `小红书自动化${actionLabel}发生未设定的错误`;
     
     db.prepare("UPDATE xhs_notes SET publish_status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(errMessage, noteId);
-    xhsProgressMap.set(noteId, { id: noteId, status: 'failed', progress: 0, message: `发布失败: ${errMessage}` });
+    xhsProgressMap.set(noteId, { id: noteId, status: 'failed', progress: 0, message: `${actionLabel}失败: ${errMessage}` });
     
     return { success: false, error: errMessage };
   } finally {
@@ -1210,9 +1262,6 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
   }
 }
 
-/**
- * Global background watcher for Scheduled / Queue Xiaohongshu notes
- */
 let watcherInterval: NodeJS.Timeout | null = null;
 let watcherActive = false;
 
