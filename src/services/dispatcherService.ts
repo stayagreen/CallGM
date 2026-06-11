@@ -59,7 +59,16 @@ export class DispatcherService {
                      if (finalStatus !== 'completed') {
                          db.prepare('UPDATE tasks SET status = ?, status_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(finalStatus, data.progress.message || '', data.jobId);
                      } else {
-                         db.prepare('UPDATE tasks SET status = ?, progress = 100, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(finalStatus, data.jobId);
+                         // Update both status and task data if provided, ensuring t.downloadedFiles are preserved
+                         if (data.progress && data.progress.taskData) {
+                             db.prepare('UPDATE tasks SET status = ?, progress = 100, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+                                 finalStatus,
+                                 JSON.stringify(data.progress.taskData),
+                                 data.jobId
+                             );
+                         } else {
+                             db.prepare('UPDATE tasks SET status = ?, progress = 100, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(finalStatus, data.jobId);
+                         }
                      }
 
                      // Reset worker status to idle if it has no other running tasks

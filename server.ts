@@ -400,10 +400,22 @@ async function startServer() {
       const relativePath = `${task.user_id}/${filename}`;
       db.prepare('INSERT OR IGNORE INTO assets (user_id, type, job_id, file_path) VALUES (?, ?, ?, ?)').run(task.user_id, task.type, jobId, relativePath);
 
-      // The worker finished executing since it's uploading. We can set it to completed in DB.
-      // Wait, is it completed if there are multiple images? The socket handles progress.
-      // Let's at least mark progress = 100 via logic if we wanted. But worker socket handles that.
-      db.prepare('UPDATE tasks SET status = ?, progress = 100, result_files = json_insert(ifnull(result_files, "[]"), "$[#]", ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('completed', relativePath, jobId);
+      // Safely load, parse, append, and save result_files to avoid any escaping or version compatibility issues with json_insert
+      const currentTask = db.prepare('SELECT result_files FROM tasks WHERE id = ?').get(jobId) as any;
+      let resultFiles: string[] = [];
+      if (currentTask && currentTask.result_files) {
+        try {
+          resultFiles = JSON.parse(currentTask.result_files);
+          if (!Array.isArray(resultFiles)) resultFiles = [];
+        } catch (e) {
+          resultFiles = [];
+        }
+      }
+      if (!resultFiles.includes(relativePath)) {
+        resultFiles.push(relativePath);
+      }
+
+      db.prepare('UPDATE tasks SET status = ?, progress = 100, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run('completed', JSON.stringify(resultFiles), jobId);
 
       res.json({ success: true });
     } catch (e: any) {

@@ -148,7 +148,19 @@ socket.on("run_task", async (taskData: any) => {
             await uploadFile(f);
         }
 
-        socket.emit("task_status", { jobId, progress: { status: finalStatus, progress: 100 }, status: finalStatus });
+        socket.emit("task_status", { 
+            jobId, 
+            progress: { 
+                status: finalStatus, 
+                progress: 100,
+                taskData: updatedTaskData
+            }, 
+            status: finalStatus 
+        });
+
+        // 任务结束，立即从 map 清除该 job 的进度，防止 heartbeat 定时器定时上报旧状态
+        jobProgress.delete(`${jobId}.json`);
+        jobProgress.delete(jobId);
     } catch (err: any) {
         console.error(`[任务] 失败: ${jobId}`, err);
         socket.emit("task_status", { jobId, progress: { status: 'error', progress: 0, error: err.message }, status: 'error' });
