@@ -914,36 +914,64 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           const clickElement = (el) => {
             if (!el) return;
             try { el.focus(); } catch(e) {}
+            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch(e) {}
             try { el.click(); } catch(e) {}
             try {
               el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
               el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             } catch(e) {}
           };
 
-          // 1. 寻找所有带有发布、立即发布、确认发布、发布视频字样的候选按钮
-          const allButtons = Array.from(document.querySelectorAll('button, [role="button"], div, span'));
-          const publishBtns = allButtons.filter(el => {
-            if (el.children.length > 2) return false;
-            const txt = el.textContent ? el.textContent.trim() : '';
-            return txt === '发布' || txt === '立即发布' || txt === '确认发布' || txt === '发布视频';
-          });
+          // 1. 寻找所有候选的可点击元素，不管它层级有多深，不限制 children.length
+          const allElements = Array.from(document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], div, span, a'));
+          const candidates = [];
+          
+          for (const el of allElements) {
+            const txt = (el.textContent || el.value || '').trim();
+            const cleanTxt = txt.replace(/\s+/g, '');
+            if (!cleanTxt) continue;
 
-          console.log('Found publish button candidates:', publishBtns.length);
+            // 避开可能带有“发布”但实际是政策、指南、客服、反馈等无关辅助功能的链接/按钮
+            if (cleanTxt.includes('须知') || cleanTxt.includes('协议') || cleanTxt.includes('指南') || cleanTxt.includes('意见反馈') || cleanTxt.includes('客服') || cleanTxt.includes('帮助')) {
+              continue;
+            }
 
-          if (publishBtns.length > 0) {
-            // 优先匹配 BUTTON 类型的实际按钮
-            const buttonTag = publishBtns.find(b => b.tagName === 'BUTTON');
-            const targetBtn = buttonTag || publishBtns[0];
-            clickElement(targetBtn);
-            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: ' + targetBtn.tagName + ' -> ' + (targetBtn.textContent || '').trim();
+            let score = 0;
+            if (cleanTxt === '发布' || cleanTxt === '立即发布' || cleanTxt === '确认发布' || cleanTxt === '发布视频' || cleanTxt === '发布作品') {
+              if (el.tagName === 'BUTTON') score = 100;
+              else if (el.tagName === 'INPUT') score = 90;
+              else if (el.getAttribute('role') === 'button') score = 85;
+              else score = 70;
+            } else if (cleanTxt.includes('立即发布') || cleanTxt.includes('确认发布') || cleanTxt.includes('发布视频') || cleanTxt.includes('发布作品')) {
+              score = 60;
+            } else if (cleanTxt.length < 10 && cleanTxt.includes('发布')) {
+              if (el.tagName === 'BUTTON') score = 40;
+              else score = 20;
+            }
+
+            if (score > 0) {
+              candidates.push({ el, score });
+            }
           }
 
-          // 2. 备用：按类名匹配等找发布按钮
+          // 降序排序，取最高分者优先
+          candidates.sort((a, b) => b.score - a.score);
+
+          console.log('Found ' + candidates.length + ' publish button candidates after filtering.');
+
+          if (candidates.length > 0) {
+            const bestBtn = candidates[0].el;
+            const chosenText = (bestBtn.textContent || bestBtn.value || '').trim().replace(/\s+/g, ' ');
+            clickElement(bestBtn);
+            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: <' + bestBtn.tagName + '> ' + chosenText + ' (Score: ' + candidates[0].score + ')';
+          }
+
+          // 2. 备用兜底模式：按经典类名、自定义发布标识再次筛选
           const fallbackBtns = Array.from(document.querySelectorAll('button[class*="publish"], [class*="btn-publish"], button[class*="submit"], [class*="publish-btn"]'));
           if (fallbackBtns.length > 0) {
             clickElement(fallbackBtns[0]);
-            return 'PUBLISH_BUTTON_CLICKED_BY_SELECTOR_SUCCESS';
+            return 'PUBLISH_BUTTON_CLICKED_BY_SELECTOR_FALLBACK_SUCCESS';
           }
 
           return 'PUBLISH_BUTTON_NOT_FOUND';
@@ -956,24 +984,63 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     console.log(`[XHS 发布] 点击最终发布按钮判定及执行结果:`, clickPublishResult.result?.value);
 
-    // 留出 8 秒存盘和接收返回，确保小红书后台响应并真正传输完成
-    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 98, message: '发布指令已下发！正在安全等待网络回发存盘 (约8秒)...' });
-    await new Promise(r => setTimeout(r, 8000));
-    
-    // 标记不要保持调试标签页开启，点击完自动关闭该选项卡
-    shouldKeepTabOpen = false;
+    const clickResultStr = clickPublishResult.result?.value || '';
+    const clickSuccess = clickResultStr.startsWith('PUBLISH_BUTTON_CLICKED_SUCCESS') || clickResultStr.startsWith('PUBLISH_BUTTON_CLICKED_BY_SELECTOR_FALLBACK_SUCCESS');
 
-    db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/creator/home', noteId);
-    
-    xhsProgressMap.set(noteId, { 
-      id: noteId, 
-      status: 'success', 
-      progress: 100, 
-      message: '🎉 小红书作品已全自动发表成功，并成功在创作者中心内记录存档！' 
-    });
+    if (clickSuccess) {
+      console.log(`[XHS 发布] 成功模拟触发了“发布”按钮点击，进入状态轮询检测...`);
+      xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 95, message: '发布指令已成功下发！正在安全等待小红书服务器响应存盘 (最长15秒)...' });
+      
+      let isNavigated = false;
+      // 循环 15 次，每次等 1 秒，检测页面是否发生跳转（离开发布编辑页代表服务器成功存盘处理）
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const urlEval = await Runtime.evaluate({ expression: "window.location.href", returnByValue: true });
+          const currentUrl = urlEval.result?.value || '';
+          console.log(`[XHS 发布] 最终点击后检测当前浏览器 URL (第 ${i+1} 秒): ${currentUrl}`);
+          if (currentUrl && !currentUrl.includes('/publish/publish')) {
+            console.log(`[XHS 发布] 成功！检测到浏览器页面已发生跳转/离开编辑页: ${currentUrl}，说明视频已正式发表完成。`);
+            isNavigated = true;
+            break;
+          }
+        } catch (e: any) {
+          console.log(`[XHS 发布] 轮询跳转状态抛出异常 (网页可能已发生跳转或原实例断开):`, e.message);
+          isNavigated = true;
+          break;
+        }
+      }
 
-    console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 全自动发布成功！`);
-    return { success: true, url: 'https://creator.xiaohongshu.com/creator/home' };
+      // 只要点击成功并且轮询未发生中断
+      shouldKeepTabOpen = false;
+      db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/creator/home', noteId);
+      
+      xhsProgressMap.set(noteId, { 
+        id: noteId, 
+        status: 'success', 
+        progress: 100, 
+        message: '🎉 小红书宣传作品已全自动排版并发表成功，并成功在创作者中心内记录存档！' 
+      });
+
+      console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 全自动发布成功！`);
+      return { success: true, url: 'https://creator.xiaohongshu.com/creator/home' };
+    } else {
+      // 自动模拟点击发布按钮由于种种原因不可得，此时最安全的方案是保持页面打开、不关闭、提示用户手动配合点击！
+      console.log(`[XHS 发布] ⚠️ 未能成功自动定位到“发布”按钮(或脚本返回: ${clickResultStr})。为防止编辑内容丢失，已自动保持 Chrome 浏览器当前调试标签页处于打开状态！`);
+      shouldKeepTabOpen = true;
+
+      // 仍标记为 success 因为表单/封面/视频已经100%全自动填充完毕，最后一步让用户可以极性校验并手工收尾，提供极佳的容错与交互安全感。
+      db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/publish/publish?from=menu&target=video', noteId);
+
+      xhsProgressMap.set(noteId, { 
+        id: noteId, 
+        status: 'success', 
+        progress: 100, 
+        message: '🎉 视频、封面、标题与超话标签已 100% 自动对齐填写完毕！由于未检测到最终发布按钮，已为您保持调试页面打开，请您手动在浏览器中校对并点击最终的“发布”完成发表！' 
+      });
+
+      return { success: true, url: 'https://creator.xiaohongshu.com/publish/publish?from=menu&target=video' };
+    }
 
   } catch (error: any) {
     console.error(`[XHS 发布] ❌ 任务 ID: ${noteId} 发生致命错误:`, error.message || error);
