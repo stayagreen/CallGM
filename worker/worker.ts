@@ -1,6 +1,7 @@
 import io from "socket.io-client";
 import fs from "fs";
 import path from "path";
+import { pathToFileURL } from "url";
 import { jobProgress, executeBatch, cancelledJobs, downloadDir, ensureBrowserLaunched } from "../automation.js";
 
 // ========= 配置加载逻辑 =========
@@ -347,9 +348,14 @@ socket.on("run_xhs_publish", async (payload: any) => {
             });
         }
         
-        // 4. 动态载入热更脚本，无缓存热核执行
-        const targetAutomationPath = `${path.join(process.cwd(), "xhs_automation.js")}?update=${Date.now()}`;
-        const { executeXhsPublish, xhsProgressMap } = await import(targetAutomationPath);
+        // 4. 动态载入热更脚本，无缓存热核执行 (使用 pathToFileURL 支持 Windows 绝对路径及 ESM 加载)
+        let scriptName = "xhs_automation.ts";
+        if (!fs.existsSync(path.join(process.cwd(), scriptName))) {
+            scriptName = "xhs_automation.js";
+        }
+        const absolutePath = path.join(process.cwd(), scriptName);
+        const fileUrl = pathToFileURL(absolutePath).href + `?update=${Date.now()}`;
+        const { executeXhsPublish, xhsProgressMap } = await import(fileUrl);
         
         progressTimer = setInterval(() => {
             const currentProgress = xhsProgressMap.get(noteId);
