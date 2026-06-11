@@ -3010,7 +3010,8 @@ function MainApp() {
                       {isExpanded && (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {groupNotes.map(note => {
-                            let coverUrl = '/placeholder_cover.jpg';
+                            const defaultXhsCover = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='160' viewBox='0 0 120 160'><defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23ff2e4d'/><stop offset='100%' stop-color='%23ff6e7f'/></linearGradient></defs><rect width='120' height='160' fill='url(%23g)'/><g transform='translate%2860, 65%29'><circle r='20' fill='rgba%28255,255,255,0.2%29'/><path d='M-6,-10 L10,0 L-6,10 Z' fill='white'/></g><text x='60' y='115' fill='white' font-family='system-ui, sans-serif' font-size='11' font-weight='bold' text-anchor='middle'>%E8%A7%86%E9%A2%91%E5%B0%81%E9%9D%A2</text><text x='60' y='132' fill='rgba%28255,255,255,0.85%29' font-family='system-ui, sans-serif' font-size='9' text-anchor='middle'>%E9%BB%98%E8%AE%A4%E9%A6%96%E9%95%9C%E6%8E%AA%E6%96%BD</text></svg>";
+                            let coverUrl = defaultXhsCover;
                             if (note.cover_path) {
                               if (note.cover_path.startsWith('data:') || note.cover_path.startsWith('http')) {
                                 coverUrl = note.cover_path;
@@ -3030,7 +3031,7 @@ function MainApp() {
                                       src={coverUrl} 
                                       alt="cover" 
                                       className="w-full h-full object-cover" 
-                                      onError={(e) => { e.currentTarget.src = '/placeholder_cover.jpg'; }}
+                                      onError={(e) => { e.currentTarget.src = defaultXhsCover; }}
                                     />
                                     <div className="absolute top-1 left-1 bg-black/60 px-1 py-0.5 rounded text-[10px] text-white font-mono">
                                       ID: {note.id}
