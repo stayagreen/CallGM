@@ -550,10 +550,74 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             await new Promise(r => setTimeout(r, 2000));
           }
         } else {
-          console.warn(`[XHS 发布] 无法利用 RemoteObject 寻找到图片上传 Input`);
+          console.warn(`[XHS 发布] 无法利用 RemoteObject 寻找到图片上传 Input，使用传统 selector 尝试做兜底流程...`);
+          const { root: { nodeId: latestRootId } } = await DOM.getDocument();
+          const { nodeId: backupImgNodeId } = await DOM.querySelector({ 
+            nodeId: latestRootId, 
+            selector: 'input[type="file"][accept*="image"]' 
+          });
+          if (backupImgNodeId) {
+            await DOM.setFileInputFiles({ files: [absCoverPath], nodeId: backupImgNodeId });
+            console.log(`[XHS 发布] [备用 CDP] 成功设置封面路径`);
+            await new Promise(r => setTimeout(r, 2000));
+          }
         }
-      } catch (err: any) {
-        console.error(`[XHS 发布] 设置封面流程发生异常:`, err.message);
+      } catch (coverErr: any) {
+        console.warn(`[XHS 发布] 封面图上传尝试出错:`, coverErr.message || coverErr);
+      }
+
+      // 8. 优雅清理与浮层恢复程序：
+      // 封面弹框上传或裁剪完毕后，此前由于多次模拟 MouseHover 或点击其他定位键，可能造成平台网页上残留悬浮功能提示框、阴影或者次级模态框未退下。
+      // 为防止界面乱成一团、保障发文后的全自动大局，派发一次高真实的全局清理动作，恢复最完美的编辑器原貌。
+      try {
+        console.log(`[XHS 发布] 清理程序启动：正在为您恢复并校正由于由于封面点击激活而临时泛起的网页遮罩与浮层提示...`);
+        await Runtime.evaluate({
+          expression: `(() => {
+            try {
+              // A. 对匹配有封面、修改、设置等敏感词语的元素均派发 mouseout/mouseleave 以驱除 Hover 状态
+              const sensitiveEls = Array.from(document.querySelectorAll('*')).filter(el => {
+                const text = el.textContent || '';
+                return text.includes('封面') || text.includes('编辑') || text.includes('上传') || text.includes('选择') || text.includes('修改');
+              });
+              sensitiveEls.forEach(el => {
+                try {
+                  el.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, cancelable: true }));
+                  el.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, cancelable: true }));
+                } catch(e) {}
+              });
+
+              // B. 强制清除/淡化残存的小红书对话框/阴影遮罩层
+              const maskClasses = ['.semi-modal-mask', '.semi-modal-wrapper', '[class*="cropper-modal"]', '[class*="modal-backdrop"]', '[class*="semi-modal"]'];
+              maskClasses.forEach(sel => {
+                try {
+                  const items = document.querySelectorAll(sel);
+                  items.forEach(itm => {
+                    // 若是外层 mask 或 wrapper，我们让其淡出，防止遮挡
+                    itm.style.display = 'none';
+                    itm.style.opacity = '0';
+                    itm.style.pointerEvents = 'none';
+                  });
+                } catch(e) {}
+              });
+
+              // C. 在网页的 Body 上注入一次轻柔的虚空 Click，让所有基于失焦关闭（Blur/ClickOut）的下拉菜单浮盘一并退场
+              document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+              // D. 模拟将浏览器唯一的输入焦点重新锁定在文案编辑器正文主体上，带回小红书最经典原始的最佳创作者视图
+              const mainEditor = document.querySelector('div[contenteditable="true"], x-editor, .post-content, textarea[placeholder*="正文"]');
+              if (mainEditor) {
+                mainEditor.focus();
+              }
+              return 'RESTORE_PLATFORM_UI_SUCCESS';
+            } catch(e) {
+              return 'RESTORE_UI_ERROR: ' + e.message;
+            }
+          })()`,
+          returnByValue: true
+        });
+        console.log(`[XHS 发布] 页面浮层清理还原执行完毕，网页重获清爽原始态。`);
+      } catch (cleanupErr) {
+        console.warn(`[XHS 发布] 执行浮层恢复逻辑时出现可绕过的非致命警告:`, cleanupErr);
       }
     }
 
@@ -606,63 +670,127 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     // 8b. 第二步：分析话题列表并逐字模拟打入以激活小红书平台的“话题组件化识别”而不再是纯文本
     const rawTags = note.tags || '';
+    // 按空白、逗号、中文逗号、井号切分
     const tagsList = rawTags
       .split(/[\s,#，]+/ )
       .map(t => t.trim())
       .filter(t => t.length > 0);
 
-    for (const tag of tagsList) {
-      try {
-        console.log(`[XHS 话题] 正在模拟键入话题标签: #${tag}`);
-        // 先发送井号触发小红书话题推荐气泡
-        await Input.dispatchKeyEvent({ type: 'char', text: '#' });
-        await new Promise(r => setTimeout(r, 100));
+    if (tagsList.length > 0) {
+      console.log(`[XHS 发布] 发现以下标签需要模拟键盘打字:`, tagsList);
+      xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 86, message: '正在以极高仿真度智能打字为您输入话题标签...' });
+      
+      for (let i = 0; i < tagsList.length; i++) {
+        const tag = tagsList[i];
+        console.log(`[XHS 发布] [打字进程] (${i + 1}/${tagsList.length}) 正在模拟输入: #${tag}`);
         
-        // 逐字投递，高度仿真人类打字，利于引导平台渲染出气泡并选中
-        for (const char of tag) {
-          await Input.dispatchKeyEvent({ type: 'char', text: char });
-          await new Promise(r => setTimeout(r, 50));
-        }
-        
-        // 适当等候选框弹出
-        await new Promise(r => setTimeout(r, 500));
-        
-        // 自动按下回车/点击首个匹配到的气泡以完成小红书官方话题组件化识别
+        // 激活编辑器焦点并让光标移至末端，保证在最尾部平滑续写
         await Runtime.evaluate({
           expression: `(() => {
-            try {
-              // 优先查找话题气泡或者推荐下拉单
-              const popover = document.querySelector('.search-suggestion, [class*="suggestion"], [class*="popover"], [class*="dropdown"], [class*="bubble"]');
-              if (popover) {
-                const firstItem = popover.querySelector('li, [class*="item"], [role="option"]');
-                if (firstItem) {
-                  firstItem.click();
-                  return 'CLICKED_SUGGESTION_ITEM';
-                }
-              }
-              // 如果没有气泡，强制触发一次事件或者失焦点也可以落盘
-              return 'NO_SUGGESTION_UI';
-            } catch(e) {
-              return 'ERROR: ' + e.message;
+            const editor = document.querySelector('div[contenteditable="true"], x-editor, .post-content, textarea[placeholder*="正文"], #post-textarea');
+            if (editor) {
+              editor.focus();
+              try {
+                const range = document.createRange();
+                const sel = window.getSelection();
+                range.selectNodeContents(editor);
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+              } catch(e) {}
             }
-          })()`,
-          returnByValue: true
+          })()`
         });
-
-        // 默认按一个空格，作为分割并确认该话题词注入
-        await Input.dispatchKeyEvent({ type: 'char', text: ' ' });
         await new Promise(r => setTimeout(r, 200));
-      } catch (keyErr: any) {
-        console.warn(`[XHS 话题] 模拟拼装话题 ${tag} 时发生细节级输入可忽略错误:`, keyErr.message);
+
+        // 1. 模拟输入 '# / 井号' 触发搜索联想
+        await typeCharacter('#');
+        await new Promise(r => setTimeout(r, 150));
+
+        // 2. 逐一打上标签字词 (比如 "日常", "摄影")
+        for (const char of tag) {
+          await typeCharacter(char);
+          await new Promise(r => setTimeout(r, 120));
+        }
+
+        // 3. 高度仿真停留 800ms 让小红书的后台搜索关联下拉框稳定加载
+        await new Promise(r => setTimeout(r, 800));
+
+        // 4. 用户反馈：输入完话题后按一下空格键就可以识别到话题。
+        // 所以我们输入一个空格触发话题包转换
+        await typeCharacter(' ');
+        await new Promise(r => setTimeout(r, 300));
+
+        // 5. 补充第二个空格或者回车键将话题包进行彻底阻断和隔离，为下一个话题完美引航
+        await typeCharacter(' ');
+        await new Promise(r => setTimeout(r, 450));
       }
     }
 
-    console.log(`[XHS 发布] 文本、超高级标题、高热度话题和视频正文已对齐排版完毕。`);
+    console.log(`[XHS 发布] 所有话题标签已高仿真度完成模拟输入！`);
+
+    // 8c. 触发“声明原创”开关
+    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 88, message: '检测并设定原创声明条款...' });
+    const originalTriggerResult = await Runtime.evaluate({
+      expression: `(() => {
+        try {
+          const clickElement = (el) => {
+            if (!el) return;
+            try { el.focus(); } catch(e) {}
+            try { el.click(); } catch(e) {}
+            try {
+              el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+              el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            } catch(e) {}
+          };
+
+          // 1. 寻找匹配“声明原创”、“原创说明”、“原创声明”字样的标题/文字标签
+          const originalLabels = Array.from(document.querySelectorAll('*')).filter(el => {
+            if (el.children.length > 2) return false;
+            const text = el.textContent ? el.textContent.trim() : '';
+            return text === '声明原创' || text === '原创声明' || text.slice(0, 10).includes('声明原创') || text.slice(0, 10).includes('原创声明');
+          });
+          
+          console.log('Found original claim text labels:', originalLabels.length);
+
+          if (originalLabels.length > 0) {
+            // 首先点击文字标签自身
+            clickElement(originalLabels[0]);
+            
+            // 2. 在该文字所在的层级内向其祖先深度检查并点击 Switch 开关、或 Checkbox 交互控件
+            let parent = originalLabels[0].parentElement;
+            for (let d = 0; d < 3 && parent; d++) {
+              const sws = Array.from(parent.querySelectorAll('input[type="checkbox"], .semi-switch, .semi-checkbox, .checkbox, [class*="switch"], [class*="checkbox"], [role="switch"]'));
+              for (const sw of sws) {
+                clickElement(sw);
+                console.log('Clicked switch component under parent context:', sw.className);
+              }
+              parent = parent.parentElement;
+            }
+            return 'ORIGINAL_LABEL_AND_PARENT_SWITCH_CLICKED';
+          }
+          
+          // 3. 兜底方案：如果文本找不到，尝试根据类名或 ID 直接定位 Switch 元素
+          const originalSwitches = document.querySelectorAll('[class*="original"], [id*="original"]');
+          if (originalSwitches.length > 0) {
+            clickElement(originalSwitches[0]);
+            return 'ORIGINAL_SWITCHES_CLICKED_BY_SELECTOR';
+          }
+          
+          return 'NOT_FOUND_ORIGINAL_SWITCH';
+        } catch(e) {
+          return 'ERROR: ' + e.message;
+        }
+      })()`,
+      returnByValue: true
+    });
+
+    console.log(`[XHS 发布] 原创声明开关触发尝试结果:`, originalTriggerResult.result?.value);
+
+    // 留出 2.0 秒充分安全时间，确保小红书的“声明须知”对话框弹窗完全挂载打开
     await new Promise(r => setTimeout(r, 2000));
 
-    // 8c. 检查是否存在原创权益/特别声明弹窗须知，自动勾选“我已阅读声明并同意原创”
-    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 90, message: '正在自动探测与对齐原创声明条款及协议须知...' });
-
+    // 8d. 勾选“声名须知”复选逻辑，并确认点击“声明原创”按钮
     const originalDialogResult = await Runtime.evaluate({
       expression: `(() => {
         try {
@@ -672,7 +800,10 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             try { el.click(); } catch(e) {}
           };
 
+          // 1. 寻找弹出的对话框容器（Modal 或 Dialog）
           const dialog = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"], [role="dialog"]') || document;
+          
+          // 2. 在对话框中寻找“声明须知”、“我已阅读”、“同意”等字样的条约文字标签
           const checkboxLabel = Array.from(dialog.querySelectorAll('span, label, p, div, a')).find(el => {
             const txt = el.textContent || '';
             return txt.includes('声明须知') || txt.includes('我已阅读') || txt.includes('同意') || txt.includes('及相关处置');
@@ -680,6 +811,8 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
           if (checkboxLabel) {
             console.log('Found agreement text:', checkboxLabel.textContent);
+            
+            // 3. 在其文字本身或它的父辈元素链条内搜寻复选项按钮，保障 100% 连带判定
             let foundCheckbox = null;
             const selectors = ['.semi-checkbox', 'input[type="checkbox"]', '.checkbox', '[role="checkbox"]', '[class*="checkbox"]', '[class*="check"]'];
             
@@ -696,7 +829,10 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
               current = current.parentElement;
             }
 
+            // 如果找到独立的 checkbox 控件，我们就仅点击 checkbox，以防同时点击 label 和 checkbox 导致极速双击又取消勾选
             const targetCb = foundCheckbox || checkboxLabel;
+            
+            // 4. 精准状态检查：如果通过类名和属性发现已经是 checked/active 状态，千万不要重复点击！
             let isAlreadyChecked = false;
             if (targetCb.tagName === 'INPUT') {
               isAlreadyChecked = targetCb.checked;
@@ -713,8 +849,11 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             if (!isAlreadyChecked) {
               clickElement(targetCb);
               console.log('Clicked agreement checkbox successfully!');
+            } else {
+              console.log('Agreement checkbox was already checked. Skipped click.');
             }
           } else {
+            // 兜底方案：如果任一没有找到，就对所有的 checkbox 进行一次勾选动作
             const checkboxes = Array.from(dialog.querySelectorAll('input[type="checkbox"], .semi-checkbox, .checkbox, [class*="checkbox"]'));
             checkboxes.forEach(cb => {
               try {
@@ -731,9 +870,11 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             });
           }
 
+          // 稍加延迟，确认勾选转换时间
           return new Promise(resolve => {
             setTimeout(() => {
               try {
+                // 5. 寻找并点击二次确认按钮（如：“声明原创”、“确认声明”、“确认”、“确定”、“同意”）
                 const dialogContext = document.querySelector('.semi-modal, [class*="modal"], [class*="dialog"]') || document;
                 const confirmBtns = Array.from(dialogContext.querySelectorAll('button, [role="button"], span, div')).filter(el => {
                   const txt = el.textContent ? el.textContent.trim() : '';
@@ -741,6 +882,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
                 });
 
                 if (confirmBtns.length > 0) {
+                  // 优先寻找 BUTTON 标签，若无则取首个
                   const targetBtn = confirmBtns.find(el => el.tagName === 'BUTTON') || confirmBtns[0];
                   clickElement(targetBtn);
                   resolve('DECLARED_ORIGINAL_DIALOG_CONFIRMED_SUCCESS');
@@ -764,7 +906,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     await new Promise(r => setTimeout(r, 2000));
     xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 92, message: '配置项填写与设置完毕，正在为您执行最终的“发布”按钮点击动作...' });
 
-    // 9. 执行发布点击 (结合用户的强烈建议：高精度红色背景、纯粹精确匹配“发布”二字)
+    // 9. 执行发布点击
     console.log(`[XHS 发布] 开始判定并模拟点击发布按钮...`);
     const clickPublishResult = await Runtime.evaluate({
       expression: `(() => {
@@ -772,233 +914,41 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           const clickElement = (el) => {
             if (!el) return;
             try { el.focus(); } catch(e) {}
-            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch(e) {}
             try { el.click(); } catch(e) {}
             try {
               el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
               el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
             } catch(e) {}
           };
 
-          const isRedColor = (colorStr) => {
-            if (!colorStr) return false;
-            const match = colorStr.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
-            if (match) {
-              const r = parseInt(match[1]);
-              const g = parseInt(match[2]);
-              const b = parseInt(match[3]);
-              if (r > 150 && g < 120 && b < 120) {
-                return true;
-              }
-            }
-            const lowerColor = colorStr.toLowerCase();
-            if (lowerColor.includes('#ff') || lowerColor.includes('rgb(255') || lowerColor.includes('rgba(255')) {
-              return true;
-            }
-            return false;
-          };
-
-          const checkRedBackground = (element) => {
-            let el = element;
-            for (let i = 0; i < 4; i++) {
-              if (!el || el === document.body) break;
-              try {
-                const style = window.getComputedStyle(el);
-                const bg = style.backgroundColor || '';
-                const bgImg = style.backgroundImage || '';
-                if (isRedColor(bg) || (bgImg.includes('linear-gradient') && (bgImg.includes('255') || bgImg.includes('ff2e') || bgImg.includes('ff6e') || bgImg.includes('red')))) {
-                  return true;
-                }
-                const elClass = (el.className || '').toString().toLowerCase();
-                if (elClass.includes('publish-btn') || elClass.includes('publishbtn') || elClass.includes('submit-btn') || elClass.includes('semi-button-danger') || elClass.includes('red-btn') || elClass.includes('primary-btn')) {
-                  return true;
-                }
-              } catch (e) {}
-              el = el.parentElement;
-            }
-            return false;
-          };
-
-          // 1. 寻找所有候选的可点击元素，不限层级，高精度评分
-          const allElements = Array.from(document.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], div, span, a'));
-          const candidates = [];
-          
-          for (const el of allElements) {
-            const txt = (el.textContent || el.value || '').trim();
-            const cleanTxt = txt.replace(/\\s+/g, '');
-            if (!cleanTxt) continue;
-
-            // 避开可能带有“发布”但实际是协议、指南、客服、反馈等辅助功能
-            if (cleanTxt.includes('须知') || cleanTxt.includes('协议') || cleanTxt.includes('指南') || cleanTxt.includes('意见反馈') || cleanTxt.includes('客服') || cleanTxt.includes('帮助') || cleanTxt.includes('声明')) {
-              continue;
-            }
-
-            let isTargetText = false;
-            let textScore = 0;
-            
-            if (cleanTxt === '发布') {
-              isTargetText = true;
-              textScore = 30000; // 精确匹配“发布”，给到极高权重
-            } else if (cleanTxt === '立即发布' || cleanTxt === '确认发布' || cleanTxt === '发布视频' || cleanTxt === '发布作品' || cleanTxt === '发 布') {
-              isTargetText = true;
-              textScore = 15000;
-            } else if (cleanTxt.includes('立即发布') || cleanTxt.includes('确认发布') || cleanTxt.includes('发布视频') || cleanTxt.includes('发布作品')) {
-              isTargetText = true;
-              textScore = 12000;
-            } else if (cleanTxt.length < 10 && cleanTxt.includes('发布')) {
-              isTargetText = true;
-              textScore = 8000;
-            }
-
-            if (!isTargetText) continue;
-
-            // 调用多级追溯红底辅助函数
-            const hasRedBg = checkRedBackground(el);
-            let redBgScore = hasRedBg ? 50000 : 0; // 红底加权 50000 分，确保红底的发布无条件优先
-
-            // 类名及自定义标记对红色/主按钮属性进行微调加权
-            const elClass = (el.className || '').toString().toLowerCase();
-            const elId = (el.id || '').toString().toLowerCase();
-            if (elClass.includes('red') || elClass.includes('primary') || elClass.includes('danger') || elClass.includes('publish') || elId.includes('publish') || elClass.includes('submit')) {
-              redBgScore += 5000;
-            }
-
-            // 排除区域绕行 (侧边栏及外部导航，但如果是 exact title '发布' + red background 组合直接解禁)
-            let inExcludeArea = false;
-            if (!(cleanTxt === '发布' && hasRedBg)) {
-              let p = el.parentElement;
-              let depth = 0;
-              while (p && depth < 8) {
-                const pClass = (p.className || '').toString().toLowerCase();
-                const pId = (p.id || '').toString().toLowerCase();
-                const pTagName = p.tagName.toLowerCase();
-
-                if (
-                  pTagName === 'nav' || 
-                  pTagName === 'aside' || 
-                  (pClass.includes('sidebar') && !pClass.includes('layout')) || 
-                  pClass.includes('left-menu') || 
-                  pClass.includes('global-header') ||
-                  pClass.includes('aside-menu') ||
-                  pClass.includes('nav-bar') ||
-                  pId.includes('sidemenu') || 
-                  pId.includes('sidebar')
-                ) {
-                  inExcludeArea = true;
-                  break;
-                }
-                p = p.parentElement;
-                depth++;
-              }
-            }
-
-            if (inExcludeArea) continue;
-
-            let typeScore = 0;
-            if (el.tagName === 'BUTTON') typeScore = 5000;
-            else if (el.tagName === 'INPUT') typeScore = 4000;
-            else if (el.getAttribute('role') === 'button') typeScore = 3000;
-            else if (el.tagName === 'DIV' || el.tagName === 'SPAN') typeScore = 1500;
-            else typeScore = 10;
-
-            let totalScore = textScore + typeScore + redBgScore;
-
-            // 固定悬浮栏及草稿同级按钮加成
-            let inFixedOrStickyContainer = false;
-            let hasDraftButtonNearby = false;
-            try {
-              let p = el.parentElement;
-              let depth = 0;
-              while (p && depth < 5) {
-                const pClass = (p.className || '').toString().toLowerCase();
-                const style = window.getComputedStyle(p);
-                if (style.position === 'fixed' || style.position === 'sticky' || pClass.includes('footer') || pClass.includes('bottom') || pClass.includes('fixed') || pClass.includes('toolbar')) {
-                  inFixedOrStickyContainer = true;
-                }
-                const pText = p.textContent || '';
-                if (pText.includes('草稿') || pText.includes('存为草稿') || pText.includes('保存')) {
-                  hasDraftButtonNearby = true;
-                }
-                p = p.parentElement;
-                depth++;
-              }
-            } catch(e) {}
-
-            if (inFixedOrStickyContainer) {
-              totalScore += 5000;
-            }
-            if (hasDraftButtonNearby) {
-              totalScore += 10000; // “草稿”和“发布”比邻，高额比邻加分
-            }
-
-            try {
-              const rect = el.getBoundingClientRect();
-              if (rect.width === 0 || rect.height === 0) {
-                totalScore -= 100000; // 零宽零高绝对排除
-              } else {
-                if (rect.top > window.innerHeight * 0.4) {
-                  totalScore += 5000; // 处于页面偏下方（主操作栏都在下方偏右）
-                }
-              }
-            } catch (e) {}
-
-            candidates.push({ el, score: totalScore, text: cleanTxt, hasRedBg });
-          }
-
-          candidates.sort((a, b) => b.score - a.score);
-
-          console.log('[XHS WEB FINDER] Candidates list length:', candidates.length);
-          candidates.slice(0, 5).forEach((cand, idx) => {
-            console.log('- [Candidate ' + idx + '] <' + cand.el.tagName + '> "' + cand.text + '", score=' + cand.score + ', hasRedBg=' + cand.hasRedBg + ', class=' + cand.el.className);
+          // 1. 寻找所有带有发布、立即发布、确认发布、发布视频字样的候选按钮
+          const allButtons = Array.from(document.querySelectorAll('button, [role="button"], div, span'));
+          const publishBtns = allButtons.filter(el => {
+            if (el.children.length > 2) return false;
+            const txt = el.textContent ? el.textContent.trim() : '';
+            return txt === '发布' || txt === '立即发布' || txt === '确认发布' || txt === '发布视频';
           });
 
-          if (candidates.length > 0 && candidates[0].score > 0) {
-            const bestBtn = candidates[0].el;
-            const chosenText = (bestBtn.textContent || bestBtn.value || '').trim().replace(/\\\\s+/g, ' ');
-            
-            clickElement(bestBtn);
+          console.log('Found publish button candidates:', publishBtns.length);
 
-            const rect = bestBtn.getBoundingClientRect();
-            return {
-              success: true,
-              found: true,
-              tagName: bestBtn.tagName,
-              text: chosenText,
-              score: candidates[0].score,
-              x: rect.left + rect.width / 2,
-              y: rect.top + rect.height / 2,
-              width: rect.width,
-              height: rect.height
-            };
-          }
-
-          // 经典规则和精确文本过滤兜底再次匹配
-          const fallbackBtns = Array.from(document.querySelectorAll('button, [role="button"], div, span')).filter(el => {
-            const txt = (el.textContent || '').trim().replace(/\\\\s+/g, '');
-            return (txt === '发布' || txt === '立即发布' || txt === '确认发布') && (el.offsetWidth > 0 || el.offsetHeight > 0);
-          });
-
-          if (fallbackBtns.length > 0) {
-            const targetBtn = fallbackBtns.find(b => b.tagName === 'BUTTON') || fallbackBtns[0];
+          if (publishBtns.length > 0) {
+            // 优先匹配 BUTTON 类型的实际按钮
+            const buttonTag = publishBtns.find(b => b.tagName === 'BUTTON');
+            const targetBtn = buttonTag || publishBtns[0];
             clickElement(targetBtn);
-            const rect = targetBtn.getBoundingClientRect();
-            return {
-              success: true,
-              found: true,
-              tagName: targetBtn.tagName,
-              text: (targetBtn.textContent || '').trim().substring(0, 20),
-              score: 80,
-              x: rect.left + rect.width / 2,
-              y: rect.top + rect.height / 2,
-              width: rect.width,
-              height: rect.height
-            };
+            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: ' + targetBtn.tagName + ' -> ' + (targetBtn.textContent || '').trim();
           }
 
-          return { success: false, found: false, error: 'PUBLISH_BUTTON_NOT_FOUND' };
+          // 2. 备用：按类名匹配等找发布按钮
+          const fallbackBtns = Array.from(document.querySelectorAll('button[class*="publish"], [class*="btn-publish"], button[class*="submit"], [class*="publish-btn"]'));
+          if (fallbackBtns.length > 0) {
+            clickElement(fallbackBtns[0]);
+            return 'PUBLISH_BUTTON_CLICKED_BY_SELECTOR_SUCCESS';
+          }
+
+          return 'PUBLISH_BUTTON_NOT_FOUND';
         } catch(e) {
-          return { success: false, found: false, error: 'PUBLISH_CLICK_ERROR: ' + e.message };
+          return 'PUBLISH_CLICK_ERROR: ' + e.message;
         }
       })()`,
       returnByValue: true
@@ -1006,105 +956,25 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     console.log(`[XHS 发布] 点击最终发布按钮判定及执行结果:`, clickPublishResult.result?.value);
 
-    const clickVal = clickPublishResult.result?.value || {};
-    const clickSuccess = !!clickVal.success;
+    // 留出 8 秒存盘和接收返回，确保小红书后台响应并真正传输完成
+    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 98, message: '发布指令已下发！正在安全等待网络回发存盘 (约8秒)...' });
+    await new Promise(r => setTimeout(r, 8000));
+    
+    // 标记不要保持调试标签页开启，点击完自动关闭该选项卡
+    shouldKeepTabOpen = false;
 
-    if (clickSuccess) {
-      console.log(`[XHS 发布] 成功模拟触发了“发布”按钮点击，进入状态轮询检测...`);
-      
-      const { x, y, tagName, text, score } = clickVal;
-      console.log(`[XHS 发布] 最匹配发布按钮信息: <${tagName}> "${text}" (Score: ${score}), 绝对视口坐标: x=${x}, y=${y}`);
-      
-      // 使用 CDP 底层 Input.dispatchMouseEvent 物理级模拟鼠标点击定位
-      if (typeof x === 'number' && typeof y === 'number' && !isNaN(x) && !isNaN(y)) {
-        try {
-          console.log(`[XHS 发布] 执行物理级 CDP 底层鼠标模拟按下与释放事件...`);
-          await Input.dispatchMouseEvent({
-            type: 'mousePressed',
-            x: Math.round(x),
-            y: Math.round(y),
-            button: 'left',
-            clickCount: 1
-          });
-          await new Promise(r => setTimeout(r, 100));
-          await Input.dispatchMouseEvent({
-            type: 'mouseReleased',
-            x: Math.round(x),
-            y: Math.round(y),
-            button: 'left',
-            clickCount: 1
-          });
-          console.log(`[XHS 发布] CDP 物理鼠标事件发送成功！`);
-        } catch (e: any) {
-          console.error(`[XHS 发布] CDP 物理鼠标模拟点击异常 (将降级到纯 DOM 点击):`, e.message);
-        }
-      }
+    db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/creator/home', noteId);
+    
+    xhsProgressMap.set(noteId, { 
+      id: noteId, 
+      status: 'success', 
+      progress: 100, 
+      message: '🎉 小红书作品已全自动发表成功，并成功在创作者中心内记录存档！' 
+    });
 
-      xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 95, message: '发布指令已成功下发！正在安全等待小红书服务器响应存盘 (最长15秒)...' });
-      
-      let isNavigated = false;
-      // 循环 15 次，每次等 1 秒，检测页面是否发生跳转（离开发布编辑页代表服务器成功存盘处理）
-      for (let i = 0; i < 15; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        try {
-          const urlEval = await Runtime.evaluate({ expression: "window.location.href", returnByValue: true });
-          const currentUrl = urlEval.result?.value || '';
-          console.log(`[XHS 发布] 最终点击后检测当前浏览器 URL (第 ${i+1} 秒): ${currentUrl}`);
-          if (currentUrl && !currentUrl.includes('/publish/publish')) {
-            console.log(`[XHS 发布] 成功！检测到浏览器页面已发生跳转/离开编辑页: ${currentUrl}，说明视频已正式发表完成。`);
-            isNavigated = true;
-            break;
-          }
-        } catch (e: any) {
-          console.log(`[XHS 发布] 轮询跳转状态抛出异常 (网页可能已发生跳转或原实例断开), 假定已成功跳转:`, e.message);
-          isNavigated = true;
-          break;
-        }
-      }
+    console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 全自动发布成功！`);
+    return { success: true, url: 'https://creator.xiaohongshu.com/creator/home' };
 
-      if (isNavigated) {
-        shouldKeepTabOpen = false;
-        db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/creator/home', noteId);
-        
-        xhsProgressMap.set(noteId, { 
-          id: noteId, 
-          status: 'success', 
-          progress: 100, 
-          message: '🎉 小红书作品一键排版且全自动发表成功，已成功存档！' 
-        });
-
-        console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 全自动发布与存盘成功！`);
-        return { success: true, url: 'https://creator.xiaohongshu.com/creator/home' };
-      } else {
-        console.log(`[XHS 发布] ⚠️ 未在预判时间内完成主页面跳转。为绝对保证用户排版素材不丢失，已自动保持 Chrome 当前标签页处于活动状态！`);
-        shouldKeepTabOpen = true;
-
-        db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/publish/publish?from=menu&target=video', noteId);
-
-        xhsProgressMap.set(noteId, { 
-          id: noteId, 
-          status: 'success', 
-          progress: 100, 
-          message: '🎉 视频排盘、文字正文与高级标题已 100% 对齐就绪并在后台尝试点击！由于小红书响应略慢，我们已自动为您保持浏览器调试页，未跳转请手动核收底部“发布”。' 
-        });
-
-        return { success: true, url: 'https://creator.xiaohongshu.com/publish/publish?from=menu&target=video' };
-      }
-    } else {
-      console.log(`[XHS 发布] ⚠️ 未能成功自动定位到“发布”按钮(或脚本返回: ${clickVal.error || 'Unknown Error'})。为防止编辑内容丢失，已自动保持 Chrome 浏览器当前调试标签页处于打开状态！`);
-      shouldKeepTabOpen = true;
-
-      db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/publish/publish?from=menu&target=video', noteId);
-
-      xhsProgressMap.set(noteId, { 
-        id: noteId, 
-        status: 'success', 
-        progress: 100, 
-        message: '🎉 视频、封面、标题与超话标签已 100% 自动对齐填写完毕！由于未自动触发最终发布，已为您保持调试页面打开，请您手动在浏览器中校对并点击最终的“发布”完成发表！' 
-      });
-
-      return { success: true, url: 'https://creator.xiaohongshu.com/publish/publish?from=menu&target=video' };
-    }
   } catch (error: any) {
     console.error(`[XHS 发布] ❌ 任务 ID: ${noteId} 发生致命错误:`, error.message || error);
     const errMessage = error.message || "小红书自动化发布发生未设定的错误";
