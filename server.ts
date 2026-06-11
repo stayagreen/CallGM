@@ -335,9 +335,16 @@ async function startServer() {
 
     // Resolve candidates
     const cleanPath = relativePath.replace(/^\//, ''); // remove leading slash
+    // Convert 'downloads/' web routing prefix to local 'download/' filesystem directory representation
+    const localDirMappedPath = cleanPath.startsWith('downloads/')
+      ? cleanPath.replace(/^downloads\//, 'download/')
+      : cleanPath;
+
     const candidates = [
       path.join(__dirname, cleanPath),
       path.join(process.cwd(), cleanPath),
+      path.join(__dirname, localDirMappedPath),
+      path.join(process.cwd(), localDirMappedPath),
       path.join(__dirname, 'download', cleanPath),
       path.join(__dirname, 'uploads', cleanPath),
       path.join(process.cwd(), 'download', cleanPath),
