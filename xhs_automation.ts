@@ -908,6 +908,175 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     // 9. 执行发布点击
     console.log(`[XHS 发布] 开始判定并模拟点击发布按钮...`);
+    
+    let clickedSuccess = false;
+    let clickedMethod = '';
+
+    // --- 【方法 A】: CDP DOM 扁平树遍历（完美穿透 closed Shadow Root 查找并调用内层 node.click()） ---
+    try {
+      console.log(`[XHS 发布] [方法 A] 正在获取扁平 DOM 树以穿透 Closed Shadow Root...`);
+      const { nodes } = await DOM.getFlattenedDocument({ depth: -1, pierce: true });
+      if (nodes && nodes.length > 0) {
+        // 建立 parentId -> children 树状关系图，方便递归或查找内容文本
+        const parentMap = new Map<number, any[]>();
+        for (const n of nodes) {
+          if (n.parentId !== undefined) {
+             if (!parentMap.has(n.parentId)) parentMap.set(n.parentId, []);
+             parentMap.get(n.parentId)!.push(n);
+          }
+          if (n.shadowRoots) {
+             for (const sr of n.shadowRoots) {
+                // 将 shadowRoot 虚拟节点视作 host 的子节点
+                if (!parentMap.has(n.nodeId)) parentMap.set(n.nodeId, []);
+                parentMap.get(n.nodeId)!.push(sr);
+             }
+          }
+        }
+
+        // 递归获取某个节点下属的所有子孙节点 ID 集合
+        const getDescendants = (rootId: number): any[] => {
+          const list: any[] = [];
+          const queue = [rootId];
+          while (queue.length > 0) {
+            const currId = queue.shift()!;
+            const kids = parentMap.get(currId) || [];
+            for (const k of kids) {
+              list.push(k);
+              queue.push(k.nodeId);
+            }
+          }
+          return list;
+        };
+
+        // 1. 寻找 <xhs-publish-btn> 这个 custom element
+        const xhsHosts = nodes.filter(n => n.nodeName.toLowerCase() === 'xhs-publish-btn');
+        console.log(`[XHS 发布] 找到 xhs-publish-btn 宿主组件数:`, xhsHosts.length);
+
+        let targetNodeId: number | null = null;
+        for (const host of xhsHosts) {
+          const des = getDescendants(host.nodeId);
+          // 在这些子孙节点中寻找 BUTTON
+          const buttons = des.filter(n => n.nodeName.toLowerCase() === 'button' || n.localName === 'button');
+          for (const btn of buttons) {
+            const btnDes = getDescendants(btn.nodeId);
+            // 检查它的文本子孙节点，寻找内容包含 "发布" 的字样
+            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && n.nodeValue.trim() === '发布');
+            
+            // 或者看它的类名是否含有 bg-red
+            const attrs = btn.attributes || [];
+            const classIdx = attrs.indexOf('class');
+            const classVal = classIdx !== -1 ? attrs[classIdx + 1] : '';
+            
+            if (hasPubText || classVal.includes('bg-red')) {
+              targetNodeId = btn.nodeId;
+              console.log(`[XHS 发布] 精确命中 Shadow Root 内部发布按钮: Node ID ${targetNodeId}, 样式: ${classVal}`);
+              break;
+            }
+          }
+          if (targetNodeId) break;
+        }
+
+        // 2. 兜底：如果没找到 xhs-publish-btn，寻找全局列表内的含有 bg-red class 或文字为 "发布" 的 BUTTON
+        if (!targetNodeId) {
+          const allButtons = nodes.filter(n => n.nodeName.toLowerCase() === 'button' || n.localName === 'button');
+          for (const btn of allButtons) {
+            const btnDes = getDescendants(btn.nodeId);
+            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && n.nodeValue.trim() === '发布');
+            const attrs = btn.attributes || [];
+            const classIdx = attrs.indexOf('class');
+            const classVal = classIdx !== -1 ? attrs[classIdx + 1] : '';
+            if (hasPubText && classVal.includes('bg-red')) {
+              targetNodeId = btn.nodeId;
+              console.log(`[XHS 发布] 全局兜底命中 Shadow Root 内发布按钮: Node ID ${targetNodeId}`);
+              break;
+            }
+          }
+        }
+
+        // 3. 执行 CDP 节点解析点击
+        if (targetNodeId) {
+          const resolved = await DOM.resolveNode({ nodeId: targetNodeId });
+          if (resolved && resolved.object && resolved.object.objectId) {
+            const clickRes = await Runtime.callFunctionOn({
+              objectId: resolved.object.objectId,
+              functionDeclaration: `function() {
+                try {
+                  this.focus();
+                  this.click();
+                  this.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                  this.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                  return 'SUCCESS';
+                } catch(e) {
+                  return 'ERR: ' + e.message;
+                }
+              }`,
+              returnByValue: true
+            });
+            console.log(`[XHS 发布] [方法 A] CDP Node click 结果:`, clickRes.result?.value);
+            if (clickRes.result?.value === 'SUCCESS') {
+              clickedSuccess = true;
+              clickedMethod = 'CDP_FLATTENED_DOM_SHADOW_CLICK';
+            }
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn(`[XHS 发布] [方法 A] 执行期间遭遇警告 (这或许意味着对方正采用标准 DOM，继续后续方法B和C即可...):`, e.message || e);
+    }
+
+    // --- 【方法 B】: 精准屏幕坐标模拟真实鼠标轨迹点击（完全不受任何 DOM 或 Shadow Root 限制） ---
+    if (!clickedSuccess) {
+      try {
+        console.log(`[XHS 发布] [方法 B] 启动精准视口坐标物理点击...`);
+        // 询问浏览器此组件或当前视口的大小，用于估测绝对按钮在底部吸底通栏中的物理坐标
+        const coordResult = await Runtime.evaluate({
+          expression: `(() => {
+            const host = document.querySelector('xhs-publish-btn');
+            let rect = host ? host.getBoundingClientRect() : null;
+            
+            // 100% 对应小红书官方布局设置：
+            // bottom 粘性 bottom: 0，高 90px。发布按钮为红色，宽 120px，在吸底排布两个按钮中的右侧（居中对齐，gap 24px）。
+            // 故其中心点 X 为 屏幕水平中心/吸底栏水平中心 + 72px。
+            // 中心点 Y 为 屏幕底部向上 45px 处。
+            const x_publish_btn = window.innerWidth / 2 + 72;
+            const y_publish_btn = window.innerHeight - 45;
+
+            if (rect && rect.width > 0 && rect.height > 0) {
+              return {
+                x: rect.left + rect.width / 2 + 72,
+                y: rect.top + rect.height / 2,
+                source: 'host_bounding_box'
+              };
+            }
+            return {
+              x: x_publish_btn,
+              y: y_publish_btn,
+              source: 'viewport_fallback'
+            };
+          })()`,
+          returnByValue: true
+        });
+
+        const coords = coordResult.result?.value || { x: 0, y: 0, source: 'none' };
+        console.log(`[XHS 发布] [方法 B] 计算出来的发布按钮物理坐标为:`, coords);
+
+        if (coords.x > 0 && coords.y > 0) {
+          // 模拟完整的物理移动与点击事件流
+          await Input.dispatchMouseEvent({ type: 'mouseMoved', x: coords.x, y: coords.y });
+          await new Promise(r => setTimeout(r, 150));
+          await Input.dispatchMouseEvent({ type: 'mousePressed', button: 'left', x: coords.x, y: coords.y, clickCount: 1 });
+          await new Promise(r => setTimeout(r, 150));
+          await Input.dispatchMouseEvent({ type: 'mouseReleased', button: 'left', x: coords.x, y: coords.y, clickCount: 1 });
+          console.log(`[XHS 发布] [方法 B] 物理按键事件发射完毕。`);
+          clickedSuccess = true;
+          clickedMethod = `PHYSICAL_COORDINATES_CLICK (${coords.source})`;
+        }
+      } catch (e: any) {
+        console.warn(`[XHS 发布] [方法 B] 视口物理点击尝试出错:`, e.message || e);
+      }
+    }
+
+    // --- 【方法 C】: 传统万能 Selector 与备用方案遍历（可处理非 Shadow DOM / 重构普通形态页) ---
     const clickPublishResult = await Runtime.evaluate({
       expression: `(() => {
         try {
@@ -1002,7 +1171,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
       returnByValue: true
     });
 
-    console.log(`[XHS 发布] 点击最终发布按钮判定及执行结果:`, clickPublishResult.result?.value);
+    console.log(`[XHS 发布] [方法 C] 传统 DOM 检索与执行结果:`, clickPublishResult.result?.value);
 
     // 留出 8 秒存盘和接收返回，确保小红书后台响应并真正传输完成
     xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 98, message: '发布指令已下发！正在安全等待网络回发存盘 (约8秒)...' });
