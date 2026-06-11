@@ -302,7 +302,7 @@ async function downloadMedia(serverUrl: string, relativePath: string): Promise<s
 }
 
 socket.on("run_xhs_publish", async (payload: any) => {
-    const { noteId, videoPath, coverPath, title, content, tags, is_draft, serverUrl } = payload;
+    const { noteId, videoPath, coverPath, title, content, tags, serverUrl } = payload;
     const finalServerUrl = serverUrl || DEFAULT_SERVER_URL;
     
     console.log(`\n===================================================`);
@@ -344,7 +344,6 @@ socket.on("run_xhs_publish", async (payload: any) => {
                 title,
                 content,
                 tags,
-                is_draft: is_draft,
                 publish_status: 'publishing'
             });
         }
