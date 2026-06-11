@@ -48,6 +48,29 @@ socket.on("connect", () => {
 socket.on("registered", (info: any) => {
     console.log(`鉴权成功! 节点: ${info.name}`);
     
+    // 同步服务器存储的专属节点配置到本地 data/config.json
+    if (info.workerConfig) {
+        try {
+            const parsedConfig = typeof info.workerConfig === 'string' ? JSON.parse(info.workerConfig) : info.workerConfig;
+            const dataDir = path.join(process.cwd(), 'data');
+            if (!fs.existsSync(dataDir)) {
+                fs.mkdirSync(dataDir, { recursive: true });
+            }
+            const localConfigPath = path.join(dataDir, 'config.json');
+            let currentLocalConfig = {};
+            if (fs.existsSync(localConfigPath)) {
+                try {
+                    currentLocalConfig = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
+                } catch (e) {}
+            }
+            const mergedConfig = { ...currentLocalConfig, ...parsedConfig };
+            fs.writeFileSync(localConfigPath, JSON.stringify(mergedConfig, null, 2));
+            console.log(`[配置] 已同步专属节点配置至本地 data/config.json:`, mergedConfig);
+        } catch (err: any) {
+            console.error(`[配置] 同步专属配置失败:`, err.message);
+        }
+    }
+    
     // 定期上报心跳和任务进度
     setInterval(() => {
         socket.emit("heartbeat");

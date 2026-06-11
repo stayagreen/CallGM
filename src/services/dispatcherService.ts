@@ -234,7 +234,7 @@ export class DispatcherService {
 
                          const serverUrl = `${protocol}://${host}`;
                          const taskPayload = {
-                             data: { ...taskData, systemConfig: config },
+                             data: { ...taskData, systemConfig: { ...config, ...(typeof worker.config === 'string' ? JSON.parse(worker.config || '{}') : (worker.config || {})) } },
                              id: task.id, 
                              userId: task.user_id,
                              serverUrl: serverUrl
@@ -286,7 +286,7 @@ export class DispatcherService {
                         console.log(`[Dispatcher] Found task ${task.id}, preparing payload with serverUrl: ${serverUrl}`);
 
                         const taskPayload = {
-                            data: { ...taskData, systemConfig: config },
+                            data: { ...taskData, systemConfig: { ...config, ...(typeof matchedWorker.config === 'string' ? JSON.parse(matchedWorker.config || '{}') : (matchedWorker.config || {})) } },
                             id: task.id, 
                             userId: task.user_id,
                             serverUrl: serverUrl
