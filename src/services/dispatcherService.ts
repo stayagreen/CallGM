@@ -29,7 +29,11 @@ export class DispatcherService {
         db.prepare('UPDATE workers SET status = ?, ip_address = ?, last_seen = CURRENT_TIMESTAMP WHERE id = ?').run('idle', ip, workerRow.id);
         
         this.connectedWorkers.set(socket.id, data.token);
-        socket.emit("registered", { workerId: workerRow.id, name: workerRow.name });
+        socket.emit("registered", { 
+          workerId: workerRow.id, 
+          name: workerRow.name,
+          workerConfig: workerRow.config
+        });
         console.log(`[Dispatcher] Worker registered: ${workerRow.name} (${workerRow.id})`);
       });
 

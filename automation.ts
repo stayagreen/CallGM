@@ -1442,6 +1442,13 @@ async function executeWithPhysicalSimulation(tasks: any, filename: string, userI
     
     // 1. 显式定位并拉起有头、可见的 Chrome 浏览器（方案 1），有效防止系统关联到后台无头 CDP 实例
     const getChromePath = () => {
+        // 优先使用在设置中配置的个人 Chrome 启动路径
+        const cfg = config as any;
+        if (cfg.chromePath && fs.existsSync(cfg.chromePath)) {
+            console.log(`[JS 模式] 🌟 优先使用此节点个人设置中配置的 Chrome 路径: ${cfg.chromePath}`);
+            return cfg.chromePath;
+        }
+
         const potentialWindowsPaths = [
             'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
             'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'

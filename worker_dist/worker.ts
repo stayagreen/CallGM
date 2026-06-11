@@ -132,6 +132,32 @@ socket.on("launch_chrome", async () => {
 // 登陆即启动：客户端连接成功后，自动做一次 Chrome 端口 9222 的环境自检与静默拉起
 socket.on("registered", async (info: any) => {
     console.log(`鉴权成功! 节点: ${info.name}. 正在执行 Chrome 浏览器 CDP 挂载自检及配置...`);
+    
+    // 如果 info 中带有局部专属 workerConfig 个人设置，写入/合并到本地 data/config.json
+    if (info && info.workerConfig) {
+        try {
+            const dataDir = path.join(process.cwd(), 'data');
+            if (!fs.existsSync(dataDir)) {
+                fs.mkdirSync(dataDir, { recursive: true });
+            }
+            const configObj = typeof info.workerConfig === 'string' ? JSON.parse(info.workerConfig) : info.workerConfig;
+            
+            const localConfigPath = path.join(dataDir, 'config.json');
+            let baseConf = {};
+            if (fs.existsSync(localConfigPath)) {
+                try {
+                    baseConf = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
+                } catch(e) {}
+            }
+            
+            const merged = { ...baseConf, ...configObj };
+            fs.writeFileSync(localConfigPath, JSON.stringify(merged, null, 2));
+            console.log(`[个人设置同步] 📥 成功载入当前节点专属的浏览器、下载路径等个性化参数：data/config.json`);
+        } catch(e: any) {
+            console.error("[个人设置同步] ❌ 失败:", e.message);
+        }
+    }
+
     try {
         await syncScriptsFromServer(DEFAULT_SERVER_URL);
         await ensureBrowserLaunched();
@@ -152,8 +178,28 @@ async function syncScriptsFromServer(serverUrl: string) {
             if (!fs.existsSync(dataDir)) {
                 fs.mkdirSync(dataDir, { recursive: true });
             }
-            fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify(configData, null, 2));
-            console.log(`[配置同步] ✅ 成功同步全局系统设置到本地: data/config.json`);
+            
+            const localConfigPath = path.join(dataDir, 'config.json');
+            let finalConfig = { ...configData };
+            
+            // 如果本地已有独特的个人环境/路径配置，我们要加以融合保留，防止被云端系统默认配置覆盖
+            if (fs.existsSync(localConfigPath)) {
+                try {
+                    const currentLocal = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
+                    const localCustomKeys = [
+                        'chromePath', 'userDataDir', 'systemDownloadsDir', 'headless', 
+                        'gemini_download_dir', 'video_mount_dir'
+                    ];
+                    for (const k of localCustomKeys) {
+                        if (currentLocal[k] !== undefined && currentLocal[k] !== '') {
+                            finalConfig[k] = currentLocal[k];
+                        }
+                    }
+                } catch(e) {}
+            }
+            
+            fs.writeFileSync(localConfigPath, JSON.stringify(finalConfig, null, 2));
+            console.log(`[配置同步] ✅ 成功拉取全局设置并合入该节点的本地专属个人设置到: data/config.json`);
         } else {
             console.warn(`[配置同步] ⚠️ 无法从主服务器拉取系统设置: ${configRes.statusText}`);
         }

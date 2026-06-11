@@ -637,6 +637,63 @@ function WorkersManagement() {
                 </div>
               </div>
 
+              {/* 节点专属：基础环境与路径配置 */}
+              <div className="border border-gray-200/60 rounded-xl p-4 bg-blue-50/30 space-y-4">
+                <div className="font-bold text-gray-800 text-sm flex items-center gap-2 border-b border-gray-100 pb-2">
+                  <span>🖥️</span>
+                  <span>节点基础环境与路径个人设置 (优先于全局)</span>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1">
+                      首选 Chrome 浏览器绝对路径 (选填)
+                    </label>
+                    <input 
+                      type="text" 
+                      placeholder="留空则自动搜索系统默认路径。例如: C:\Program Files\Google\Chrome\Application\chrome.exe"
+                      value={(formData.config as any).chromePath || ''}
+                      onChange={e => setFormData({ ...formData, config: { ...formData.config, chromePath: e.target.value } })}
+                      className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:border-blue-500" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1">
+                      浏览器用户数据目录 (UserDataDir 选填)
+                    </label>
+                    <input 
+                      type="text" 
+                      placeholder="留空则使用默认配置：C:\ChromeDebug"
+                      value={(formData.config as any).userDataDir || ''}
+                      onChange={e => setFormData({ ...formData, config: { ...formData.config, userDataDir: e.target.value } })}
+                      className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:border-blue-500" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-600 mb-1">
+                      系统默认下载文件夹绝对路径 (Downloads 选填)
+                    </label>
+                    <input 
+                      type="text" 
+                      placeholder="留空则使用本地默认 Downloads 目录"
+                      value={(formData.config as any).systemDownloadsDir || ''}
+                      onChange={e => setFormData({ ...formData, config: { ...formData.config, systemDownloadsDir: e.target.value } })}
+                      className="w-full text-sm p-2 bg-white border border-gray-200 rounded-lg outline-none focus:border-blue-500" 
+                    />
+                  </div>
+                  <div>
+                    <label className="flex items-center gap-2 cursor-pointer mt-1">
+                      <input 
+                        type="checkbox" 
+                        className="w-4 h-4 text-blue-600 rounded"
+                        checked={(formData.config as any).headless !== false} 
+                        onChange={e => setFormData({ ...formData, config: { ...formData.config, headless: e.target.checked } })} 
+                      />
+                      <span className="text-xs font-bold text-gray-600">为此节点启用 Chrome 静态/无头模式 (Headless)</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex gap-4 pt-4">
                 <button type="button" onClick={() => setShowModal(false)} className="flex-1 py-3 bg-gray-100 rounded-xl font-bold text-gray-600 hover:bg-gray-200">取消</button>
                 <button type="submit" className="flex-1 py-3 bg-blue-600 rounded-xl font-bold text-white hover:bg-blue-700">提交</button>
