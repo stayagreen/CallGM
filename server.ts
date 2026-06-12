@@ -2371,10 +2371,13 @@ ${storyboardTexts}
   // Upload images to gallery
   app.post('/api/images/upload', requireAuth, checkAccess, express.json({ limit: '500mb' }), (req: any, res) => {
     const userStoragePath = getUserStoragePath(req, downloadDir);
-    const { images } = req.body;
+    const { images, groupId } = req.body;
     if (!images || !Array.isArray(images)) return res.status(400).json({ error: 'Invalid images' });
     
     if (!fs.existsSync(userStoragePath)) fs.mkdirSync(userStoragePath, { recursive: true });
+    
+    const parsedGroupId = (groupId !== undefined && groupId !== null) ? parseInt(groupId, 10) : null;
+    const targetGroupId = isNaN(parsedGroupId as number) ? null : parsedGroupId;
     
     const savedFiles: string[] = [];
     images.forEach((base64: string) => {
@@ -2391,7 +2394,7 @@ ${storyboardTexts}
         try {
             const userId = req.session.user.id;
             const relativePath = path.join(userId.toString(), filename).replace(/\\/g, '/');
-            db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(userId, 'image', relativePath);
+            db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path, group_id) VALUES (?, ?, ?, ?)').run(userId, 'image', relativePath, targetGroupId);
         } catch(e) {}
         
         savedFiles.push(filename);

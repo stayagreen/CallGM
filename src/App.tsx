@@ -918,6 +918,7 @@ function MainApp() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  const [selectedUploadGroupId, setSelectedUploadGroupId] = useState<number | null>(null);
   const [movingAssetPath, setMovingAssetPath] = useState<string | null>(null);
   const [videoGallery, setVideoGallery] = useState<GalleryAsset[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
@@ -1473,6 +1474,44 @@ function MainApp() {
     }
   }, [viewingXhsNotes]);
 
+  // Global paste handler when on Gallery tab to target-upload to active group
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      if (activeTab !== 'gallery') return;
+      
+      const target = e.target as HTMLElement;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+         target.tagName === 'TEXTAREA' ||
+         target.isContentEditable)
+      ) {
+        return;
+      }
+      
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      
+      let hasImage = false;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.indexOf('image') !== -1) {
+          hasImage = true;
+          break;
+        }
+      }
+      
+      if (hasImage) {
+        e.preventDefault();
+        handlePasteImageItems(items);
+      }
+    };
+    
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => {
+      window.removeEventListener('paste', handleGlobalPaste);
+    };
+  }, [activeTab, selectedUploadGroupId]);
+
   // Polling for Xiaohongshu Publishing progress
   useEffect(() => {
     if (publishingXhsNoteId === null) {
@@ -1664,11 +1703,32 @@ function MainApp() {
     setSelectedGalleryImages(new Set());
   };
 
+  const uploadBase64Images = async (base64Images: string[], targetGroupId: number | null) => {
+    setUploadingCount(prev => prev + base64Images.length);
+    try {
+      const response = await fetch('/api/images/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ images: base64Images, groupId: targetGroupId })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        fetchGallery();
+      } else {
+        alert(data.error || '图片上传失败');
+      }
+    } catch (error) {
+      console.error('Upload failed:', error);
+      alert('图片上传失败，请检查网络');
+    } finally {
+      setUploadingCount(prev => Math.max(0, prev - base64Images.length));
+    }
+  };
+
   const handleGalleryImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
     
-    setUploadingCount(prev => prev + files.length);
     setShowGalleryUploadMenu(false);
 
     const promises = files.map(f => {
@@ -1679,55 +1739,34 @@ function MainApp() {
       });
     });
     const base64Images = await Promise.all(promises);
-    
-    try {
-      await fetch('/api/images/upload', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ images: base64Images })
-      });
-      fetchGallery();
-    } catch (error) {
-      console.error('Upload failed:', error);
-      alert('图片上传失败，请检查网络');
-    } finally {
-      setUploadingCount(prev => Math.max(0, prev - files.length));
+    await uploadBase64Images(base64Images, selectedUploadGroupId);
+  };
+
+  const handlePasteImageItems = async (items: DataTransferItemList) => {
+    const promises: Promise<string>[] = [];
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.indexOf('image') !== -1) {
+          const file = item.getAsFile();
+          if (file) {
+            promises.push(new Promise<string>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = (ev) => resolve(ev.target?.result as string);
+              reader.readAsDataURL(file);
+            }));
+          }
+        }
+    }
+    if (promises.length > 0) {
+      setShowGalleryUploadMenu(false);
+      const base64Images = await Promise.all(promises);
+      await uploadBase64Images(base64Images, selectedUploadGroupId);
     }
   };
 
   const handleGalleryPaste = async (e: React.ClipboardEvent) => {
     const items = e.clipboardData.items;
-    const promises: Promise<string>[] = [];
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.indexOf('image') !== -1) {
-        const file = items[i].getAsFile();
-        if (file) {
-          promises.push(new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onload = (ev) => resolve(ev.target?.result as string);
-            reader.readAsDataURL(file);
-          }));
-        }
-      }
-    }
-    if (promises.length > 0) {
-      setUploadingCount(prev => prev + promises.length);
-      setShowGalleryUploadMenu(false);
-      const base64Images = await Promise.all(promises);
-      try {
-        await fetch('/api/images/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ images: base64Images })
-        });
-        fetchGallery();
-      } catch (error) {
-        console.error('Paste upload failed:', error);
-        alert('图片上传失败，请检查网络');
-      } finally {
-        setUploadingCount(prev => Math.max(0, prev - promises.length));
-      }
-    }
+    await handlePasteImageItems(items);
   };
 
   const handleExecute = async () => {
@@ -2510,7 +2549,7 @@ function MainApp() {
 
       {activeTab === 'gallery' && (
         <div className="space-y-6">
-          <div className="flex justify-between items-center mb-6">
+          <div className="flex justify-between items-center mb-4">
             <h2 className="text-2xl font-bold text-gray-800">本地图库</h2>
             <div className="flex gap-2">
               <div className="relative gallery-upload-container">
@@ -2581,6 +2620,16 @@ function MainApp() {
                 <FolderPlus size={16} /> 新建图组
               </button>
               <button onClick={fetchGallery} className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm">刷新图库</button>
+            </div>
+          </div>
+          
+          <div className="bg-gradient-to-r from-purple-500/10 to-indigo-505/10 border border-purple-200/50 rounded-2xl px-5 py-4 text-xs text-purple-900 flex items-start gap-3 shadow-sm">
+            <Sparkles size={16} className="text-purple-600 mt-0.5 shrink-0 animate-pulse" />
+            <div className="space-y-1 text-left">
+              <p className="font-bold text-sm text-purple-950">💡 智能相册分组粘贴与外部上传</p>
+              <p className="text-purple-800 leading-relaxed">
+                点击下方任何一个<strong>【相册图组】或【未分组图片】其对应头部</strong>，即可将其高亮激活设为 📌 粘贴/上传目标。随后你可以在<strong>网页任一处直接按 Ctrl+V 粘贴图片</strong>或点击上方<strong>上传控制</strong>，新存入的图片全都会被精准同步至选中的分类相册组中！
+              </p>
             </div>
           </div>
           
@@ -2768,26 +2817,42 @@ function MainApp() {
                     {assetGroups.map(grp => {
                       const grpImages = galleryImages.filter(img => img.groupId === grp.id);
                       const isCollapsed = collapsedGroups.has(grp.id);
+                      const isSelected = selectedUploadGroupId === grp.id;
                       
                       return (
-                        <div key={grp.id} className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                        <div 
+                          key={grp.id} 
+                          className={`bg-white border rounded-2xl shadow-sm overflow-hidden transition-all duration-200 ${
+                            isSelected 
+                              ? 'ring-2 ring-purple-500 border-purple-500' 
+                              : 'border-gray-200'
+                          }`}
+                        >
                           {/* Group Header */}
                           <div 
                             onClick={() => {
-                              const newSet = new Set(collapsedGroups);
-                              if (newSet.has(grp.id)) {
+                              setSelectedUploadGroupId(grp.id);
+                              if (collapsedGroups.has(grp.id)) {
+                                const newSet = new Set(collapsedGroups);
                                 newSet.delete(grp.id);
-                              } else {
-                                newSet.add(grp.id);
+                                setCollapsedGroups(newSet);
                               }
-                              setCollapsedGroups(newSet);
                             }}
-                            className="bg-purple-50/40 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-100 hover:bg-purple-50/70 transition"
+                            className={`px-6 py-4 cursor-pointer flex justify-between items-center border-b transition-all duration-200 ${
+                              isSelected 
+                                ? 'bg-purple-50/80 border-purple-100' 
+                                : 'bg-purple-50/10 border-gray-100 hover:bg-purple-50/40'
+                            }`}
                           >
                             <div className="flex items-center gap-3">
-                              <Folder className="w-5 h-5 text-purple-600" />
+                              <Folder className={`w-5 h-5 ${isSelected ? 'text-purple-600' : 'text-gray-400'}`} />
                               <span className="text-base font-bold text-gray-800">{grp.name}</span>
                               <span className="bg-purple-100 text-purple-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">{grpImages.length} 张图片</span>
+                              {isSelected && (
+                                <span className="flex items-center gap-1 bg-purple-600 text-white text-[11px] px-2.5 py-0.5 rounded-full font-bold animate-pulse shadow-sm shadow-purple-500/20">
+                                  📌 当前粘贴/上传目标
+                                </span>
+                              )}
                             </div>
                             
                             <div className="flex items-center gap-4" onClick={e => e.stopPropagation()}>
@@ -2822,7 +2887,7 @@ function MainApp() {
                               {grpImages.length === 0 ? (
                                 <div className="text-center py-8 text-gray-400 text-xs flex flex-col items-center justify-center gap-1">
                                   <Folder className="w-8 h-8 text-gray-200 animate-pulse" />
-                                  <span>当前图组暂无图片，点击未分组图片的文件夹图标可移至此组</span>
+                                  <span>当前图组暂无图片，点击该组头部设为目标，即可直接 Ctrl+V 粘贴/上传新图至本组</span>
                                 </div>
                               ) : (
                                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
@@ -2836,20 +2901,38 @@ function MainApp() {
                     })}
 
                     {/* 2. Unassigned default gallery */}
-                    <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
-                      <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-b border-gray-100">
+                    <div 
+                      className={`bg-white border rounded-2xl shadow-sm overflow-hidden transition-all duration-200 ${
+                        selectedUploadGroupId === null 
+                          ? 'ring-2 ring-blue-500 border-blue-500' 
+                          : 'border-gray-200'
+                      }`}
+                    >
+                      <div 
+                        onClick={() => setSelectedUploadGroupId(null)}
+                        className={`px-6 py-4 flex justify-between items-center border-b cursor-pointer transition-all duration-200 ${
+                          selectedUploadGroupId === null 
+                            ? 'bg-blue-50/60 border-blue-100' 
+                            : 'bg-gray-50 border-gray-100 hover:bg-gray-100/60'
+                        }`}
+                      >
                         <div className="flex items-center gap-3">
-                          <ImageIcon className="w-5 h-5 text-blue-600" />
+                          <ImageIcon className={`w-5 h-5 ${selectedUploadGroupId === null ? 'text-blue-600' : 'text-gray-400'}`} />
                           <span className="text-base font-bold text-gray-800">未分组图片</span>
-                          <span className="bg-gray-100 text-gray-600 text-xs px-2.5 py-0.5 rounded-full font-semibold">
+                          <span className="bg-blue-100 text-blue-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">
                             {galleryImages.filter(img => !img.groupId).length} 张图片
                           </span>
+                          {selectedUploadGroupId === null && (
+                            <span className="flex items-center gap-1 bg-blue-600 text-white text-[11px] px-2.5 py-0.5 rounded-full font-bold animate-pulse shadow-sm shadow-blue-500/20">
+                              📌 当前粘贴/上传目标 (默认)
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="p-4 bg-gray-50/10">
                         {galleryImages.filter(img => !img.groupId).length === 0 ? (
                           <div className="text-center py-12 text-gray-400 text-sm">
-                            各张图片均已划分至相对应的图组相册中
+                            各张图片均已划分至相对应的图组相册中，点击上方图组头部可随时切回各组或未分组
                           </div>
                         ) : (
                           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
