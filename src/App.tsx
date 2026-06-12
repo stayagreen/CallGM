@@ -2634,7 +2634,6 @@ function MainApp() {
           </div>
           
           <div 
-            onPaste={handleGalleryPaste}
             tabIndex={0}
             className="outline-none"
           >
