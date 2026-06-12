@@ -413,6 +413,20 @@ async function startServer() {
   });
 
   // Dynamic script delivery (Stateless / zero config update)
+  app.get('/api/worker/note-info/:id', (req, res) => {
+    const { id } = req.params;
+    try {
+      const note = db.prepare('SELECT is_draft FROM xhs_notes WHERE id = ?').get(id) as any;
+      if (note) {
+        res.json({ is_draft: note.is_draft });
+      } else {
+        res.status(404).json({ error: 'Note not found' });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get('/api/worker/script/:name', (req, res) => {
     const { name } = req.params;
     const safeName = path.basename(name);

@@ -65,6 +65,35 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     return { success: false, error: err };
   }
 
+  let isDraftTask = !!note.is_draft;
+
+  // 双重云校检逻辑：向主服务器主动验证最新的草稿设定，攻克客户由于运行旧版本 Worker 导致的 is_draft 数据遗漏或状态不齐！
+  try {
+    let serverUrl = "http://localhost:3000";
+    const configPath = path.join(process.cwd(), 'config.json');
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      if (config.SERVER_URL) {
+        serverUrl = config.SERVER_URL.replace(/\/$/, "");
+      }
+    }
+    console.log(`[XHS 发布] [双检逻辑] 正在向主服务器校验任务草稿状态: ${serverUrl}/api/worker/note-info/${noteId}`);
+    const noteInfoRes = await fetch(`${serverUrl}/api/worker/note-info/${noteId}`);
+    if (noteInfoRes.ok) {
+      const noteInfo = await noteInfoRes.json() as any;
+      if (noteInfo && noteInfo.is_draft !== undefined) {
+        isDraftTask = !!noteInfo.is_draft;
+        console.log(`[XHS 发布] [双检逻辑] 成功获取最新云端状态，is_draft = ${noteInfo.is_draft} (isDraftTask: ${isDraftTask})`);
+      }
+    } else {
+      console.warn(`[XHS 发布] [双检逻辑] 获取云端状态失败, HTTP: ${noteInfoRes.status}`);
+    }
+  } catch (e: any) {
+    console.warn(`[XHS 发布] [双检逻辑] 尝试向云端验证草稿状态出错 (不影响主进程):`, e.message || e);
+  }
+
+  const actionLabel = isDraftTask ? '暂存离开' : '发布';
+
   // Intercept if user is bound to a worker computer!
   const userRow = db.prepare('SELECT bound_worker_id FROM users WHERE id = ?').get(note.user_id) as any;
   const boundWorkerId = userRow ? userRow.bound_worker_id : null;
@@ -107,6 +136,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
                   title: note.title,
                   content: note.content,
                   tags: note.tags,
+                  is_draft: note.is_draft,
                   serverUrl: serverUrl
               };
               
@@ -786,11 +816,9 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     });
 
     console.log(`[XHS 发布] 原创声明开关触发尝试结果:`, originalTriggerResult.result?.value);
-
-    // 留出 2.0 秒充分安全时间，确保小红书的“声明须知”对话框弹窗完全挂载打开
     await new Promise(r => setTimeout(r, 2000));
 
-    // 8d. 勾选“声名须知”复选逻辑，并确认点击“声明原创”按钮
+    // 8d. 勾选“声明须知”复选逻辑，并确认点击“声明原创”按钮
     const originalDialogResult = await Runtime.evaluate({
       expression: `(() => {
         try {
@@ -902,12 +930,13 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     });
 
     console.log(`[XHS 发布] 原创说明须知弹窗勾选及确认执行结果:`, originalDialogResult.result?.value);
-
     await new Promise(r => setTimeout(r, 2000));
-    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 92, message: '配置项填写与设置完毕，正在为您执行最终的“发布”按钮点击动作...' });
+
+    // isDraftTask and actionLabel are defined at the top of executeXhsPublish
+    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 92, message: `配置项填写与设置完毕，正在为您执行最终的“${actionLabel}”按钮点击动作...` });
 
     // 9. 执行发布点击
-    console.log(`[XHS 发布] 开始判定并模拟点击发布按钮...`);
+    console.log(`[XHS 发布] 开始判定并模拟点击${actionLabel}按钮... (草稿状态: ${isDraftTask})`);
     
     let clickedSuccess = false;
     let clickedMethod = '';
@@ -959,35 +988,44 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           const buttons = des.filter(n => n.nodeName.toLowerCase() === 'button' || n.localName === 'button');
           for (const btn of buttons) {
             const btnDes = getDescendants(btn.nodeId);
-            // 检查它的文本子孙节点，寻找内容包含 "发布" 的字样
-            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && n.nodeValue.trim() === '发布');
             
-            // 或者看它的类名是否含有 bg-red
+            // 检查它的文本子孙节点，寻找内容包含对应字样
+            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && (
+              isDraftTask 
+                ? (n.nodeValue.includes('暂存') || n.nodeValue.includes('草稿'))
+                : (n.nodeValue.trim() === '发布' || n.nodeValue.trim() === '立即发布')
+            ));
+            
+            // 或者看它的类名是否含有特定指示
             const attrs = btn.attributes || [];
             const classIdx = attrs.indexOf('class');
             const classVal = classIdx !== -1 ? attrs[classIdx + 1] : '';
             
-            if (hasPubText || classVal.includes('bg-red')) {
+            if (hasPubText || (!isDraftTask && classVal.includes('bg-red')) || (isDraftTask && classVal.includes('white'))) {
               targetNodeId = btn.nodeId;
-              console.log(`[XHS 发布] 精确命中 Shadow Root 内部发布按钮: Node ID ${targetNodeId}, 样式: ${classVal}`);
+              console.log(`[XHS 发布] 精确命中 Shadow Root 内部目标按钮 (${actionLabel}): Node ID ${targetNodeId}, 样式: ${classVal}`);
               break;
             }
           }
           if (targetNodeId) break;
         }
 
-        // 2. 兜底：如果没找到 xhs-publish-btn，寻找全局列表内的含有 bg-red class 或文字为 "发布" 的 BUTTON
+        // 2. 兜底：如果没找到 xhs-publish-btn，寻找全局列表内的匹配 BUTTON
         if (!targetNodeId) {
           const allButtons = nodes.filter(n => n.nodeName.toLowerCase() === 'button' || n.localName === 'button');
           for (const btn of allButtons) {
             const btnDes = getDescendants(btn.nodeId);
-            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && n.nodeValue.trim() === '发布');
+            const hasPubText = btnDes.some(n => n.nodeType === 3 && n.nodeValue && (
+              isDraftTask 
+                ? (n.nodeValue.includes('暂存') || n.nodeValue.includes('草稿'))
+                : (n.nodeValue.trim() === '发布' || n.nodeValue.trim() === '立即发布')
+            ));
             const attrs = btn.attributes || [];
             const classIdx = attrs.indexOf('class');
             const classVal = classIdx !== -1 ? attrs[classIdx + 1] : '';
-            if (hasPubText && classVal.includes('bg-red')) {
+            if (hasPubText || (!isDraftTask && classVal.includes('bg-red')) || (isDraftTask && classVal.includes('white') && classVal.includes('ce-btn'))) {
               targetNodeId = btn.nodeId;
-              console.log(`[XHS 发布] 全局兜底命中 Shadow Root 内发布按钮: Node ID ${targetNodeId}`);
+              console.log(`[XHS 发布] 全局兜底命中 Shadow Root 内目标按钮 (${actionLabel}): Node ID ${targetNodeId}`);
               break;
             }
           }
@@ -1027,7 +1065,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     // --- 【方法 B】: 精准屏幕坐标模拟真实鼠标轨迹点击（完全不受任何 DOM 或 Shadow Root 限制） ---
     if (!clickedSuccess) {
       try {
-        console.log(`[XHS 发布] [方法 B] 启动精准视口坐标物理点击...`);
+        console.log(`[XHS 发布] [方法 B] 启动精准视口坐标物理点击... (目标：${actionLabel})`);
         // 询问浏览器此组件或当前视口的大小，用于估测绝对按钮在底部吸底通栏中的物理坐标
         const coordResult = await Runtime.evaluate({
           expression: `(() => {
@@ -1036,14 +1074,15 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
             
             // 100% 对应小红书官方布局设置：
             // bottom 粘性 bottom: 0，高 90px。发布按钮为红色，宽 120px，在吸底排布两个按钮中的右侧（居中对齐，gap 24px）。
-            // 故其中心点 X 为 屏幕水平中心/吸底栏水平中心 + 72px。
+            // 故其中心点 X 为 屏幕水平中心/吸底栏水平中心 + 72px。草稿暂存离开按钮在左侧，X 为中心点 - 72px。
             // 中心点 Y 为 屏幕底部向上 45px 处。
-            const x_publish_btn = window.innerWidth / 2 + 72;
+            const isDraftTask = ${isDraftTask};
+            const x_publish_btn = isDraftTask ? (window.innerWidth / 2 - 72) : (window.innerWidth / 2 + 72);
             const y_publish_btn = window.innerHeight - 45;
 
             if (rect && rect.width > 0 && rect.height > 0) {
               return {
-                x: rect.left + rect.width / 2 + 72,
+                x: rect.left + rect.width / 2 + (isDraftTask ? -72 : 72),
                 y: rect.top + rect.height / 2,
                 source: 'host_bounding_box'
               };
@@ -1058,7 +1097,7 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
         });
 
         const coords = coordResult.result?.value || { x: 0, y: 0, source: 'none' };
-        console.log(`[XHS 发布] [方法 B] 计算出来的发布按钮物理坐标为:`, coords);
+        console.log(`[XHS 发布] [方法 B] 计算出来的目标按钮物理坐标为:`, coords);
 
         if (coords.x > 0 && coords.y > 0) {
           // 模拟完整的物理移动与点击事件流
@@ -1077,104 +1116,164 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     }
 
     // --- 【方法 C】: 传统万能 Selector 与备用方案遍历（可处理非 Shadow DOM / 重构普通形态页) ---
-    const clickPublishResult = await Runtime.evaluate({
-      expression: `(() => {
-        try {
-          const clickElement = (el) => {
-            if (!el) return;
-            try { el.focus(); } catch(e) {}
-            try { el.click(); } catch(e) {}
-            try {
-              el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-              el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-            } catch(e) {}
-          };
-
-          // 1. 优先寻找用户反馈的特定容器 .publish-page-publish-btn 及其专属发布按钮
-          const pContainer = document.querySelector('.publish-page-publish-btn');
-          if (pContainer) {
-            const btns = Array.from(pContainer.querySelectorAll('button'));
-            console.log('[XHS 发布] 找到特定发布按钮容器内按钮数量:', btns.length);
-            
-            // 匹配文本为 "发布" 的按钮
-            const pubBtn = btns.find(b => b.textContent && b.textContent.trim() === '发布');
-            if (pubBtn) {
-              clickElement(pubBtn);
-              return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> Exact Text "发布"';
-            }
-            
-            // 匹配类名为 bg-red 的按钮 (根据 <button type="button" class="ce-btn bg-red">发布</button>)
-            const redBtn = btns.find(b => b.classList.contains('bg-red') || b.className.includes('bg-red'));
-            if (redBtn) {
-              clickElement(redBtn);
-              return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> bg-red class';
-            }
-            
-            // 匹配末尾/非白色的按钮
-            const targetBtn = btns.find(b => !b.className.includes('white')) || btns[btns.length - 1];
-            if (targetBtn) {
-              clickElement(targetBtn);
-              return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> non-white button';
-            }
-          }
-
-          // 2. 查找页面上含有 bg-red 且精确文本为 "发布" 的 button 元素
-          const redBtns = Array.from(document.querySelectorAll('button.bg-red, button[class*="bg-red"]'));
-          const exactRedBtn = redBtns.find(b => b.textContent && b.textContent.trim() === '发布');
-          if (exactRedBtn) {
-            clickElement(exactRedBtn);
-            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Exact bg-red button with text';
-          }
-
-          // 3. 寻找真正属于发布/编辑区域（如类名包含 edit / publish / main / content）内的 "发布" 按钮，规避全局侧边栏
-          const contentAreaSelectors = [
-            '.main-content', '#main-content', '.editor-container', '.publish-container', 
-            '.creator-content', '.content-body', '#app-container'
-          ];
-          for (const cSel of contentAreaSelectors) {
-            const cEl = document.querySelector(cSel);
-            if (cEl) {
-              const innerBtns = Array.from(cEl.querySelectorAll('button'));
-              const innerPubBtn = innerBtns.find(b => b.textContent && b.textContent.trim() === '发布');
-              if (innerPubBtn) {
-                clickElement(innerPubBtn);
-                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Inner content publish button near ' + cSel;
+    if (!clickedSuccess) {
+      const clickPublishResult = await Runtime.evaluate({
+        expression: `(() => {
+          try {
+            const clickElement = (el) => {
+              if (!el) return;
+              try { el.focus(); } catch(e) {}
+              try { el.click(); } catch(e) {}
+              try {
+                el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+              } catch(e) {}
+            };
+  
+            const isDraftTask = ${isDraftTask};
+  
+            // 1. 优先寻找用户反馈的特定容器 .publish-page-publish-btn 及其专属按钮
+            const pContainer = document.querySelector('.publish-page-publish-btn');
+            if (pContainer) {
+              const btns = Array.from(pContainer.querySelectorAll('button'));
+              console.log('[XHS 发布] 找到特定发布按钮容器内按钮数量:', btns.length);
+              
+              if (isDraftTask) {
+                const draftBtn = btns.find(b => b.textContent && (b.textContent.includes('暂存') || b.textContent.includes('草稿')));
+                if (draftBtn) {
+                  clickElement(draftBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> Text containing 暂存/草稿';
+                }
+                const whiteBtn = btns.find(b => b.classList.contains('ce-btn-white') || b.className.includes('white'));
+                if (whiteBtn) {
+                  clickElement(whiteBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> white button';
+                }
+                if (btns.length >= 2) {
+                  clickElement(btns[0]);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> first button';
+                }
+              } else {
+                // 匹配文本为 "发布" 的按钮
+                const pubBtn = btns.find(b => b.textContent && b.textContent.trim() === '发布');
+                if (pubBtn) {
+                  clickElement(pubBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> Exact Text "发布"';
+                }
+                
+                // 匹配类名为 bg-red 的按钮
+                const redBtn = btns.find(b => b.classList.contains('bg-red') || b.className.includes('bg-red'));
+                if (redBtn) {
+                  clickElement(redBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> bg-red class';
+                }
+                
+                // 匹配末尾/非白色的按钮
+                const targetBtn = btns.find(b => !b.className.includes('white')) || btns[btns.length - 1];
+                if (targetBtn) {
+                  clickElement(targetBtn);
+                  return 'PUBLISH_BUTTON_CLICKED_SUCCESS: pContainer -> non-white button';
+                }
               }
             }
+
+            // 2. 查找页面上匹配的 button 元素 / 红色发布
+            if (isDraftTask) {
+              const draftBtns = Array.from(document.querySelectorAll('button')).filter(b => b.textContent && (b.textContent.includes('暂存') || b.textContent.includes('草稿')));
+              if (draftBtns.length > 0) {
+                clickElement(draftBtns[0]);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Exact draft/save button with text';
+              }
+            } else {
+              const redBtns = Array.from(document.querySelectorAll('button.bg-red, button[class*="bg-red"]'));
+              const exactRedBtn = redBtns.find(b => b.textContent && b.textContent.trim() === '发布');
+              if (exactRedBtn) {
+                clickElement(exactRedBtn);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Exact bg-red button with text';
+              }
+            }
+
+            // 3. 寻找真正属于发布/编辑区域（如类名包含 edit / publish / main / content）内的按钮
+            const contentAreaSelectors = [
+              '.main-content', '#main-content', '.editor-container', '.publish-container', 
+              '.creator-content', '.content-body', '#app-container'
+            ];
+            for (const cSel of contentAreaSelectors) {
+              const cEl = document.querySelector(cSel);
+              if (cEl) {
+                const innerBtns = Array.from(cEl.querySelectorAll('button'));
+                if (isDraftTask) {
+                  const innerDraftBtn = innerBtns.find(b => b.textContent && (b.textContent.includes('暂存') || b.textContent.includes('草稿')));
+                  if (innerDraftBtn) {
+                    clickElement(innerDraftBtn);
+                    return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Inner content draft button near ' + cSel;
+                  }
+                } else {
+                  const innerPubBtn = innerBtns.find(b => b.textContent && b.textContent.trim() === '发布');
+                  if (innerPubBtn) {
+                    clickElement(innerPubBtn);
+                    return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Inner content publish button near ' + cSel;
+                  }
+                }
+              }
+            }
+
+            // 4. 寻找所有带有特定候选字样的按钮
+            const allButtons = Array.from(document.querySelectorAll('button'));
+            if (isDraftTask) {
+              const exactBtns = allButtons.filter(b => {
+                const txt = b.textContent ? b.textContent.trim() : '';
+                return txt.includes('暂存') || txt.includes('草稿');
+              });
+              if (exactBtns.length > 0) {
+                clickElement(exactBtns[0]);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Button text fallback (draft) -> ' + (exactBtns[0].textContent || '').trim();
+              }
+            } else {
+              const exactBtns = allButtons.filter(b => {
+                const txt = b.textContent ? b.textContent.trim() : '';
+                return txt === '发布' || txt === '立即发布' || txt === '确认发布';
+              });
+              if (exactBtns.length > 0) {
+                const preferred = exactBtns.find(b => b.className.includes('bg-') || b.className.includes('btn-') || !b.className.includes('menu'));
+                const targetBtn = preferred || exactBtns[0];
+                clickElement(targetBtn);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Button text fallback -> ' + (targetBtn.textContent || '').trim();
+              }
+            }
+
+            // 5. 极度兜底：类名模糊搜索
+            if (isDraftTask) {
+              const fallbackBtns = Array.from(document.querySelectorAll('button[class*="draft"], [class*="btn-draft"], button[class*="save"], [class*="draft-btn"]'));
+              if (fallbackBtns.length > 0) {
+                clickElement(fallbackBtns[0]);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Fallback draft class selector';
+              }
+            } else {
+              const fallbackBtns = Array.from(document.querySelectorAll('button[class*="publish"], [class*="btn-publish"], button[class*="submit"], [class*="publish-btn"]'));
+              if (fallbackBtns.length > 0) {
+                clickElement(fallbackBtns[0]);
+                return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Fallback class selector';
+              }
+            }
+
+            return 'PUBLISH_BUTTON_NOT_FOUND';
+          } catch(e) {
+            return 'PUBLISH_CLICK_ERROR: ' + e.message;
           }
+        })()`,
+        returnByValue: true
+      });
 
-          // 4. 寻找所有带有发布、立即发布、确认发布、发布视频字样的候选按钮 (尽力限制在 button，规避 div, span 的侧边栏导航)
-          const allButtons = Array.from(document.querySelectorAll('button'));
-          const exactBtns = allButtons.filter(b => {
-            const txt = b.textContent ? b.textContent.trim() : '';
-            return txt === '发布' || txt === '立即发布' || txt === '确认发布';
-          });
-          if (exactBtns.length > 0) {
-            const preferred = exactBtns.find(b => b.className.includes('bg-') || b.className.includes('btn-') || !b.className.includes('menu'));
-            const targetBtn = preferred || exactBtns[0];
-            clickElement(targetBtn);
-            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Button text fallback -> ' + (targetBtn.textContent || '').trim();
-          }
-
-          // 5. 极度兜底：类名模糊搜索
-          const fallbackBtns = Array.from(document.querySelectorAll('button[class*="publish"], [class*="btn-publish"], button[class*="submit"], [class*="publish-btn"]'));
-          if (fallbackBtns.length > 0) {
-            clickElement(fallbackBtns[0]);
-            return 'PUBLISH_BUTTON_CLICKED_SUCCESS: Fallback class selector';
-          }
-
-          return 'PUBLISH_BUTTON_NOT_FOUND';
-        } catch(e) {
-          return 'PUBLISH_CLICK_ERROR: ' + e.message;
-        }
-      })()`,
-      returnByValue: true
-    });
-
-    console.log(`[XHS 发布] [方法 C] 传统 DOM 检索与执行结果:`, clickPublishResult.result?.value);
+      console.log(`[XHS 发布] [方法 C] 传统 DOM 检索与执行结果:`, clickPublishResult.result?.value);
+      if (clickPublishResult.result?.value && clickPublishResult.result.value.startsWith('PUBLISH_BUTTON_CLICKED_SUCCESS')) {
+        clickedSuccess = true;
+        clickedMethod = `DOM_METHOD_C_CLICK (${clickPublishResult.result.value})`;
+      }
+    }
 
     // 留出 8 秒存盘和接收返回，确保小红书后台响应并真正传输完成
-    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 98, message: '发布指令已下发！正在安全等待网络回发存盘 (约8秒)...' });
+    xhsProgressMap.set(noteId, { id: noteId, status: 'publishing', progress: 98, message: `${actionLabel}指令已下发！正在安全等待网络回发存盘 (约8秒)...` });
     await new Promise(r => setTimeout(r, 8000));
     
     // 标记不要保持调试标签页开启，点击完自动关闭该选项卡
@@ -1182,22 +1281,26 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/creator/home', noteId);
     
+    const finalSuccessMessage = isDraftTask 
+      ? '🎉 小红书作品已成功保存为草稿存档！'
+      : '🎉 小红书作品已全自动发表成功，并成功在创作者中心内记录存档！';
+
     xhsProgressMap.set(noteId, { 
       id: noteId, 
       status: 'success', 
       progress: 100, 
-      message: '🎉 小红书作品已全自动发表成功，并成功在创作者中心内记录存档！' 
+      message: finalSuccessMessage
     });
 
-    console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 全自动发布成功！`);
+    console.log(`[XHS 发布] ✅ 任务 ID: ${noteId} 全自动${actionLabel}成功！`);
     return { success: true, url: 'https://creator.xiaohongshu.com/creator/home' };
 
   } catch (error: any) {
     console.error(`[XHS 发布] ❌ 任务 ID: ${noteId} 发生致命错误:`, error.message || error);
-    const errMessage = error.message || "小红书自动化发布发生未设定的错误";
+    const errMessage = error.message || `小红书自动化${actionLabel}发生未设定的错误`;
     
     db.prepare("UPDATE xhs_notes SET publish_status = 'failed', error_message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(errMessage, noteId);
-    xhsProgressMap.set(noteId, { id: noteId, status: 'failed', progress: 0, message: `发布失败: ${errMessage}` });
+    xhsProgressMap.set(noteId, { id: noteId, status: 'failed', progress: 0, message: `${actionLabel}失败: ${errMessage}` });
     
     return { success: false, error: errMessage };
   } finally {
@@ -1210,9 +1313,6 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
   }
 }
 
-/**
- * Global background watcher for Scheduled / Queue Xiaohongshu notes
- */
 let watcherInterval: NodeJS.Timeout | null = null;
 let watcherActive = false;
 

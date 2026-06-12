@@ -65,7 +65,33 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
     return { success: false, error: err };
   }
 
-  const isDraftTask = !!note.is_draft;
+  let isDraftTask = !!note.is_draft;
+
+  // 双重云校检逻辑：向主服务器主动验证最新的草稿设定，攻克客户由于运行旧版本 Worker 导致的 is_draft 数据遗漏或状态不齐！
+  try {
+    let serverUrl = "http://localhost:3000";
+    const configPath = path.join(process.cwd(), 'config.json');
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      if (config.SERVER_URL) {
+        serverUrl = config.SERVER_URL.replace(/\/$/, "");
+      }
+    }
+    console.log(`[XHS 发布] [双检逻辑] 正在向主服务器校验任务草稿状态: ${serverUrl}/api/worker/note-info/${noteId}`);
+    const noteInfoRes = await fetch(`${serverUrl}/api/worker/note-info/${noteId}`);
+    if (noteInfoRes.ok) {
+      const noteInfo = await noteInfoRes.json() as any;
+      if (noteInfo && noteInfo.is_draft !== undefined) {
+        isDraftTask = !!noteInfo.is_draft;
+        console.log(`[XHS 发布] [双检逻辑] 成功获取最新云端状态，is_draft = ${noteInfo.is_draft} (isDraftTask: ${isDraftTask})`);
+      }
+    } else {
+      console.warn(`[XHS 发布] [双检逻辑] 获取云端状态失败, HTTP: ${noteInfoRes.status}`);
+    }
+  } catch (e: any) {
+    console.warn(`[XHS 发布] [双检逻辑] 尝试向云端验证草稿状态出错 (不影响主进程):`, e.message || e);
+  }
+
   const actionLabel = isDraftTask ? '暂存离开' : '发布';
 
   // Intercept if user is bound to a worker computer!
