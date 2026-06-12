@@ -1377,14 +1377,251 @@ async function startServer() {
       const rows = db.prepare(query).all(...params) as any[];
       // The frontend expects an array of paths or objects. Since we are upgrading it, return objects.
       res.json(rows.map(row => ({
+        id: row.id,
         path: row.file_path.replace(/\\/g, '/'),
         userId: row.user_id,
         username: row.username,
-        createdAt: row.created_at
+        createdAt: row.created_at,
+        groupId: row.group_id
       })));
     } catch (err) {
       console.error('Failed to read images from DB:', err);
       res.status(500).json({ error: 'Failed to read images' });
+    }
+  });
+
+  // Get all custom asset groups (folders)
+  app.get('/api/groups', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    let query = 'SELECT * FROM asset_groups';
+    let params: any[] = [];
+    if (user.role !== 'admin') {
+      query += ' WHERE user_id = ?';
+      params.push(user.id);
+    }
+    query += ' ORDER BY created_at DESC';
+    try {
+      const rows = db.prepare(query).all(...params) as any[];
+      res.json(rows);
+    } catch (err) {
+      console.error('Failed to read groups from DB:', err);
+      res.status(500).json({ error: 'Failed to read groups' });
+    }
+  });
+
+  // Create a new custom group
+  app.post('/api/groups', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: '组名不能为空' });
+    }
+    try {
+      const stmt = db.prepare('INSERT INTO asset_groups (user_id, name) VALUES (?, ?)');
+      const result = stmt.run(user.id, name.trim());
+      res.json({ success: true, id: result.lastInsertRowid, user_id: user.id, name: name.trim() });
+    } catch (err) {
+      console.error('Failed to create group:', err);
+      res.status(500).json({ error: 'Failed to create group' });
+    }
+  });
+
+  // Move an asset to a custom group (or set to null, i.e. move out of any group)
+  app.post('/api/groups/move', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    const { filePath, groupId } = req.body;
+    if (!filePath) {
+      return res.status(400).json({ error: '缺少图片路径' });
+    }
+    // Normalize path to match DB representation
+    const dbPath1 = filePath.replace(/\//g, '\\');
+    const dbPath2 = filePath.replace(/\\/g, '/');
+    const parsedGroupId = groupId === null ? null : parseInt(groupId, 10);
+    try {
+      // Check if group belongs to user if not admin
+      if (parsedGroupId !== null && !isNaN(parsedGroupId) && user.role !== 'admin') {
+        const group = db.prepare('SELECT * FROM asset_groups WHERE id = ? AND user_id = ?').get(parsedGroupId, user.id);
+        if (!group) {
+          return res.status(403).json({ error: '无权操作此分组' });
+        }
+      }
+      
+      const stmt = db.prepare('UPDATE assets SET group_id = ? WHERE (file_path = ? OR file_path = ?) AND type = ?');
+      const result = stmt.run(parsedGroupId, dbPath1, dbPath2, 'image');
+      
+      res.json({ success: true, changes: result.changes });
+    } catch (err) {
+      console.error('Failed to move asset to group:', err);
+      res.status(500).json({ error: 'Failed to move asset to group' });
+    }
+  });
+
+  // Delete a group only if it's empty
+  app.delete('/api/groups/:id', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    const groupId = parseInt(req.params.id, 10);
+    if (isNaN(groupId)) {
+      return res.status(400).json({ error: '无效的分组ID' });
+    }
+    try {
+      // 1. Verify existence and ownership if user is not admin
+      const groupQuery = user.role === 'admin'
+        ? 'SELECT * FROM asset_groups WHERE id = ?'
+        : 'SELECT * FROM asset_groups WHERE id = ? AND user_id = ?';
+      const groupParams = user.role === 'admin' ? [groupId] : [groupId, user.id];
+      const group = db.prepare(groupQuery).get(...groupParams) as any;
+      if (!group) {
+        return res.status(404).json({ error: '分组未找到或无权操作' });
+      }
+
+      // 2. Check if group contains any images
+      const imagesInGroup = db.prepare('SELECT COUNT(*) as count FROM assets WHERE group_id = ?').get(groupId) as any;
+      if (imagesInGroup && imagesInGroup.count > 0) {
+        return res.status(400).json({ error: '该图组内存有图片，不支持删除。请先将图片移动至其他分组。' });
+      }
+
+      // 3. Delete group
+      db.prepare('DELETE FROM asset_groups WHERE id = ?').run(groupId);
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Failed to delete group:', err);
+      res.status(500).json({ error: 'Failed to delete group' });
+    }
+  });
+
+  // Batch download images as a zip
+  app.post('/api/images/batch-download', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    const { filePaths } = req.body;
+    
+    if (!filePaths || !Array.isArray(filePaths) || filePaths.length === 0) {
+      return res.status(400).json({ error: '请先选择需要下载的图片' });
+    }
+
+    try {
+      const zip = new AdmZip();
+      const addedNames = new Set<string>();
+
+      for (const filePath of filePaths) {
+        if (!filePath) continue;
+
+        // Security check: verify this user owns the asset or is an admin
+        let assetQuery = 'SELECT * FROM assets WHERE (file_path = ? OR file_path = ?) AND type = ?';
+        let assetParams = [filePath, filePath.replace(/\//g, '\\'), 'image'];
+        
+        if (user.role !== 'admin') {
+          assetQuery += ' AND user_id = ?';
+          assetParams.push(user.id);
+        }
+
+        const asset = db.prepare(assetQuery).get(...assetParams) as any;
+        if (!asset) {
+          // Skip unauthorized assets silently
+          continue;
+        }
+
+        // Locate absolute path on disk
+        let relativePath = filePath;
+        if (relativePath.startsWith('/')) {
+          relativePath = relativePath.substring(1);
+        }
+
+        let fullPath = '';
+        if (relativePath.startsWith('uploads/')) {
+          fullPath = path.join(__dirname, relativePath);
+        } else if (relativePath.startsWith('downloads/')) {
+          fullPath = path.join(__dirname, 'download', relativePath.substring('downloads/'.length));
+        } else if (relativePath.startsWith('download/')) {
+          fullPath = path.join(__dirname, relativePath);
+        } else {
+          const tryUploadPath = path.join(__dirname, 'uploads', relativePath);
+          if (fs.existsSync(tryUploadPath)) {
+            fullPath = tryUploadPath;
+          } else {
+            const tryDownloadPath = path.join(__dirname, 'download', relativePath);
+            if (fs.existsSync(tryDownloadPath)) {
+              fullPath = tryDownloadPath;
+            } else {
+              fullPath = path.join(__dirname, relativePath);
+            }
+          }
+        }
+
+        if (fs.existsSync(fullPath)) {
+          let fileName = path.basename(fullPath);
+          let baseName = fileName;
+          let ext = '';
+          const lastDot = fileName.lastIndexOf('.');
+          if (lastDot !== -1) {
+            baseName = fileName.substring(0, lastDot);
+            ext = fileName.substring(lastDot);
+          }
+
+          let counter = 1;
+          while (addedNames.has(fileName)) {
+            fileName = `${baseName}_${counter}${ext}`;
+            counter++;
+          }
+          addedNames.add(fileName);
+
+          zip.addLocalFile(fullPath, '', fileName);
+        }
+      }
+
+      if (addedNames.size === 0) {
+        return res.status(404).json({ error: '选中的图片在服务器上未找到，无法打包' });
+      }
+
+      const zipBuffer = zip.toBuffer();
+      
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename=images_batch_download_${Date.now()}.zip`);
+      res.setHeader('Content-Length', zipBuffer.length);
+      res.send(zipBuffer);
+
+    } catch (err: any) {
+      console.error('Batch download failed:', err);
+      res.status(500).json({ error: `批量打包下载失败: ${err.message || err}` });
+    }
+  });
+
+  // Batch move images to a group
+  app.post('/api/groups/batch-move', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    const { filePaths, groupId } = req.body;
+    
+    if (!filePaths || !Array.isArray(filePaths) || filePaths.length === 0) {
+      return res.status(400).json({ error: '未选择任何图片' });
+    }
+
+    const parsedGroupId = groupId === null ? null : parseInt(groupId, 10);
+    try {
+      if (parsedGroupId !== null && !isNaN(parsedGroupId) && user.role !== 'admin') {
+        const group = db.prepare('SELECT * FROM asset_groups WHERE id = ? AND user_id = ?').get(parsedGroupId, user.id);
+        if (!group) {
+          return res.status(403).json({ error: '无权操作此分组' });
+        }
+      }
+
+      const stmt = db.prepare('UPDATE assets SET group_id = ? WHERE (file_path = ? OR file_path = ?) AND type = ?' + (user.role === 'admin' ? '' : ' AND user_id = ?'));
+      
+      let updatedCount = 0;
+      db.transaction(() => {
+        for (const fp of filePaths) {
+          const dbPath1 = fp.replace(/\//g, '\\');
+          const dbPath2 = fp.replace(/\\/g, '/');
+          const params = user.role === 'admin' 
+            ? [parsedGroupId, dbPath1, dbPath2, 'image'] 
+            : [parsedGroupId, dbPath1, dbPath2, 'image', user.id];
+          const resInfo = stmt.run(...params);
+          updatedCount += resInfo.changes;
+        }
+      })();
+
+      res.json({ success: true, updatedCount });
+    } catch (err) {
+      console.error('Failed to batch move assets:', err);
+      res.status(500).json({ error: '批量移动图片失败' });
     }
   });
 

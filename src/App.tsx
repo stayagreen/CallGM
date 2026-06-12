@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -32,9 +32,11 @@ interface Job {
 }
 
 interface GalleryAsset {
+  id: number;
   path: string;
   userId: number;
   username: string;
+  groupId: number | null;
   createdAt?: string;
   jobId?: string;
   taskData?: VideoTask;
@@ -910,6 +912,13 @@ function MainApp() {
   const [showBatchDropdown, setShowBatchDropdown] = useState(false);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [galleryImages, setGalleryImages] = useState<GalleryAsset[]>([]);
+  const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
+  const [showBatchMoveMenu, setShowBatchMoveMenu] = useState(false);
+  const [assetGroups, setAssetGroups] = useState<any[]>([]);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [movingAssetPath, setMovingAssetPath] = useState<string | null>(null);
   const [videoGallery, setVideoGallery] = useState<GalleryAsset[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
@@ -1260,8 +1269,151 @@ function MainApp() {
     return () => clearInterval(interval);
   }, [activeTab, jobs, videoJobs]);
 
+  const fetchAssetGroups = async () => {
+    try {
+      const res = await fetch('/api/groups');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setAssetGroups(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch groups:', e);
+    }
+  };
+
+  const handleCreateGroup = async () => {
+    if (!newGroupName.trim()) return;
+    try {
+      const res = await fetch('/api/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newGroupName.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNewGroupName('');
+        setShowCreateGroupModal(false);
+        fetchGallery();
+      } else {
+        alert(data.error || '创建图组失败');
+      }
+    } catch (err) {
+      console.error('Failed to create group:', err);
+    }
+  };
+
+  const handleMoveToGroup = async (filePath: string, groupId: number | null) => {
+    try {
+      const res = await fetch('/api/groups/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath, groupId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setMovingAssetPath(null);
+        fetchGallery();
+      } else {
+        alert(data.error || '移动图片失败');
+      }
+    } catch (err) {
+      console.error('Failed to move image:', err);
+    }
+  };
+
+  const handleDeleteGroup = async (groupId: number) => {
+    const imagesInThisGroup = galleryImages.filter(img => img.groupId === groupId);
+    if (imagesInThisGroup.length > 0) {
+      alert('该图组内还存在图片，不支持删除，请先将图片移动至其他分组。');
+      return;
+    }
+    if (!window.confirm('确定要删除此图组吗？')) return;
+    try {
+      const res = await fetch(`/api/groups/${groupId}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchGallery();
+      } else {
+        alert(data.error || '删除图组失败');
+      }
+    } catch (err) {
+      console.error('Failed to delete group:', err);
+    }
+  };
+
+  const handleBatchDownload = async () => {
+    if (selectedImages.size === 0) return;
+    try {
+      const res = await fetch('/api/images/batch-download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePaths: Array.from(selectedImages) }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || '批量下载失败');
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `images_export_${Date.now()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to batch download images:', err);
+      alert('打包下载传输出现错误，请检查网络');
+    }
+  };
+
+  const handleBatchMoveToGroup = async (groupId: number | null) => {
+    if (selectedImages.size === 0) return;
+    try {
+      const res = await fetch('/api/groups/batch-move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePaths: Array.from(selectedImages), groupId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSelectedImages(new Set());
+        setShowBatchMoveMenu(false);
+        fetchGallery();
+      } else {
+        alert(data.error || '批量移动失败');
+      }
+    } catch (err) {
+      console.error('Failed to batch move:', err);
+    }
+  };
+
+  const handleBatchDeleteImages = async () => {
+    if (selectedImages.size === 0) return;
+    if (!window.confirm(`确定要彻底删除这 ${selectedImages.size} 张图片吗？此操作将从磁盘上安全抹除这些源文件且不可恢复。`)) return;
+    
+    try {
+      const paths = Array.from(selectedImages);
+      await Promise.all(paths.map(async (filename) => {
+        const strFilename = filename as string;
+        const encodedFilename = strFilename.split('/').map(encodeURIComponent).join('/');
+        await fetch(`/api/images/${encodedFilename}`, { method: 'DELETE' });
+      }));
+      setSelectedImages(new Set());
+      fetchGallery();
+    } catch (err) {
+      console.error('Failed to batch delete images:', err);
+      alert('部分图片删除失败，请刷新后再试');
+    }
+  };
+
   const fetchGallery = async () => {
     try {
+      fetchAssetGroups();
       const res = await fetch('/api/images');
       const data = await res.json();
       if (Array.isArray(data)) {
@@ -2422,6 +2574,12 @@ function MainApp() {
                   </div>
                 )}
               </div>
+              <button 
+                onClick={() => setShowCreateGroupModal(true)} 
+                className="px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition shadow-sm flex items-center gap-1.5"
+              >
+                <FolderPlus size={16} /> 新建图组
+              </button>
               <button onClick={fetchGallery} className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm">刷新图库</button>
             </div>
           </div>
@@ -2464,6 +2622,30 @@ function MainApp() {
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
                           <ImageIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                         </div>
+
+                        {/* Beautiful selection checkbox */}
+                        <div 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const next = new Set(selectedImages);
+                            if (next.has(img)) {
+                              next.delete(img);
+                            } else {
+                              next.add(img);
+                            }
+                            setSelectedImages(next);
+                          }}
+                          className={`absolute top-2 left-2 z-20 w-6 h-6 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
+                            selectedImages.has(img)
+                              ? 'bg-purple-600 border-purple-600 text-white scale-110 shadow-md shadow-purple-500/30 opacity-100'
+                              : 'bg-white/80 backdrop-blur-sm border-gray-300 hover:bg-white text-transparent opacity-0 group-hover:opacity-100 scale-95 hover:scale-100'
+                          }`}
+                        >
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </div>
+
                         {processingGalleryImages.has(img) && (
                           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center p-2 z-10">
                             <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-2"></div>
@@ -2474,9 +2656,14 @@ function MainApp() {
                       <div className="mt-3 px-1">
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img.split('/').pop()}</span>
-                          <div className="flex gap-1">
+                          <div className="flex gap-1 relative">
                             <button
-                              onClick={() => !processingGalleryImages.has(img) && setEditingGalleryImage({ filename: img, url: `/downloads/${img}?t=${galleryUpdateToken}` })}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!processingGalleryImages.has(img)) {
+                                  setEditingGalleryImage({ filename: img, url: `/downloads/${img}?t=${galleryUpdateToken}` });
+                                }
+                              }}
                               disabled={processingGalleryImages.has(img)}
                               className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-purple-500 hover:bg-purple-50'}`}
                               title="智能填充 (手动去水印)"
@@ -2484,15 +2671,68 @@ function MainApp() {
                               <Paintbrush className="w-4 h-4" />
                             </button>
                             <button
-                              onClick={() => !processingGalleryImages.has(img) && handleOneClickWatermark(img)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!processingGalleryImages.has(img)) {
+                                  handleOneClickWatermark(img);
+                                }
+                              }}
                               disabled={processingGalleryImages.has(img)}
                               className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
                               title="一键去水印"
                             >
                               <Scissors className="w-4 h-4" />
                             </button>
+                            
+                            {/* 移动至相册/图组菜单 */}
                             <button
-                              onClick={() => !processingGalleryImages.has(img) && deleteGalleryImage(img)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!processingGalleryImages.has(img)) {
+                                  setMovingAssetPath(movingAssetPath === img ? null : img);
+                                }
+                              }}
+                              disabled={processingGalleryImages.has(img)}
+                              className={`p-1.5 rounded-md transition-colors relative ${movingAssetPath === img ? 'text-purple-700 bg-purple-100' : 'text-amber-600 hover:bg-amber-50'}`}
+                              title="移动到图组"
+                            >
+                              <Folder className="w-4 h-4" />
+                              
+                              {movingAssetPath === img && (
+                                <div 
+                                  className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden py-1 text-left" 
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 border-b border-gray-100 uppercase bg-gray-50 flex items-center gap-1">
+                                    <Folder size={10} /> 移动至图组...
+                                  </div>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleMoveToGroup(img, null); }}
+                                    className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 ${!imgData.groupId ? 'text-purple-600 bg-purple-50 font-bold' : 'text-gray-600 hover:bg-purple-50'}`}
+                                  >
+                                    <Folder size={12} className={!imgData.groupId ? "text-purple-600" : "text-gray-400"} /> 未分组 (默认)
+                                  </button>
+                                  {assetGroups.map(grp => (
+                                    <button
+                                      key={grp.id}
+                                      onClick={(e) => { e.stopPropagation(); handleMoveToGroup(img, grp.id); }}
+                                      className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 truncate ${imgData.groupId === grp.id ? 'text-purple-600 bg-purple-50 font-bold' : 'text-gray-600 hover:bg-purple-50'}`}
+                                      title={grp.name}
+                                    >
+                                      <Folder size={12} className={imgData.groupId === grp.id ? "text-purple-600" : "text-gray-400"} /> {grp.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </button>
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!processingGalleryImages.has(img)) {
+                                  deleteGalleryImage(img);
+                                }
+                              }}
                               disabled={processingGalleryImages.has(img)}
                               className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-red-500 hover:bg-red-50'}`}
                               title="彻底删除源文件"
@@ -2502,12 +2742,19 @@ function MainApp() {
                           </div>
                         </div>
                         {imgData.createdAt && (
-                          <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-400 font-medium">
-                            <Clock size={10} />
-                            {(() => {
-                              const d = new Date(imgData.createdAt.endsWith('Z') ? imgData.createdAt : imgData.createdAt.replace(' ', 'T') + 'Z');
-                              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                            })()}
+                          <div className="flex items-center justify-between gap-1 mt-1 text-[10px] text-gray-400 font-medium">
+                            <div className="flex items-center gap-1">
+                              <Clock size={10} />
+                              {(() => {
+                                const d = new Date(imgData.createdAt.endsWith('Z') ? imgData.createdAt : imgData.createdAt.replace(' ', 'T') + 'Z');
+                                return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                              })()}
+                            </div>
+                            {user?.role === 'admin' && imgData.username && (
+                              <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">
+                                👤 {imgData.username}
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -2515,29 +2762,102 @@ function MainApp() {
                   );
                 };
 
-                return user?.role === 'admin' ? (
-                  Object.entries(groupByUser(galleryImages)).map(([uname, imgs]) => (
-                    <div key={uname} className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden mb-4">
-                      <div 
-                        onClick={() => toggleUserExpand(uname + '_gallery')}
-                        className="bg-gray-50 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-200 hover:bg-gray-100 transition"
-                      >
-                        <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                          <span>👤 {uname}</span>
-                          <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full font-bold">{imgs.length} 张图片</span>
-                        </h3>
-                        {expandedUsers.has(uname + '_gallery') ? <ChevronUp size={20} className="text-gray-500" /> : <ChevronDown size={20} className="text-gray-500" />}
-                      </div>
-                      {expandedUsers.has(uname + '_gallery') && (
-                        <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 bg-gray-50/50">
-                          {imgs.map(renderGalleryItem)}
+                return (
+                  <div className="flex flex-col gap-6 w-full">
+                    {/* 1. Custom groups */}
+                    {assetGroups.map(grp => {
+                      const grpImages = galleryImages.filter(img => img.groupId === grp.id);
+                      const isCollapsed = collapsedGroups.has(grp.id);
+                      
+                      return (
+                        <div key={grp.id} className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                          {/* Group Header */}
+                          <div 
+                            onClick={() => {
+                              const newSet = new Set(collapsedGroups);
+                              if (newSet.has(grp.id)) {
+                                newSet.delete(grp.id);
+                              } else {
+                                newSet.add(grp.id);
+                              }
+                              setCollapsedGroups(newSet);
+                            }}
+                            className="bg-purple-50/40 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-100 hover:bg-purple-50/70 transition"
+                          >
+                            <div className="flex items-center gap-3">
+                              <Folder className="w-5 h-5 text-purple-600" />
+                              <span className="text-base font-bold text-gray-800">{grp.name}</span>
+                              <span className="bg-purple-100 text-purple-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">{grpImages.length} 张图片</span>
+                            </div>
+                            
+                            <div className="flex items-center gap-4" onClick={e => e.stopPropagation()}>
+                              <button
+                                onClick={() => handleDeleteGroup(grp.id)}
+                                disabled={grpImages.length > 0}
+                                className={`p-1.5 rounded-md transition-colors ${grpImages.length > 0 ? 'text-gray-400 opacity-40 cursor-not-allowed' : 'text-red-500 hover:bg-red-50'}`}
+                                title={grpImages.length > 0 ? '图组存在图片时不支持删除' : '删除图组'}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                              <div 
+                                onClick={() => {
+                                  const newSet = new Set(collapsedGroups);
+                                  if (newSet.has(grp.id)) {
+                                    newSet.delete(grp.id);
+                                  } else {
+                                    newSet.add(grp.id);
+                                  }
+                                  setCollapsedGroups(newSet);
+                                }}
+                                className="text-gray-400 hover:text-gray-600"
+                              >
+                                {isCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Group Body */}
+                          {!isCollapsed && (
+                            <div className="p-4 bg-gray-50/30">
+                              {grpImages.length === 0 ? (
+                                <div className="text-center py-8 text-gray-400 text-xs flex flex-col items-center justify-center gap-1">
+                                  <Folder className="w-8 h-8 text-gray-200 animate-pulse" />
+                                  <span>当前图组暂无图片，点击未分组图片的文件夹图标可移至此组</span>
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                  {grpImages.map(renderGalleryItem)}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                      )}
+                      );
+                    })}
+
+                    {/* 2. Unassigned default gallery */}
+                    <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                      <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-b border-gray-100">
+                        <div className="flex items-center gap-3">
+                          <ImageIcon className="w-5 h-5 text-blue-600" />
+                          <span className="text-base font-bold text-gray-800">未分组图片</span>
+                          <span className="bg-gray-100 text-gray-600 text-xs px-2.5 py-0.5 rounded-full font-semibold">
+                            {galleryImages.filter(img => !img.groupId).length} 张图片
+                          </span>
+                        </div>
+                      </div>
+                      <div className="p-4 bg-gray-50/10">
+                        {galleryImages.filter(img => !img.groupId).length === 0 ? (
+                          <div className="text-center py-12 text-gray-400 text-sm">
+                            各张图片均已划分至相对应的图组相册中
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                            {galleryImages.filter(img => !img.groupId).map(renderGalleryItem)}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  ))
-                ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                    {galleryImages.map(renderGalleryItem)}
                   </div>
                 );
               })()}
@@ -4424,6 +4744,148 @@ function MainApp() {
                 {xhsPublishProgress?.status === 'publishing' ? '后台静默发布中...' : '关闭弹窗'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showCreateGroupModal && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[1000]">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-gray-100 p-6 animate-scale-in">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-gray-950 flex items-center gap-2">
+                <FolderPlus className="text-purple-600 w-5 h-5" />
+                新建图片分组目录
+              </h3>
+              <button 
+                onClick={() => setShowCreateGroupModal(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-50 transition"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">中文图组名称</label>
+                <input 
+                  type="text"
+                  placeholder="如：工作日常、产品图库..."
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateGroup();
+                  }}
+                  autoFocus
+                />
+              </div>
+              
+              <div className="flex gap-3 justify-end pt-2">
+                <button 
+                  onClick={() => setShowCreateGroupModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 border border-gray-200 rounded-lg transition"
+                >
+                  取消
+                </button>
+                <button 
+                  onClick={handleCreateGroup}
+                  disabled={!newGroupName.trim()}
+                  className="px-5 py-2 text-xs font-bold text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-purple-100"
+                >
+                  创建并保存
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 批量操作浮动状态栏 */}
+      {selectedImages.size > 0 && (
+        <div className="fixed bottom-6 left-6 right-6 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[100] bg-gray-950/95 backdrop-blur-md text-white px-5 py-3.5 rounded-2xl shadow-2xl border border-gray-800 flex flex-wrap items-center justify-between gap-4 max-w-4xl w-[calc(100%-3rem)] md:w-max md:min-w-[700px] animate-fade-in">
+          <div className="flex items-center gap-3">
+            <span className="bg-purple-600 text-white font-bold text-xs px-2.5 py-1 rounded-full animate-pulse">
+              已选 {selectedImages.size}
+            </span>
+            <span className="text-xs font-semibold text-gray-300">项资源已选中</span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => {
+                const allCurrentPaths = galleryImages.map(img => img.path);
+                if (selectedImages.size === galleryImages.length) {
+                  setSelectedImages(new Set());
+                } else {
+                  setSelectedImages(new Set(allCurrentPaths));
+                }
+              }}
+              className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 transition rounded-lg text-xs font-semibold"
+            >
+              {selectedImages.size === galleryImages.length ? '取消全选' : '选择全部'}
+            </button>
+
+            <button
+              onClick={handleBatchDownload}
+              className="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 transition rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-purple-950/40"
+            >
+              <Download size={14} /> 批量打包下载 (.zip)
+            </button>
+
+            {/* 批量移动下拉菜单 */}
+            <div className="relative">
+              <button
+                onClick={() => setShowBatchMoveMenu(!showBatchMoveMenu)}
+                className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-amber-300 transition rounded-lg text-xs font-semibold flex items-center gap-1"
+              >
+                <Folder size={14} /> 批量移动
+                <ChevronUp size={12} className={`transition-transform duration-200 ${showBatchMoveMenu ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showBatchMoveMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowBatchMoveMenu(false)} />
+                  <div className="absolute bottom-full right-0 mb-3 w-52 bg-gray-900 rounded-xl shadow-2xl border border-gray-800 z-50 overflow-hidden py-1 text-left">
+                    <div className="px-3 py-1.5 text-[9px] font-bold text-gray-400 border-b border-gray-800 uppercase flex items-center gap-1 bg-gray-950/50">
+                      <Folder size={10} /> 批量归档至此组...
+                    </div>
+                    <button
+                      onClick={() => handleBatchMoveToGroup(null)}
+                      className="w-full text-left px-3 py-2 text-xs font-medium text-gray-200 hover:bg-gray-800 transition flex items-center gap-1.5"
+                    >
+                      <Folder size={12} className="text-gray-400" /> 未分组 (默认)
+                    </button>
+                    {assetGroups.map(grp => (
+                      <button
+                        key={grp.id}
+                        onClick={() => handleBatchMoveToGroup(grp.id)}
+                        className="w-full text-left px-3 py-2 text-xs font-medium text-gray-200 hover:bg-gray-800 transition flex items-center gap-1.5 truncate"
+                        title={grp.name}
+                      >
+                        <Folder size={12} className="text-purple-400" /> {grp.name}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button
+              onClick={handleBatchDeleteImages}
+              className="px-3 py-1.5 bg-red-600/90 hover:bg-red-600 transition rounded-lg text-xs font-bold flex items-center gap-1.5"
+              title="一键彻底清空已选资源"
+            >
+              <Trash2 size={14} /> 批量彻底删除
+            </button>
+
+            <div className="w-[1px] h-4 bg-gray-800 mx-1"></div>
+
+            <button
+              onClick={() => setSelectedImages(new Set())}
+              className="px-2.5 py-1.5 text-gray-400 hover:text-white transition text-xs font-semibold"
+            >
+              取消
+            </button>
           </div>
         </div>
       )}

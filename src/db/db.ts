@@ -85,6 +85,14 @@ db.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS asset_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
 `);
 
 // Bootstrap initial config
@@ -112,6 +120,7 @@ try { db.exec('ALTER TABLE system_config ADD COLUMN updated_at DATETIME DEFAULT 
 try { db.exec('ALTER TABLE users ADD COLUMN xhs_homepage_url TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE users ADD COLUMN bound_worker_id TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE xhs_notes ADD COLUMN is_draft INTEGER DEFAULT 0;'); } catch (e) {}
+try { db.exec('ALTER TABLE assets ADD COLUMN group_id INTEGER;'); } catch (e) {}
 try {
   db.exec(`
     CREATE TABLE IF NOT EXISTS xhs_notes (
