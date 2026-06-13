@@ -100,7 +100,7 @@ async function startServer() {
         if (!worker) {
           return res.status(400).json({ error: '所选择的设备不存在，请刷新重试。' });
         }
-        if (worker.status !== 'online') {
+        if (worker.status === 'offline') {
           return res.status(400).json({ error: '普通用户只能绑定当前在线的设备，该设备目前处于离线状态。' });
         }
       }

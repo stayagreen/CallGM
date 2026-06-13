@@ -3906,7 +3906,7 @@ function MainApp() {
                   ) : (
                     <>
                       <option value="" disabled>-- 请选择一个当前在线的本地电脑 / 虚拟机 --</option>
-                      {availableWorkers.filter(w => w.status === 'online' && w.id !== 'local-server-id').map(w => (
+                      {availableWorkers.filter(w => w.status !== 'offline' && w.id !== 'local-server-id').map(w => (
                         <option key={w.id} value={w.id}>
                           {w.name} (在线)
                         </option>
