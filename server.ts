@@ -17,7 +17,13 @@ import { createServer } from "http";
 
 declare module 'express-session' {
   interface SessionData {
-    user: { id: number; username: string; role: string };
+    user: { 
+      id: number; 
+      username: string; 
+      role: string;
+      xhs_homepage_url?: string;
+      bound_worker_id?: string;
+    };
   }
 }
 
@@ -81,7 +87,24 @@ async function startServer() {
   app.post('/api/user/profile', requireAuth, (req: any, res) => {
     const { xhsHomepageUrl, boundWorkerId } = req.body;
     const userId = req.session.user.id;
+    const userRole = req.session.user.role;
     try {
+      if (userRole !== 'admin') {
+        if (!boundWorkerId) {
+          return res.status(400).json({ error: '普通用户必须绑定一台在线的本地设备，不能取消绑定或设置为不绑定！' });
+        }
+        if (boundWorkerId === 'local-server-id') {
+          return res.status(400).json({ error: '普通用户不能绑定内置的服务器本地(Local Server)节点，必须绑定您当前在线的本地电脑或虚拟机！' });
+        }
+        const worker = db.prepare('SELECT status FROM workers WHERE id = ?').get(boundWorkerId) as any;
+        if (!worker) {
+          return res.status(400).json({ error: '所选择的设备不存在，请刷新重试。' });
+        }
+        if (worker.status !== 'online') {
+          return res.status(400).json({ error: '普通用户只能绑定当前在线的设备，该设备目前处于离线状态。' });
+        }
+      }
+
       db.prepare('UPDATE users SET xhs_homepage_url = ?, bound_worker_id = ? WHERE id = ?').run(xhsHomepageUrl || '', boundWorkerId || '', userId);
       if (req.session.user) {
         req.session.user.xhs_homepage_url = xhsHomepageUrl || '';
@@ -97,7 +120,13 @@ async function startServer() {
     const { username, password, remember } = req.body;
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
     if (user && await bcrypt.compare(password, user.password)) {
-      req.session.user = { id: user.id, username: user.username, role: user.role };
+      req.session.user = { 
+        id: user.id, 
+        username: user.username, 
+        role: user.role,
+        xhs_homepage_url: user.xhs_homepage_url || '',
+        bound_worker_id: user.bound_worker_id || ''
+      };
       
       if (remember) {
         // Session lasts 30 days if remembered

@@ -1009,6 +1009,16 @@ function MainApp() {
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (user?.role !== 'admin') {
+      if (!personalBoundWorkerId) {
+        alert('普通用户必须绑定一台当前在线的本地电脑 / 虚拟机，无法选择“不绑定”！');
+        return;
+      }
+      if (personalBoundWorkerId === 'local-server-id') {
+        alert('普通用户不能绑定内置的服务器本地(Local Server)节点，请选择您的本地在线电脑 / 虚拟机！');
+        return;
+      }
+    }
     try {
       setIsSavingProfile(true);
       const res = await fetch('/api/user/profile', {
@@ -3882,16 +3892,40 @@ function MainApp() {
                   value={personalBoundWorkerId}
                   onChange={e => setPersonalBoundWorkerId(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none text-sm transition bg-white"
+                  required={user?.role !== 'admin'}
                 >
-                  <option value="">- 不绑定电脑 (默认：服务器本地或动态匹配任意在线节点) -</option>
-                  {availableWorkers.map(w => (
-                    <option key={w.id} value={w.id}>
-                      {w.name} ({w.status === 'offline' ? '离线' : '在线'})
-                    </option>
-                  ))}
+                  {user?.role === 'admin' ? (
+                    <>
+                      <option value="">- 不绑定电脑 (默认：服务器本地或动态匹配任意在线节点) -</option>
+                      {availableWorkers.map(w => (
+                        <option key={w.id} value={w.id}>
+                          {w.name} ({w.status === 'offline' ? '离线' : '在线'})
+                        </option>
+                      ))}
+                    </>
+                  ) : (
+                    <>
+                      <option value="" disabled>-- 请选择一个当前在线的本地电脑 / 虚拟机 --</option>
+                      {availableWorkers.filter(w => w.status === 'online' && w.id !== 'local-server-id').map(w => (
+                        <option key={w.id} value={w.id}>
+                          {w.name} (在线)
+                        </option>
+                      ))}
+                      {availableWorkers.filter(w => w.status === 'offline' && w.id === user?.bound_worker_id && w.id !== 'local-server-id').map(w => (
+                        <option key={w.id} value={w.id} disabled>
+                          {w.name} (当前绑定制，但处于离线)
+                        </option>
+                      ))}
+                    </>
+                  )}
                 </select>
                 <p className="text-[11px] text-gray-400 mt-1.5 border-b pb-3 border-gray-100">
                   ※ 多账号隔离防封号：绑定后，本账号产生的<b>生图任务/文案生成</b>与<b>小红书自动/遥控发布</b>命令，将精准定向发送给您的这台本地设备，在您本地的 Chrome 浏览器及 CDP 端口中真实操作，完全符合防风控 and 单人单机需求。
+                  {user?.role !== 'admin' && (
+                    <span className="block text-red-500 font-semibold mt-1">
+                      ⚠️ 提示：普通用户不能设置“不绑定”或“服务器本地”，必须绑定任一在线的本地 Worker 设备。
+                    </span>
+                  )}
                 </p>
               </div>
 
