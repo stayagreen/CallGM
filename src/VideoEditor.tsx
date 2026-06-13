@@ -110,7 +110,7 @@ export default function VideoEditor({
 
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
-  const [galleryMode, setGalleryMode] = useState<'normal' | '4grid' | 'cover'>('normal');
+  const [galleryMode, setGalleryMode] = useState<'normal' | '4grid' | 'cover' | 'multi_raw'>('normal');
   const [selectedGalleryGrids, setSelectedGalleryGrids] = useState<string[]>([]);
   const [activeStoryboardId, setActiveStoryboardId] = useState<string | null>(null);
   const [activeStoryboardIndex, setActiveStoryboardIndex] = useState(0);
@@ -568,10 +568,22 @@ export default function VideoEditor({
                       setGalleryMode('4grid');
                       setShowGallery(true);
                       setShowAddMenu(false);
+                      setSelectedGalleryGrids([]);
+                    }} 
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium border-b border-gray-50"
+                  >
+                    <Grid size={16}/> 从图库选择4宫格
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setGalleryMode('multi_raw');
+                      setShowGallery(true);
+                      setShowAddMenu(false);
+                      setSelectedGalleryGrids([]);
                     }} 
                     className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium"
                   >
-                    <ImageIcon size={16}/> 从图库选择4宫格
+                    <ImageIcon size={16}/> 从图库多选导入
                   </button>
                 </div>
               )}
@@ -864,7 +876,9 @@ export default function VideoEditor({
             )}
             
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold">从本地图库选择 {galleryMode === '4grid' ? '(4宫格)' : ''}</h2>
+              <h2 className="text-xl font-bold">
+                {galleryMode === '4grid' ? '从本地图库选择 (4宫格)' : galleryMode === 'multi_raw' ? '从本地图库选择 (多选不分割)' : '从本地图库选择'}
+              </h2>
               <button disabled={isProcessingGrid} onClick={() => setShowGallery(false)} className="text-gray-400 hover:text-gray-600 disabled:opacity-50"><X size={24}/></button>
             </div>
             <div className="flex-grow overflow-y-auto mb-6 pr-2">
@@ -883,7 +897,7 @@ export default function VideoEditor({
                     onClick={() => {
                       if (isProcessingGrid) return;
                       
-                      if (galleryMode === '4grid') {
+                      if (galleryMode === '4grid' || galleryMode === 'multi_raw') {
                         setSelectedGalleryGrids(prev => 
                           prev.includes(img) ? prev.filter(p => p !== img) : [...prev, img]
                         );
@@ -914,7 +928,7 @@ export default function VideoEditor({
                         setShowGallery(false);
                       }
                     }}
-                    className={`relative aspect-square rounded-lg overflow-hidden border-4 cursor-pointer transition-all ${galleryMode === '4grid' && selectedGalleryGrids.includes(img) ? 'border-blue-500 shadow-md' : 'border-gray-200 hover:border-blue-300'}`}
+                    className={`relative aspect-square rounded-lg overflow-hidden border-4 cursor-pointer transition-all ${(galleryMode === '4grid' || galleryMode === 'multi_raw') && selectedGalleryGrids.includes(img) ? 'border-blue-500 shadow-md' : 'border-gray-200 hover:border-blue-300'}`}
                   >
                     <img 
                       src={`/api/thumbnails/${img.startsWith('uploads/') ? 'uploads' : 'downloads'}/${img.replace(/^uploads\//, '')}${galleryUpdateToken ? `?t=${galleryUpdateToken}` : ''}`} 
@@ -922,7 +936,7 @@ export default function VideoEditor({
                       loading="lazy" 
                       onError={(e) => { e.currentTarget.style.display = 'none'; }}
                     />
-                    {galleryMode === '4grid' && selectedGalleryGrids.includes(img) && (
+                    {(galleryMode === '4grid' || galleryMode === 'multi_raw') && selectedGalleryGrids.includes(img) && (
                       <div className="absolute top-2 right-2 w-6 h-6 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold shadow-sm border-2 border-white">
                         <CheckCircle2 size={14} />
                       </div>
@@ -940,6 +954,24 @@ export default function VideoEditor({
                   className="px-6 py-2.5 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
                 >
                   确认选择并切割 ({selectedGalleryGrids.length})
+                </button>
+              </div>
+            )}
+            {galleryMode === 'multi_raw' && selectedGalleryGrids.length > 0 && (
+              <div className="pt-4 border-t border-gray-100 flex justify-end">
+                <button
+                  onClick={() => {
+                    const mappedUrls = selectedGalleryGrids.map(img => {
+                      return img.startsWith('uploads/') ? `/${img}` : `/downloads/${img}`;
+                    });
+                    setSplitImages(mappedUrls);
+                    setSelectedSplitIndices([]);
+                    setShowGallery(false);
+                    setSelectedGalleryGrids([]);
+                  }}
+                  className="px-6 py-2.5 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  确认并选择导入顺序 ({selectedGalleryGrids.length})
                 </button>
               </div>
             )}
