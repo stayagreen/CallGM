@@ -297,6 +297,28 @@ export default function VideoEditor({
     setShowAddMenu(false);
   };
 
+  const handleMultiImageRawUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const processFile = (file: File): Promise<string> => {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          resolve(event.target?.result as string);
+        };
+        reader.readAsDataURL(file);
+      });
+    };
+
+    Promise.all(files.map(processFile)).then(results => {
+      setSplitImages(results);
+      setSelectedSplitIndices([]);
+    });
+
+    setShowAddMenu(false);
+  };
+
   const applyToAll = (field: keyof Storyboard, value: any) => {
     updateTask({
       storyboards: task.storyboards.map(sb => ({ ...sb, [field]: value }))
@@ -562,6 +584,10 @@ export default function VideoEditor({
                   <label className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium cursor-pointer border-b border-gray-50">
                     <Grid size={16}/> 导入并4宫格分割
                     <input type="file" accept="image/*" multiple className="hidden" onChange={handle4GridSplit} />
+                  </label>
+                  <label className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium cursor-pointer border-b border-gray-50">
+                    <ImageIcon size={16}/> 多选图片导入
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={handleMultiImageRawUpload} />
                   </label>
                   <button 
                     onClick={() => {
@@ -986,6 +1012,29 @@ export default function VideoEditor({
             <div className="p-4 border-b border-gray-100 flex justify-between items-center">
               <h3 className="font-bold text-lg">选择导入的分镜及顺序</h3>
               <button onClick={() => { setSplitImages([]); setSelectedSplitIndices([]); }} className="p-2 text-gray-400 hover:text-gray-600"><X size={20}/></button>
+            </div>
+            <div className="px-6 py-2 border-b border-gray-100 bg-gray-50/50 flex gap-2 items-center text-xs">
+              <button 
+                onClick={() => {
+                  setSelectedSplitIndices(Array.from({ length: splitImages.length }, (_, i) => i));
+                }}
+                className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg font-semibold text-gray-700 transition cursor-pointer"
+                type="button"
+              >
+                全部选中 (默认顺序)
+              </button>
+              <button 
+                onClick={() => {
+                  setSelectedSplitIndices([]);
+                }}
+                className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg font-semibold text-gray-600 transition cursor-pointer"
+                type="button"
+              >
+                重置/清除选择
+              </button>
+              <span className="text-gray-400 font-medium ml-auto">
+                已选中 {selectedSplitIndices.length} / {splitImages.length} 个文件
+              </span>
             </div>
             <div className="flex-grow overflow-auto p-6 bg-gray-50">
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">

@@ -90,18 +90,24 @@ async function startServer() {
     const userRole = req.session.user.role;
     try {
       if (userRole !== 'admin') {
-        if (!boundWorkerId) {
-          return res.status(400).json({ error: '普通用户必须绑定一台在线的本地设备，不能取消绑定或设置为不绑定！' });
-        }
-        if (boundWorkerId === 'local-server-id') {
-          return res.status(400).json({ error: '普通用户不能绑定内置的服务器本地(Local Server)节点，必须绑定您当前在线的本地电脑或虚拟机！' });
-        }
-        const worker = db.prepare('SELECT status FROM workers WHERE id = ?').get(boundWorkerId) as any;
-        if (!worker) {
-          return res.status(400).json({ error: '所选择的设备不存在，请刷新重试。' });
-        }
-        if (worker.status === 'offline') {
-          return res.status(400).json({ error: '普通用户只能绑定当前在线的设备，该设备目前处于离线状态。' });
+        const currentUser = db.prepare('SELECT bound_worker_id FROM users WHERE id = ?').get(userId) as any;
+        const currentBoundId = currentUser ? (currentUser.bound_worker_id || '') : '';
+
+        // Only enforce strict validation if the user is changing their bound worker
+        if (boundWorkerId !== currentBoundId) {
+          if (!boundWorkerId) {
+            return res.status(400).json({ error: '普通用户必须绑定一台在线的本地设备，不能取消绑定或设置为不绑定！' });
+          }
+          if (boundWorkerId === 'local-server-id') {
+            return res.status(400).json({ error: '普通用户不能绑定内置的服务器本地(Local Server)节点，必须绑定您当前在线的本地电脑或虚拟机！' });
+          }
+          const worker = db.prepare('SELECT status FROM workers WHERE id = ?').get(boundWorkerId) as any;
+          if (!worker) {
+            return res.status(400).json({ error: '所选择的设备不存在，请刷新重试。' });
+          }
+          if (worker.status === 'offline') {
+            return res.status(400).json({ error: '普通用户只能绑定当前在线的设备，该设备目前处于离线状态。' });
+          }
         }
       }
 
@@ -109,6 +115,7 @@ async function startServer() {
       if (req.session.user) {
         req.session.user.xhs_homepage_url = xhsHomepageUrl || '';
         req.session.user.bound_worker_id = boundWorkerId || '';
+        req.session.save();
       }
       res.json({ success: true, xhsHomepageUrl, boundWorkerId });
     } catch (e: any) {
@@ -212,22 +219,8 @@ async function startServer() {
   // Worker Management Routes (Admin Only)
   app.get('/api/workers', requireAuth, (req: any, res) => {
     try {
-      let workers;
-      if (req.session.user && req.session.user.role === 'admin') {
-        workers = db.prepare('SELECT id, name, status, last_seen, concurrency, capabilities FROM workers').all();
-      } else {
-        const userId = req.session.user.id;
-        const user = db.prepare('SELECT bound_worker_id FROM users WHERE id = ?').get(userId) as any;
-        const bound_worker_id = user ? (user.bound_worker_id || '') : '';
-        
-        workers = db.prepare(`
-          SELECT id, name, status, last_seen, concurrency, capabilities 
-          FROM workers 
-          WHERE id = ? OR id NOT IN (
-            SELECT DISTINCT bound_worker_id FROM users WHERE bound_worker_id IS NOT NULL AND bound_worker_id != ''
-          )
-        `).all(bound_worker_id);
-      }
+      // Return ALL workers for all authenticated users so they are visible in personal settings
+      const workers = db.prepare('SELECT id, name, status, last_seen, concurrency, capabilities FROM workers').all();
       res.json(workers);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
