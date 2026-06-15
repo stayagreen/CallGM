@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -915,6 +915,31 @@ function MainApp() {
   const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
   const [showBatchMoveMenu, setShowBatchMoveMenu] = useState(false);
   const [assetGroups, setAssetGroups] = useState<any[]>([]);
+  const [selectedGroupFilterIds, setSelectedGroupFilterIds] = useState<number[]>([]);
+  const [groupFilterSearch, setGroupFilterSearch] = useState('');
+  const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
+  const knownGroupIdsRef = useRef<Set<number>>(new Set());
+
+  // Auto-select newly created groups and initialize on first load
+  useEffect(() => {
+    if (assetGroups.length > 0) {
+      setSelectedGroupFilterIds(prev => {
+        const next = [...prev];
+        let changed = false;
+        assetGroups.forEach(g => {
+          if (!knownGroupIdsRef.current.has(g.id)) {
+            knownGroupIdsRef.current.add(g.id);
+            if (!next.includes(g.id)) {
+              next.push(g.id);
+              changed = true;
+            }
+          }
+        });
+        return changed ? next : prev;
+      });
+    }
+  }, [assetGroups]);
+
   const [expandedGroups, setExpandedGroups] = useState<Set<number | 'unassigned'>>(new Set());
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
@@ -1180,10 +1205,13 @@ function MainApp() {
       if (showGalleryUploadMenu && !(event.target as HTMLElement).closest('.gallery-upload-container')) {
         setShowGalleryUploadMenu(false);
       }
+      if (isGroupDropdownOpen && !(event.target as HTMLElement).closest('.group-filter-container')) {
+        setIsGroupDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showUploadMenu]);
+  }, [showUploadMenu, showGalleryUploadMenu, isGroupDropdownOpen]);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -2662,6 +2690,166 @@ function MainApp() {
             </div>
           </div>
           
+          {/* Searchable Multi-Select Dropdown for Image Groups */}
+          <div className="bg-white border border-gray-150 rounded-2xl p-5 shadow-sm space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="text-sm font-bold text-gray-800 flex items-center gap-1.5 select-none">
+                <Folder className="w-4 h-4 text-purple-600" /> 展示分类图组范围过滤
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allIds = assetGroups.map(g => g.id);
+                    setSelectedGroupFilterIds(allIds);
+                    // Also expand them
+                    const newSet = new Set(expandedGroups);
+                    allIds.forEach(id => newSet.add(id));
+                    setExpandedGroups(newSet);
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 transition cursor-pointer select-none"
+                >
+                  全部展示
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedGroupFilterIds([])}
+                  className="px-2.5 py-1 text-xs font-semibold bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition cursor-pointer select-none"
+                >
+                  全部隐藏
+                </button>
+              </div>
+            </div>
+
+            <div className="relative w-full group-filter-container">
+              {/* Trigger Button / Display selected tags */}
+              <div
+                onClick={() => setIsGroupDropdownOpen(!isGroupDropdownOpen)}
+                className="w-full min-h-[44px] bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 cursor-pointer flex items-center justify-between transition hover:bg-gray-100/50 hover:border-gray-300"
+              >
+                <div className="flex flex-wrap gap-1.5 max-w-[90%] items-center">
+                  {selectedGroupFilterIds.length === 0 ? (
+                    <span className="text-xs text-gray-400 font-medium select-none flex items-center gap-1.5 py-1">
+                      <FolderPlus className="w-3.5 h-3.5 text-gray-400 animate-bounce" /> 
+                      点击在此选择想要显示的图组相册列表...（未选中任何其它图组，仅展示未分组图片）
+                    </span>
+                  ) : (
+                    selectedGroupFilterIds.map(id => {
+                      const grp = assetGroups.find(g => g.id === id);
+                      if (!grp) return null;
+                      const count = galleryImages.filter(img => img.groupId === id).length;
+                      return (
+                        <span 
+                          key={id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedGroupFilterIds(prev => prev.filter(x => x !== id));
+                          }}
+                          className="inline-flex items-center gap-1.5 bg-purple-50 text-purple-700 text-xs font-bold px-2.5 py-1 rounded-full border border-purple-100 hover:bg-red-50 hover:text-red-700 hover:border-red-100 transition-all cursor-pointer group"
+                          title="点击快速移除此图组"
+                        >
+                          <Folder className="w-3.5 h-3.5 text-purple-500 group-hover:text-red-500" />
+                          <span>{grp.name} ({count} 张)</span>
+                          <X className="w-3 h-3 text-purple-400 group-hover:text-red-500 transition text-center" />
+                        </span>
+                      );
+                    })
+                  )}
+                </div>
+                <div className="text-gray-400 shrink-0">
+                  {isGroupDropdownOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </div>
+              </div>
+
+              {/* Dropdown Menu */}
+              {isGroupDropdownOpen && (
+                <div className="absolute left-0 right-0 mt-1.5 bg-white rounded-xl shadow-2xl border border-gray-150 z-[1000] overflow-hidden py-1">
+                  {/* Search inside Dropdown */}
+                  <div className="px-3 pb-2 pt-2 border-b border-gray-100 flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="检索图组名称..."
+                        value={groupFilterSearch}
+                        onChange={(e) => setGroupFilterSearch(e.target.value)}
+                        className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500/25 transition"
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </div>
+                    {groupFilterSearch && (
+                      <button 
+                        type="button" 
+                        onClick={(e) => { e.stopPropagation(); setGroupFilterSearch(''); }}
+                        className="text-xs text-purple-600 hover:text-purple-800 font-bold px-2 py-1 hover:bg-purple-50 rounded"
+                      >
+                        清除检索
+                      </button>
+                    )}
+                  </div>
+
+                  {/* List of groups */}
+                  <div className="max-h-60 overflow-y-auto pt-1 bg-white">
+                    {(() => {
+                      const filtered = assetGroups.filter(grp => 
+                        grp.name.toLowerCase().includes(groupFilterSearch.toLowerCase())
+                      );
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div className="text-center py-6 text-gray-400 text-xs font-medium select-none">
+                            没有找到匹配的图组
+                          </div>
+                        );
+                      }
+
+                      return filtered.map(grp => {
+                        const isChecked = selectedGroupFilterIds.includes(grp.id);
+                        const count = galleryImages.filter(img => img.groupId === grp.id).length;
+                        return (
+                          <div
+                            key={grp.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (isChecked) {
+                                setSelectedGroupFilterIds(prev => prev.filter(x => x !== grp.id));
+                              } else {
+                                setSelectedGroupFilterIds(prev => [...prev, grp.id]);
+                                // Auto expand it so they see it
+                                const newSet = new Set(expandedGroups);
+                                newSet.add(grp.id);
+                                setExpandedGroups(newSet);
+                              }
+                            }}
+                            className={`px-4 py-2.5 flex items-center justify-between cursor-pointer text-xs font-medium transition-colors ${
+                              isChecked ? 'bg-purple-50/40 text-purple-900 hover:bg-purple-50/70' : 'text-gray-700 hover:bg-gray-50'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {}} // handled by div click
+                                className="w-4 h-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500 cursor-pointer pointer-events-none"
+                              />
+                              <Folder className={`w-4 h-4 shrink-0 ${isChecked ? 'text-purple-600' : 'text-gray-400'}`} />
+                              <span className="truncate pr-2 font-semibold">{grp.name}</span>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              isChecked ? 'bg-purple-100 text-purple-700' : 'bg-gray-150 text-gray-500'
+                            }`}>
+                              {count} 张图片
+                            </span>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          
           <div 
             tabIndex={0}
             className="outline-none"
@@ -2841,93 +3029,7 @@ function MainApp() {
 
                 return (
                   <div className="flex flex-col gap-6 w-full">
-                    {/* 1. Custom groups */}
-                    {assetGroups.map(grp => {
-                      const grpImages = galleryImages.filter(img => img.groupId === grp.id);
-                      const isCollapsed = !expandedGroups.has(grp.id);
-                      const isSelected = selectedUploadGroupId === grp.id;
-                      
-                      return (
-                        <div 
-                          key={grp.id} 
-                          className={`bg-white border rounded-2xl shadow-sm overflow-hidden transition-all duration-200 ${
-                            isSelected 
-                              ? 'ring-2 ring-purple-500 border-purple-500' 
-                              : 'border-gray-200'
-                          }`}
-                        >
-                          {/* Group Header */}
-                          <div 
-                            onClick={() => {
-                              setSelectedUploadGroupId(grp.id);
-                              const newSet = new Set(expandedGroups);
-                              newSet.add(grp.id);
-                              setExpandedGroups(newSet);
-                            }}
-                            className={`px-6 py-4 cursor-pointer flex justify-between items-center border-b transition-all duration-200 ${
-                              isSelected 
-                                ? 'bg-purple-50/80 border-purple-100' 
-                                : 'bg-purple-50/10 border-gray-100 hover:bg-purple-50/40'
-                            }`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <Folder className={`w-5 h-5 ${isSelected ? 'text-purple-600' : 'text-gray-400'}`} />
-                              <span className="text-base font-bold text-gray-800">{grp.name}</span>
-                              <span className="bg-purple-100 text-purple-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">{grpImages.length} 张图片</span>
-                              {isSelected && (
-                                <span className="flex items-center gap-1 bg-purple-600 text-white text-[11px] px-2.5 py-0.5 rounded-full font-bold animate-pulse shadow-sm shadow-purple-500/20">
-                                  📌 当前粘贴/上传目标
-                                </span>
-                              )}
-                            </div>
-                            
-                            <div className="flex items-center gap-4" onClick={e => e.stopPropagation()}>
-                              <button
-                                onClick={() => handleDeleteGroup(grp.id)}
-                                disabled={grpImages.length > 0}
-                                className={`p-1.5 rounded-md transition-colors ${grpImages.length > 0 ? 'text-gray-400 opacity-40 cursor-not-allowed' : 'text-red-500 hover:bg-red-50'}`}
-                                title={grpImages.length > 0 ? '图组存在图片时不支持删除' : '删除图组'}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                              <div 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const newSet = new Set(expandedGroups);
-                                  if (newSet.has(grp.id)) {
-                                    newSet.delete(grp.id);
-                                  } else {
-                                    newSet.add(grp.id);
-                                  }
-                                  setExpandedGroups(newSet);
-                                }}
-                                className="text-gray-400 hover:text-gray-600 cursor-pointer"
-                              >
-                                {isCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
-                              </div>
-                            </div>
-                          </div>
-                          
-                          {/* Group Body */}
-                          {!isCollapsed && (
-                            <div className="p-4 bg-gray-50/30">
-                              {grpImages.length === 0 ? (
-                                <div className="text-center py-8 text-gray-400 text-xs flex flex-col items-center justify-center gap-1">
-                                  <Folder className="w-8 h-8 text-gray-200 animate-pulse" />
-                                  <span>当前图组暂无图片，点击该组头部设为目标，即可直接 Ctrl+V 粘贴/上传新图至本组</span>
-                                </div>
-                              ) : (
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                                  {grpImages.map(renderGalleryItem)}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* 2. Unassigned default gallery */}
+                    {/* 1. Unassigned default gallery (ALWAYS PINNED TO TOP) */}
                     {(() => {
                       const unassignedImages = galleryImages.filter(img => !img.groupId);
                       const isUnassignedCollapsed = !expandedGroups.has('unassigned');
@@ -3001,6 +3103,102 @@ function MainApp() {
                         </div>
                       );
                     })()}
+
+                    {/* 2. Custom groups (ONLY SHOW DIRECTLY SELECTED ONES) */}
+                    {assetGroups
+                      .filter(grp => selectedGroupFilterIds.includes(grp.id))
+                      .map(grp => {
+                        const grpImages = galleryImages.filter(img => img.groupId === grp.id);
+                        const isCollapsed = !expandedGroups.has(grp.id);
+                        const isSelected = selectedUploadGroupId === grp.id;
+                        
+                        return (
+                          <div 
+                            key={grp.id} 
+                            className={`bg-white border rounded-2xl shadow-sm overflow-hidden transition-all duration-200 ${
+                              isSelected 
+                                ? 'ring-2 ring-purple-500 border-purple-500' 
+                                : 'border-gray-200'
+                            }`}
+                          >
+                            {/* Group Header */}
+                            <div 
+                              onClick={() => {
+                                setSelectedUploadGroupId(grp.id);
+                                const newSet = new Set(expandedGroups);
+                                newSet.add(grp.id);
+                                setExpandedGroups(newSet);
+                              }}
+                              className={`px-6 py-4 cursor-pointer flex justify-between items-center border-b transition-all duration-200 ${
+                                isSelected 
+                                  ? 'bg-purple-50/80 border-purple-100' 
+                                  : 'bg-purple-50/10 border-gray-100 hover:bg-purple-50/40'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <Folder className={`w-5 h-5 ${isSelected ? 'text-purple-600' : 'text-gray-400'}`} />
+                                <span className="text-base font-bold text-gray-800">{grp.name}</span>
+                                <span className="bg-purple-100 text-purple-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">{grpImages.length} 张图片</span>
+                                {isSelected && (
+                                  <span className="flex items-center gap-1 bg-purple-600 text-white text-[11px] px-2.5 py-0.5 rounded-full font-bold animate-pulse shadow-sm shadow-purple-500/20">
+                                    📌 当前粘贴/上传目标
+                                  </span>
+                                )}
+                              </div>
+                              
+                              <div className="flex items-center gap-4" onClick={e => e.stopPropagation()}>
+                                <button
+                                  onClick={() => handleDeleteGroup(grp.id)}
+                                  disabled={grpImages.length > 0}
+                                  className={`p-1.5 rounded-md transition-colors ${grpImages.length > 0 ? 'text-gray-400 opacity-40 cursor-not-allowed' : 'text-red-500 hover:bg-red-50'}`}
+                                  title={grpImages.length > 0 ? '图组存在图片时不支持删除' : '删除图组'}
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                                <div 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const newSet = new Set(expandedGroups);
+                                    if (newSet.has(grp.id)) {
+                                      newSet.delete(grp.id);
+                                    } else {
+                                      newSet.add(grp.id);
+                                    }
+                                    setExpandedGroups(newSet);
+                                  }}
+                                  className="text-gray-400 hover:text-gray-600 cursor-pointer"
+                                >
+                                  {isCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* Group Body */}
+                            {!isCollapsed && (
+                              <div className="p-4 bg-gray-50/30">
+                                {grpImages.length === 0 ? (
+                                  <div className="text-center py-8 text-gray-400 text-xs flex flex-col items-center justify-center gap-1">
+                                    <Folder className="w-8 h-8 text-gray-200 animate-pulse" />
+                                    <span>当前图组暂无图片，点击该组头部设为目标，即可直接 Ctrl+V 粘贴/上传新图至本组</span>
+                                  </div>
+                                ) : (
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                    {grpImages.map(renderGalleryItem)}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                    {/* Notification if some groups are hidden */}
+                    {selectedGroupFilterIds.length === 0 && assetGroups.length > 0 && (
+                      <div className="text-center py-10 bg-gray-50/50 border border-dashed border-gray-200 rounded-2xl text-gray-400 text-xs shadow-sm">
+                        <Folder className="w-8 h-8 text-gray-250 mx-auto mb-2 animate-pulse" />
+                        <span>已折叠并隐藏所有相册图组。请在上方输入或点击【选择相册图组范围】多选框选择想要展示哪些相册。</span>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
