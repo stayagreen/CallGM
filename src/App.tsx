@@ -4576,9 +4576,7 @@ function MainApp() {
                 {viewingVideoJobDetails.data.storyboards?.map((sb: any, i: number) => (
                   <div key={i} className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
                     <p>分镜 {i + 1}: {sb.text || '无文字'}</p>
-                    <p className="text-xs text-gray-500">
-                      {user?.role === 'admin' ? `动画: ${sb.animation}, ` : ''}转场: {sb.transition}, 时长: {sb.duration}s
-                    </p>
+                    <p className="text-xs text-gray-500">动画: {sb.animation}, 转场: {sb.transition}, 时长: {sb.duration}s</p>
                   </div>
                 ))}
               </div>

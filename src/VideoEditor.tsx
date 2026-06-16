@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, PauseCircle, SkipBack, SkipForward, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon, Sparkles, Crop } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import { ImageCropper } from './components/ImageCropper';
-import { useAuth } from './context/AuthContext';
 
 export interface Storyboard {
   id: string;
@@ -105,7 +104,6 @@ export default function VideoEditor({
   galleryImages: GalleryAsset[],
   galleryUpdateToken?: number
 }) {
-  const { user } = useAuth();
   const [bgmList, setBgmList] = useState<string[]>([]);
   const [playingBgm, setPlayingBgm] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -865,17 +863,15 @@ export default function VideoEditor({
                         </div>
 
                         <div className="p-4 space-y-4 flex-grow bg-white rounded-b-2xl">
-                          {user?.role === 'admin' && (
-                            <div>
-                              <div className="flex justify-between items-center mb-1">
-                                <label className="text-xs font-bold text-gray-500">运镜动画</label>
-                                <button onClick={() => applyToAll('animation', sb.animation)} className="text-[10px] text-blue-600 hover:underline">应用到全部</button>
-                              </div>
-                              <select className="w-full text-sm p-2 rounded border border-gray-200" value={sb.animation} onChange={e => updateStoryboard(sb.id, { animation: e.target.value })}>
-                                {ANIMATIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
-                              </select>
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="text-xs font-bold text-gray-500">运镜动画</label>
+                              <button onClick={() => applyToAll('animation', sb.animation)} className="text-[10px] text-blue-600 hover:underline">应用到全部</button>
                             </div>
-                          )}
+                            <select className="w-full text-sm p-2 rounded border border-gray-200" value={sb.animation} onChange={e => updateStoryboard(sb.id, { animation: e.target.value })}>
+                              {ANIMATIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
+                            </select>
+                          </div>
 
                           {index < task.storyboards.length - 1 && (
                             <div>
