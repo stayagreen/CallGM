@@ -2032,18 +2032,49 @@ ${storyboardTexts}
   "xhsTags": "#话题1 #话题2 #话题3 #话题4 #话题5 #话题6 #话题7 #话题8 #话题9 #话题10"
 }`;
 
-    // Read config
+    // Read config robustly from multiple sources (SQLite DB, data/config.json, and root config.json)
     let openCodeApiKey = '';
     let openCodeApiUrl = '';
     let openCodeModel = '';
-    const configPath = path.join(__dirname, 'config.json');
-    if (fs.existsSync(configPath)) {
-      try {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        openCodeApiKey = config.openCodeApiKey || '';
-        openCodeApiUrl = config.openCodeApiUrl || '';
-        openCodeModel = config.openCodeModel || '';
-      } catch (e) {}
+    let config: any = null;
+
+    // Source 1: SQLite database system_config table (the most updated settings populated by UI)
+    try {
+      const configRow = db.prepare('SELECT value FROM system_config WHERE key = ?').get('app_config') as any;
+      if (configRow && configRow.value) {
+        config = JSON.parse(configRow.value);
+        console.log("[AI-GEN] Loaded config from SQLite database system_config table successfully.");
+      }
+    } catch (e: any) {
+      console.warn("[AI-GEN] Failed to read from SQLite database:", e.message);
+    }
+
+    // Source 2: data/config.json
+    if (!config) {
+      const dataConfigPath = path.join(__dirname, 'data', 'config.json');
+      if (fs.existsSync(dataConfigPath)) {
+        try {
+          config = JSON.parse(fs.readFileSync(dataConfigPath, 'utf-8'));
+          console.log("[AI-GEN] Loaded config from data/config.json successfully.");
+        } catch (e) {}
+      }
+    }
+
+    // Source 3: Root config.json
+    if (!config) {
+      const rootConfigPath = path.join(__dirname, 'config.json');
+      if (fs.existsSync(rootConfigPath)) {
+        try {
+          config = JSON.parse(fs.readFileSync(rootConfigPath, 'utf-8'));
+          console.log("[AI-GEN] Loaded config from root config.json successfully.");
+        } catch (e) {}
+      }
+    }
+
+    if (config) {
+      openCodeApiKey = config.openCodeApiKey || '';
+      openCodeApiUrl = config.openCodeApiUrl || '';
+      openCodeModel = config.openCodeModel || '';
     }
 
     if (!openCodeApiKey) {
