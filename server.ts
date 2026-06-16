@@ -2215,18 +2215,57 @@ ${storyboardTexts}
 
         try {
           const data = JSON.parse(rawText);
+          
+          // Robust parser helper to extract only conversational/text content while ignoring thinking/reasoning blocks
           let content = '';
-          if (isAnthropicStyle) {
-            if (data.content && Array.isArray(data.content) && data.content.length > 0) {
-              content = data.content[0].text || '';
-            } else if (data.choices && data.choices.length > 0) {
-              content = data.choices[0].message?.content || '';
+          if (data.content && Array.isArray(data.content)) {
+            const textParts = data.content
+              .filter((part: any) => part && (part.type === 'text' || part.text))
+              .map((part: any) => part.text || '');
+            content = textParts.join('\n').trim();
+          }
+
+          if (!content && data.choices && Array.isArray(data.choices) && data.choices.length > 0) {
+            const choice = data.choices[0];
+            if (choice) {
+              if (choice.message) {
+                if (typeof choice.message.content === 'string') {
+                  content = choice.message.content.trim();
+                } else if (Array.isArray(choice.message.content)) {
+                  const textParts = choice.message.content
+                    .filter((part: any) => part && (part.type === 'text' || part.text))
+                    .map((part: any) => part.text || '');
+                  content = textParts.join('\n').trim();
+                }
+              } else if (typeof choice.text === 'string') {
+                content = choice.text.trim();
+              }
             }
-          } else {
-            if (data.choices && data.choices.length > 0) {
-              content = data.choices[0].message?.content || '';
-            } else if (data.content && Array.isArray(data.content) && data.content.length > 0) {
-              content = data.content[0].text || '';
+          }
+
+          // Ultimate deep search fallback if content is still empty
+          if (!content) {
+            const foundTexts: string[] = [];
+            const deepSearch = (obj: any) => {
+              if (!obj || typeof obj !== 'object') return;
+              if (obj.type === 'text' && typeof obj.text === 'string') {
+                foundTexts.push(obj.text);
+                return;
+              }
+              for (const key of Object.keys(obj)) {
+                const val = obj[key];
+                if (key === 'content' && typeof val === 'string') {
+                  foundTexts.push(val);
+                } else if (key === 'text' && typeof val === 'string') {
+                  foundTexts.push(val);
+                } else if (typeof val === 'object') {
+                  deepSearch(val);
+                }
+              }
+            };
+            deepSearch(data);
+            if (foundTexts.length > 0) {
+              content = foundTexts.join('\n').trim();
             }
           }
 
