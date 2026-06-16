@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon, Sparkles, Crop } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, PauseCircle, SkipBack, SkipForward, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon, Sparkles, Crop } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import { ImageCropper } from './components/ImageCropper';
 
@@ -352,6 +352,48 @@ export default function VideoEditor({
     }
   };
 
+  const playPreviousBgm = () => {
+    if (bgmList.length === 0) return;
+    let newIndex = bgmList.length - 1; // 默认最后一首
+    if (task.bgm) {
+      const currentIndex = bgmList.indexOf(task.bgm);
+      if (currentIndex !== -1) {
+        newIndex = (currentIndex - 1 + bgmList.length) % bgmList.length;
+      }
+    }
+    const prevBgm = bgmList[newIndex];
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    const audio = audioRef.current || new Audio();
+    audio.src = `/bgm/${prevBgm}`;
+    audio.play();
+    audioRef.current = audio;
+    setPlayingBgm(prevBgm);
+    updateTask({ bgm: prevBgm });
+  };
+
+  const playNextBgm = () => {
+    if (bgmList.length === 0) return;
+    let newIndex = 0; // 默认第一首
+    if (task.bgm) {
+      const currentIndex = bgmList.indexOf(task.bgm);
+      if (currentIndex !== -1) {
+        newIndex = (currentIndex + 1) % bgmList.length;
+      }
+    }
+    const nextBgm = bgmList[newIndex];
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    const audio = audioRef.current || new Audio();
+    audio.src = `/bgm/${nextBgm}`;
+    audio.play();
+    audioRef.current = audio;
+    setPlayingBgm(nextBgm);
+    updateTask({ bgm: nextBgm });
+  };
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden flex flex-col h-full">
       <div className="flex-grow overflow-y-auto p-6 space-y-8">
@@ -381,9 +423,9 @@ export default function VideoEditor({
           </div>
           <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
             <label className="block text-sm font-bold text-gray-700 mb-2">背景音乐 (BGM)</label>
-            <div className="flex gap-2 items-center">
+            <div className="flex flex-col gap-2">
               <select 
-                className="flex-grow p-2.5 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-500"
+                className="w-full p-2.5 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-500 text-sm"
                 value={task.bgm}
                 onChange={e => {
                   updateTask({ bgm: e.target.value });
@@ -394,11 +436,75 @@ export default function VideoEditor({
                 <option value="">无背景音乐</option>
                 {bgmList.map((bgm, idx) => <option key={bgm} value={bgm}>音乐 {idx + 1}</option>)}
               </select>
-              {task.bgm && (
-                <button onClick={() => toggleBgm(task.bgm)} className="p-2.5 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200">
-                  {playingBgm === task.bgm ? <Clock className="animate-spin" size={20}/> : <PlayCircle size={20}/>}
-                </button>
-              )}
+              <div className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-gray-200 mt-1">
+                <span className="text-xs text-gray-500 font-semibold select-none truncate max-w-[120px]">
+                  {task.bgm ? `已选 音乐 ${bgmList.indexOf(task.bgm) !== -1 ? bgmList.indexOf(task.bgm) + 1 : ''}` : '未选择背景音乐'}
+                </span>
+                
+                <div className="flex gap-1.5 items-center">
+                  {/* Previous Button */}
+                  <button
+                    type="button"
+                    title="上一首"
+                    onClick={playPreviousBgm}
+                    disabled={bgmList.length === 0}
+                    className="p-1 px-1.5 bg-gray-50 hover:bg-purple-100 text-gray-600 hover:text-purple-700 rounded border border-gray-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center"
+                  >
+                    <SkipBack size={15} />
+                  </button>
+
+                  {/* Play / Pause button */}
+                  <button
+                    type="button"
+                    title={playingBgm && playingBgm === task.bgm ? "暂停试听" : "播放试听"}
+                    onClick={() => {
+                      if (task.bgm) {
+                        toggleBgm(task.bgm);
+                      } else if (bgmList.length > 0) {
+                        const firstBgm = bgmList[0];
+                        if (audioRef.current) {
+                          audioRef.current.pause();
+                        }
+                        const audio = audioRef.current || new Audio();
+                        audio.src = `/bgm/${firstBgm}`;
+                        audio.play();
+                        audioRef.current = audio;
+                        setPlayingBgm(firstBgm);
+                        updateTask({ bgm: firstBgm });
+                      }
+                    }}
+                    disabled={bgmList.length === 0}
+                    className={`p-1 px-2 rounded border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-1 text-xs font-bold ${
+                      playingBgm && playingBgm === task.bgm
+                        ? 'bg-purple-150 text-purple-700 border-purple-200 hover:bg-purple-200' 
+                        : 'bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100'
+                    }`}
+                  >
+                    {playingBgm && playingBgm === task.bgm ? (
+                      <>
+                        <PauseCircle size={15} />
+                        <span>暂停</span>
+                      </>
+                    ) : (
+                      <>
+                        <PlayCircle size={15} />
+                        <span>试听</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Next Button */}
+                  <button
+                    type="button"
+                    title="下一首"
+                    onClick={playNextBgm}
+                    disabled={bgmList.length === 0}
+                    className="p-1 px-1.5 bg-gray-50 hover:bg-purple-100 text-gray-600 hover:text-purple-700 rounded border border-gray-200 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center"
+                  >
+                    <SkipForward size={15} />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
