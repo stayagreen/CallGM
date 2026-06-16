@@ -1858,34 +1858,68 @@ async function startServer() {
     }
   });
 
-  // Get publishing status (polling endpoint for immediate publishing)
-  app.get('/api/videos/xhs/publish/status/:id', requireAuth, (req: any, res) => {
-    const noteId = parseInt(req.params.id, 10);
-    if (isNaN(noteId)) return res.status(400).json({ error: 'Invalid ID' });
+  function extractJSON(text: string): any {
+    const cleaned = text.trim();
+    
+    // 1. 尝试直接解析
+    try {
+      return JSON.parse(cleaned);
+    } catch (e) {}
 
-    const cachedProgress = xhsProgressMap.get(noteId);
-    if (cachedProgress) {
-      res.json(cachedProgress);
-    } else {
+    // 2. 尝试提取 Markdown json 代码块包裹
+    const markdownRegex = /```(?:json|JSON)?\s*([\s\S]*?)\s*```/;
+    const match = cleaned.match(markdownRegex);
+    if (match) {
+      const blockContent = match[1].trim();
       try {
-        const row = db.prepare('SELECT publish_status, error_message FROM xhs_notes WHERE id = ?').get(noteId) as any;
-        if (row) {
-          res.json({
-            id: noteId,
-            status: row.publish_status,
-            progress: row.publish_status === 'success' ? 100 : 0,
-            message: row.publish_status === 'success' ? '发布成功' : (row.publish_status === 'failed' ? `发布失败: ${row.error_message}` : '排队中/定时任务')
-          });
-        } else {
-          res.status(404).json({ error: '未找到发布记录' });
-        }
-      } catch (e: any) {
-        res.status(500).json({ error: e.message });
-      }
+        return JSON.parse(blockContent);
+      } catch (e) {}
     }
-  });
 
-  async function generateWithGemini(promptText: string) {
+    // 3. 寻找最外层的 { 和 } 括号
+    const firstOpen = cleaned.indexOf('{');
+    const lastClose = cleaned.lastIndexOf('}');
+    if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+      const jsonCandidate = cleaned.substring(firstOpen, lastClose + 1);
+      try {
+        return JSON.parse(jsonCandidate);
+      } catch (e) {}
+
+      // 4. 清理末尾多余逗号后重试
+      let fuzzyClean = jsonCandidate.trim();
+      fuzzyClean = fuzzyClean.replace(/,\s*([\]}])/g, '$1');
+      try {
+        return JSON.parse(fuzzyClean);
+      } catch (e) {}
+    }
+
+    // 5. 正则提取降级容错方案（当大模型未按规范输出 JSON，但通过自然语言包含了这些关键内容时，仍可容错转换）
+    try {
+      const xhsTitleMatch = text.match(/(?:xhsTitle|标题|Title)["'：\s]+([^"'\n]+)/i);
+      const xhsTagsMatch = text.match(/(?:xhsTags|标签|话题|Tags)["'：\s]+([^"'\n]+)/i);
+      
+      let xhsBody = '';
+      const bodyMatch = text.match(/(?:xhsBody|正文|内容|Body)["'：\s]+([\s\S]+?)(?=(?:"?xhsTags|标签|话题|Tags|$))/i);
+      if (bodyMatch) {
+        xhsBody = bodyMatch[1].trim();
+        xhsBody = xhsBody.replace(/^["'\s]+|["'\s]+$/g, '');
+      } else {
+        xhsBody = text;
+      }
+
+      if (xhsTitleMatch) {
+        return {
+          xhsTitle: xhsTitleMatch[1].trim().replace(/^["'\s]+|["'\s]+$/g, ''),
+          xhsBody: xhsBody,
+          xhsTags: xhsTagsMatch ? xhsTagsMatch[1].trim().replace(/^["'\s]+|["'\s]+$/g, '') : "#话题"
+        };
+      }
+    } catch (e) {}
+
+    throw new Error("无法从回复中解析出具有标准结构的 JSON 文档。原始内容为: " + text);
+  }
+
+  async function generateWithGemini(promptText: string, imgData?: { data: string; mimeType: string }) {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
       throw new Error("内置的 GEMINI_API_KEY 环境变量未设置（请在系统后台或 Key 容器中保存配置）。");
@@ -1899,9 +1933,26 @@ async function startServer() {
       }
     });
 
+    let contents: any = promptText;
+    if (imgData) {
+      contents = {
+        parts: [
+          {
+            inlineData: {
+              data: imgData.data,
+              mimeType: imgData.mimeType
+            }
+          },
+          {
+            text: promptText
+          }
+        ]
+      };
+    }
+
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
-      contents: promptText,
+      contents: contents,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -1929,7 +1980,7 @@ async function startServer() {
     if (!resultText) {
       throw new Error("Gemini API 返回了空内容。");
     }
-    return JSON.parse(resultText.trim());
+    return extractJSON(resultText);
   }
 
   // Generate Xiaohongshu metadata using OpenCode API (MiniMax M3 model) with automatic Gemini fallback
@@ -1985,6 +2036,7 @@ ${storyboardTexts}
     let openCodeApiKey = '';
     let openCodeApiUrl = '';
     let openCodeModel = '';
+    const configPath = path.join(__dirname, 'config.json');
     if (fs.existsSync(configPath)) {
       try {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
@@ -1995,7 +2047,14 @@ ${storyboardTexts}
     }
 
     if (!openCodeApiKey) {
-      return res.status(400).json({ error: '请先在系统设置中的 [AI 大模型配置] 里设置您的大模型 API Key（密钥）。' });
+      console.log(`[AI-GEN] 未配置 OpenCode API Key，将尝试使用内置 Gemini 服务直接生成...`);
+      try {
+        const fallbackData = await generateWithGemini(prompt, imgData);
+        return res.json({ success: true, ...fallbackData });
+      } catch (geminiErr: any) {
+        console.error(`[AI-GEN] Built-in Gemini call also failed:`, geminiErr);
+        return res.status(400).json({ error: '请先在系统设置中的 [AI 大模型配置] 里设置您的大模型 API Key（密钥），或确保内置 Gemini API Key 有效。' });
+      }
     }
 
     // Default API URL is https://opencode.ai/zen/go/v1
@@ -2101,69 +2160,75 @@ ${storyboardTexts}
         body: JSON.stringify(requestBody)
       });
 
-      // Parse status or get retry fallback for alternative model representations if the configured name failed
       if (!apiResponse.ok) {
         const errText = await apiResponse.text();
-        console.warn(`[AI-GEN] API call failed with status ${apiResponse.status}: ${errText}`);
-        return res.status(apiResponse.status).json({ 
-          error: `API 大模型接口响应错误 (状态码 ${apiResponse.status})：${errText || '未知接口错误'}` 
-        });
+        console.warn(`[AI-GEN] OpenCode API call failed with status ${apiResponse.status}: ${errText}. Attempting fallback to Gemini...`);
+        try {
+          const fallbackData = await generateWithGemini(prompt, imgData);
+          console.log(`[AI-GEN] Gemini fallback successful after OpenCode status error.`);
+          return res.json({ success: true, ...fallbackData });
+        } catch (fallbackErr: any) {
+          console.error(`[AI-GEN] Gemini fallback also failed:`, fallbackErr);
+          return res.status(apiResponse.status).json({ 
+            error: `API 大模型接口响应错误 (状态码 ${apiResponse.status})：${errText || '未知接口错误'}。且系统自动使用 Gemini 产生式服务重试也未能成功，错误原因：${fallbackErr.message}` 
+          });
+        }
       } else {
         const rawText = await apiResponse.text();
         try {
           const data = JSON.parse(rawText);
-          parseAndRespond(data, isAnthropicStyle, res);
+          let content = '';
+          if (isAnthropicStyle) {
+            if (data.content && Array.isArray(data.content) && data.content.length > 0) {
+              content = data.content[0].text || '';
+            } else if (data.choices && data.choices.length > 0) {
+              content = data.choices[0].message?.content || '';
+            }
+          } else {
+            if (data.choices && data.choices.length > 0) {
+              content = data.choices[0].message?.content || '';
+            } else if (data.content && Array.isArray(data.content) && data.content.length > 0) {
+              content = data.content[0].text || '';
+            }
+          }
+
+          if (!content) {
+            throw new Error('LLM 返回的有效文本内容为空。');
+          }
+
+          const parsed = extractJSON(content);
+          if (parsed.xhsTitle && parsed.xhsTitle.length > 20) {
+            parsed.xhsTitle = parsed.xhsTitle.substring(0, 20);
+          }
+          return res.json({ success: true, ...parsed });
         } catch (jsonErr: any) {
-          console.warn(`[AI-GEN] API response was not parseable valid JSON: "${rawText.substring(0, 100)}..."`);
-          return res.status(500).json({ 
-            error: `API 接口未返回标准的 JSON 格式，解析失败。返回原始内容为: \n${rawText}` 
-          });
+          console.warn(`[AI-GEN] Failed to parse JSON from API content: ${jsonErr.message}. Attempting fallback to Gemini...`);
+          try {
+            const fallbackData = await generateWithGemini(prompt, imgData);
+            console.log(`[AI-GEN] Gemini fallback successful after OpenCode parsing error.`);
+            return res.json({ success: true, ...fallbackData });
+          } catch (fallbackErr: any) {
+            console.error(`[AI-GEN] Gemini fallback after parsing error also failed:`, fallbackErr);
+            return res.status(500).json({ 
+              error: `API 接口未返回标准的 JSON 格式且系统自动使用 Gemini 分流均失败。原始响应文本: \n${rawText}` 
+            });
+          }
         }
       }
     } catch (err: any) {
-      console.error('[AI-GEN] API request exception:', err);
-      return res.status(500).json({ 
-        error: `连接大模型服务发生网络异常（请检查接口地址及您的网络连接）: ${err.message || '网络连接超时'}` 
-      });
+      console.warn('[AI-GEN] OpenCode API request exception:', err, '. Attempting fallback to Gemini...');
+      try {
+        const fallbackData = await generateWithGemini(prompt, imgData);
+        console.log(`[AI-GEN] Gemini fallback successful after OpenCode network exception.`);
+        return res.json({ success: true, ...fallbackData });
+      } catch (fallbackErr: any) {
+        console.error(`[AI-GEN] Gemini fallback after network exception also failed:`, fallbackErr);
+        return res.status(500).json({ 
+          error: `连接大模型服务发生网络异常（${err.message || '网络连接超时'}）且系统自动使用 Gemini 分流均失败。` 
+        });
+      }
     }
   });
-
-  function parseAndRespond(data: any, isAnthropicStyle: boolean, res: any) {
-    let content = '';
-    if (isAnthropicStyle) {
-      if (data.content && Array.isArray(data.content) && data.content.length > 0) {
-        content = data.content[0].text || '';
-      } else if (data.choices && data.choices.length > 0) {
-        content = data.choices[0].message?.content || '';
-      }
-    } else {
-      if (data.choices && data.choices.length > 0) {
-        content = data.choices[0].message?.content || '';
-      } else if (data.content && Array.isArray(data.content) && data.content.length > 0) {
-        content = data.content[0].text || '';
-      }
-    }
-
-    if (!content) {
-      throw new Error('LLM 返回的有效文本内容为空。返回密文为: ' + JSON.stringify(data));
-    }
-
-    content = content.trim();
-    if (content.startsWith('```json')) {
-      content = content.substring(7);
-    } else if (content.startsWith('```')) {
-      content = content.substring(3);
-    }
-    if (content.endsWith('```')) {
-      content = content.substring(0, content.length - 3);
-    }
-
-    const parsed = JSON.parse(content.trim());
-    if (parsed.xhsTitle && parsed.xhsTitle.length > 20) {
-      parsed.xhsTitle = parsed.xhsTitle.substring(0, 20);
-    }
-    res.json({ success: true, ...parsed });
-  }
 
   function getXhsCoverImageBase64(xhsCoverImage: string): { data: string; mimeType: string } | null {
     if (!xhsCoverImage) return null;
