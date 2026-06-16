@@ -1858,6 +1858,33 @@ async function startServer() {
     }
   });
 
+  // Get publishing status (polling endpoint for immediate publishing)
+  app.get('/api/videos/xhs/publish/status/:id', requireAuth, checkAccess, (req: any, res) => {
+    const noteId = parseInt(req.params.id, 10);
+    if (isNaN(noteId)) return res.status(400).json({ error: 'Invalid ID' });
+
+    const cachedProgress = xhsProgressMap.get(noteId);
+    if (cachedProgress) {
+      res.json(cachedProgress);
+    } else {
+      try {
+        const row = db.prepare('SELECT publish_status, error_message FROM xhs_notes WHERE id = ?').get(noteId) as any;
+        if (row) {
+          res.json({
+            id: noteId,
+            status: row.publish_status,
+            progress: row.publish_status === 'success' ? 100 : 0,
+            message: row.publish_status === 'success' ? '发布成功' : (row.publish_status === 'failed' ? `发布失败: ${row.error_message}` : '排队中/定时任务')
+          });
+        } else {
+          res.status(404).json({ error: '未找到发布记录' });
+        }
+      } catch (e: any) {
+        res.status(500).json({ error: e.message });
+      }
+    }
+  });
+
   function extractJSON(text: string): any {
     const cleaned = text.trim();
     
