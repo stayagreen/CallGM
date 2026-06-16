@@ -2193,19 +2193,26 @@ ${storyboardTexts}
 
       if (!apiResponse.ok) {
         const errText = await apiResponse.text();
-        console.warn(`[AI-GEN] OpenCode API call failed with status ${apiResponse.status}: ${errText}. Attempting fallback to Gemini...`);
-        try {
-          const fallbackData = await generateWithGemini(prompt, imgData);
-          console.log(`[AI-GEN] Gemini fallback successful after OpenCode status error.`);
-          return res.json({ success: true, ...fallbackData });
-        } catch (fallbackErr: any) {
-          console.error(`[AI-GEN] Gemini fallback also failed:`, fallbackErr);
-          return res.status(apiResponse.status).json({ 
-            error: `API 大模型接口响应错误 (状态码 ${apiResponse.status})：${errText || '未知接口错误'}。且系统自动使用 Gemini 产生式服务重试也未能成功，错误原因：${fallbackErr.message}` 
-          });
-        }
+        const apiErrorMsg = `[AI-GEN ERROR] OpenCode API 返回了非 200 状态码 (${apiResponse.status})。`;
+        
+        console.error("======================================== [AI-GEN API ERROR] ========================================");
+        console.error(apiErrorMsg);
+        console.error(`请求地址: ${apiEndpoint}`);
+        console.error(`请求模型: ${cleanModel}`);
+        console.error(`API Key 长度: ${openCodeApiKey ? openCodeApiKey.length : 0} (首尾字符: ${openCodeApiKey ? openCodeApiKey.slice(0, 4) + '...' + openCodeApiKey.slice(-4) : '无'})`);
+        console.error(`原始错误正文:\n${errText}`);
+        console.error("====================================================================================================");
+        
+        return res.status(apiResponse.status).json({ 
+          error: `大模型接口请求失败 (状态码 ${apiResponse.status})。\n\n大模型返回的原始错误信息：\n${errText}`
+        });
       } else {
         const rawText = await apiResponse.text();
+        console.log("======================================== [AI-GEN API RESPONSE] ========================================");
+        console.log(`[AI-GEN] 状态码: 200 OK`);
+        console.log(`[AI-GEN] 收到原始响应内容 (长度 ${rawText.length}):\n${rawText}`);
+        console.log("=======================================================================================================");
+
         try {
           const data = JSON.parse(rawText);
           let content = '';
@@ -2224,8 +2231,16 @@ ${storyboardTexts}
           }
 
           if (!content) {
-            throw new Error('LLM 返回的有效文本内容为空。');
+            console.error("======================================== [AI-GEN VALIDATION ERROR] ==================================");
+            console.error(`[AI-GEN] 解析失败：从返回的JSON中无法抽离出对话文本。`);
+            console.error(`[AI-GEN] 原始结构为:\n`, JSON.stringify(data, null, 2));
+            console.error("=====================================================================================================");
+            throw new Error(`LLM 接口解析成功，但未能提取到 choices[0].message.content 或 content[0].text 文本回复。请检查您的模型 '${cleanModel}' 返回结构。`);
           }
+
+          console.log("======================================== [AI-GEN EXTRACTED CONTENT] ===================================");
+          console.log(`[AI-GEN] 提取到的对话回复正文：\n${content}`);
+          console.log("=======================================================================================================");
 
           const parsed = extractJSON(content);
           if (parsed.xhsTitle && parsed.xhsTitle.length > 20) {
@@ -2233,31 +2248,24 @@ ${storyboardTexts}
           }
           return res.json({ success: true, ...parsed });
         } catch (jsonErr: any) {
-          console.warn(`[AI-GEN] Failed to parse JSON from API content: ${jsonErr.message}. Attempting fallback to Gemini...`);
-          try {
-            const fallbackData = await generateWithGemini(prompt, imgData);
-            console.log(`[AI-GEN] Gemini fallback successful after OpenCode parsing error.`);
-            return res.json({ success: true, ...fallbackData });
-          } catch (fallbackErr: any) {
-            console.error(`[AI-GEN] Gemini fallback after parsing error also failed:`, fallbackErr);
-            return res.status(500).json({ 
-              error: `API 接口未返回标准的 JSON 格式且系统自动使用 Gemini 分流均失败。原始响应文本: \n${rawText}` 
-            });
-          }
+          console.error("======================================== [AI-GEN JSON PARSE EXCEPTION] ==============================");
+          console.error(`[AI-GEN] 处理大模型文本时发生错误:`, jsonErr.message);
+          console.error(`[AI-GEN] 无法结构化以下回答：\n${rawText}`);
+          console.error("=====================================================================================================");
+          
+          return res.status(500).json({ 
+            error: `大模型处理失败：${jsonErr.message}。\n\n大模型返回的原始数据：\n${rawText}` 
+          });
         }
       }
     } catch (err: any) {
-      console.warn('[AI-GEN] OpenCode API request exception:', err, '. Attempting fallback to Gemini...');
-      try {
-        const fallbackData = await generateWithGemini(prompt, imgData);
-        console.log(`[AI-GEN] Gemini fallback successful after OpenCode network exception.`);
-        return res.json({ success: true, ...fallbackData });
-      } catch (fallbackErr: any) {
-        console.error(`[AI-GEN] Gemini fallback after network exception also failed:`, fallbackErr);
-        return res.status(500).json({ 
-          error: `连接大模型服务发生网络异常（${err.message || '网络连接超时'}）且系统自动使用 Gemini 分流均失败。` 
-        });
-      }
+      console.error("======================================== [AI-GEN NETWORK EXCEPTION] ==============================");
+      console.error(`[AI-GEN] fetch 连接大模型服务异常:`, err);
+      console.error("===================================================================================================");
+      
+      return res.status(500).json({ 
+        error: `连接大模型服务发生网络异常（${err.message || '网络连接超时'}）。` 
+      });
     }
   });
 
