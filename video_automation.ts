@@ -445,7 +445,7 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
     });
 
     let totalDuration = 0;
-    let hasTransitions = storyboards.some(sb => sb.transition === 'fade');
+    let hasTransitions = storyboards.some(sb => sb.transition && sb.transition !== 'none');
     
     console.log(`[FFmpeg] Concatenating clips. Storyboards: ${JSON.stringify(storyboards.map(sb => sb.duration))}`);
     
@@ -468,18 +468,32 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
         totalDuration = offset;
         
         for (let i = 1; i < clipPaths.length; i++) {
-            const transition = storyboards[i-1].transition === 'fade' ? 'fade' : 'dissolve';
-            const transitionDuration = storyboards[i-1].transition === 'fade' ? 0.5 : 0.1; // Fixed transition duration
+            let transitionType = 'dissolve';
+            let transitionDuration = 0.5; // Custom transitions last 0.5s
+            
+            const trans = storyboards[i-1].transition;
+            if (trans === 'fade') {
+                transitionType = 'fade';
+                transitionDuration = 0.5;
+            } else if (trans === 'diagonal_wipe') {
+                transitionType = 'diagbl'; // Use FFmpeg's diagbl (diagonal bottom-left) or similar diagonal wipe
+                transitionDuration = 0.5;
+            } else if (trans === 'defocus_blur') {
+                transitionType = 'fade'; // Map defocus to high quality fade in final render for safety
+                transitionDuration = 0.5;
+            } else {
+                transitionType = 'dissolve';
+                transitionDuration = 0.1;
+            }
+            
             const nextStream = `[v${i}]`;
             const outStream = `[xf${i}]`;
             
             // Offset is the start time of the transition.
             // We want the transition to occur at the end of the previous storyboard.
-            // Previous storyboard duration is storyboards[i-1].duration
-            const previousStoryboardDuration = storyboards[i-1].duration || 3;
-            const offset = totalDuration - transitionDuration;
+            const offsetValue = totalDuration - transitionDuration;
             
-            filterComplex += `${currentStream}${nextStream}xfade=transition=${transition}:duration=${transitionDuration}:offset=${offset}${outStream};`;
+            filterComplex += `${currentStream}${nextStream}xfade=transition=${transitionType}:duration=${transitionDuration}:offset=${offsetValue}${outStream};`;
             currentStream = outStream;
             
             const currentStoryboardDuration = storyboards[i].duration || 3;
