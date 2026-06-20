@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, PauseCircle, SkipBack, SkipForward, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon, Sparkles, Crop } from 'lucide-react';
+import { Plus, Trash2, Upload, Settings, X, Image as ImageIcon, Download, PlayCircle, PauseCircle, SkipBack, SkipForward, Clock, CheckCircle2, Music, Scissors, Paintbrush, ArrowLeft, ArrowRight, Copy, Grid, Type, Film, Target, List as ListIcon, Sparkles, Crop, Sliders } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import { ImageCropper } from './components/ImageCropper';
+import { ImageAdjuster } from './components/ImageAdjuster';
 
 export interface Storyboard {
   id: string;
@@ -116,6 +117,7 @@ export default function VideoEditor({
   const [activeStoryboardIndex, setActiveStoryboardIndex] = useState(0);
   const [editingImage, setEditingImage] = useState<{ id: string, image: string } | null>(null);
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
+  const [adjusterImageSrc, setAdjusterImageSrc] = useState<string | null>(null);
 
   const getBustedUrl = (url: string) => {
     if (!url || !galleryUpdateToken || (!url.startsWith('/downloads/') && !url.startsWith('/api/thumbnails/'))) return url;
@@ -642,19 +644,34 @@ export default function VideoEditor({
                   <ImageIcon size={13} /> 更换封面
                 </button>
                 {(task.xhsCoverImage || (task.storyboards.length > 0 && task.storyboards[0].image)) && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const url = task.xhsCoverImage || (task.storyboards.length > 0 && task.storyboards[0]?.image);
-                      if (url) {
-                        setCropperImageSrc(url);
-                      }
-                    }}
-                    className="px-3 py-1.5 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-600 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-red-200 shadow-sm"
-                  >
-                    <Crop size={13} /> 裁剪封面
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const url = task.xhsCoverImage || (task.storyboards.length > 0 && task.storyboards[0]?.image);
+                        if (url) {
+                          setCropperImageSrc(url);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-600 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-red-200 shadow-sm"
+                    >
+                      <Crop size={13} /> 裁剪封面
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const url = task.xhsCoverImage || (task.storyboards.length > 0 && task.storyboards[0]?.image);
+                        if (url) {
+                          setAdjusterImageSrc(url);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 active:bg-purple-200 text-purple-600 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-purple-200 shadow-sm"
+                    >
+                      <Sliders size={13} /> 调整封面
+                    </button>
+                  </>
                 )}
               </div>
               {task.xhsCoverImage && (
@@ -1220,6 +1237,17 @@ export default function VideoEditor({
           onCropComplete={(base64Url) => {
             updateTask({ xhsCoverImage: base64Url });
             setCropperImageSrc(null);
+          }}
+        />
+      )}
+
+      {adjusterImageSrc && (
+        <ImageAdjuster
+          imageSrc={adjusterImageSrc}
+          onClose={() => setAdjusterImageSrc(null)}
+          onAdjustComplete={(base64Url) => {
+            updateTask({ xhsCoverImage: base64Url });
+            setAdjusterImageSrc(null);
           }}
         />
       )}
