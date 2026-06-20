@@ -904,7 +904,25 @@ function MainApp() {
     headless: true,
     openCodeApiKey: '',
     openCodeApiUrl: '',
-    openCodeModel: ''
+    openCodeModel: '',
+    xhsPrompt: `【核心要求：请务必深度结合我上传的“小红书封面图片”以及下方的视频分镜描述来创作。你生成的一切内容（包含标题、正文、情感基调与话题）都应该与这张封面图的视觉主题、画面主体、配色、情绪和文字标签高度契合，体现出根据封面图量身定制的原生质感。】
+
+你是一个小红书爆款文案专家。请结合我上传的封面图片，并根据以下提供的视频分镜画面描述，为我制作一个小红书发布的标题、正文和话题标签：
+
+视频分镜详情：
+{storyboardTexts}
+
+请遵循以下极严限制：
+1. **标题**（xhsTitle）：标题必须短小精悍且极具吸引力（例如使用爆款问句、感叹句、情绪词、emoji），且**总字数（包含文字、标点、特殊符号 and emoji）绝对不能超过20字**（严格 ≤ 20字）。
+2. **正文**（xhsBody）：正文要求生动活泼，语气要像小红书个人博主日常分享，分段清晰，善用表情符号/emoji。**绝对不能出现任何营销、导流、推广、购买、加好友、链接、加微信等政治敏感/营销广告引导语**，以天然真实原生态分享为主。
+3. **话题**（xhsTags）：精选**刚好 10 个**极具热度和深度相关的爆款小红书话题。格式为“#话题1 #话题2 ...”，每个话题带#号，空格隔开，严格返回正好 10 个，不能多也不能少。
+
+请使用以下标准的纯JSON格式返回：
+{
+  "xhsTitle": "20字内极富吸引力小红书标题",
+  "xhsBody": "元气活泼的小红书正文...",
+  "xhsTags": "#话题1 #话题2 #话题3 #话题4 #话题5 #话题6 #话题7 #话题8 #话题9 #话题10"
+}`
   });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
@@ -1855,6 +1873,10 @@ function MainApp() {
   };
 
   const saveConfig = async () => {
+    if (!systemConfig.xhsPrompt || !systemConfig.xhsPrompt.trim()) {
+      alert('小红书笔记提示词不能为空！');
+      return;
+    }
     setIsSavingConfig(true);
     try {
       console.log('Original config:', systemConfig);
@@ -4489,6 +4511,23 @@ function MainApp() {
                       placeholder="例如: https://www.xiaohongshu.com/user/profile/xxxxxxxxxxxx"
                     />
                     <p className="text-xs text-gray-400 mt-2">※ 用于在视频发布成功或发布异常时，一键跳转到您对应的小红书主页，以便手动/自动提取并回填最新发布的笔记链接。</p>
+                  </div>
+                  
+                  <div className="pt-2 border-t border-dashed border-gray-200">
+                    <label className="block mb-1 font-semibold text-gray-700 flex items-center justify-between">
+                      <span>小红书AI文案提示词模板：</span>
+                      <span className="text-xs font-normal text-red-500 font-mono">* 必填且不能为空</span>
+                    </label>
+                    <textarea
+                      rows={8}
+                      className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-500 outline-none text-xs font-sans leading-relaxed bg-zinc-50"
+                      value={systemConfig.xhsPrompt || ''}
+                      onChange={(e) => setSystemConfig({...systemConfig, xhsPrompt: e.target.value})}
+                      placeholder="输入生成小红书笔记文案的提示词模板..."
+                    />
+                    <p className="text-xs text-gray-500 mt-1.5 leading-relaxed bg-zinc-50 p-2.5 rounded-lg border border-zinc-150">
+                      💡 默认值已预设。您可以在您的自定义模版中使用 <span className="bg-amber-100 text-amber-800 px-1 py-0.5 rounded border border-amber-200 font-semibold font-mono text-[11px]">{'{storyboardTexts}'}</span> 作为分镜占位。生成时系统会用真实的分镜脚本或视频大纲文本自动替换此部分。
+                    </p>
                   </div>
                 </div>
               </details>
