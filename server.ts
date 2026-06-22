@@ -4,6 +4,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
+import { exec } from "child_process";
 import { fileURLToPath } from "url";
 import os from "os";
 import sharp from "sharp";
@@ -1400,6 +1401,37 @@ async function startServer() {
     } catch (e: any) {
         console.error(`[Config] Route Error:`, e);
         res.status(500).json({ error: e.message || 'Internal Server Error' });
+    }
+  });
+
+  // Open Background Music Folder (BGM) in OS File Explorer (Admin only)
+  app.post('/api/config/open-bgm', requireAuth, requireAdmin, (req, res) => {
+    try {
+      if (!fs.existsSync(bgmDir)) {
+        fs.mkdirSync(bgmDir, { recursive: true });
+      }
+
+      const platform = process.platform;
+      let command = '';
+      if (platform === 'win32') {
+        command = `explorer.exe "${bgmDir.replace(/\//g, '\\')}"`;
+      } else if (platform === 'darwin') {
+        command = `open "${bgmDir}"`;
+      } else {
+        command = `xdg-open "${bgmDir}"`;
+      }
+
+      console.log(`[BGM] Executing command: ${command}`);
+      exec(command, (err) => {
+        if (err) {
+          console.error('[BGM] Failed to open folder using OS command:', err);
+          return res.status(500).json({ error: `无法调用系统命令打开目录: ${err.message}. 该目录路径为: ${bgmDir}` });
+        }
+        res.json({ success: true, message: '成功调用系统打开指定目录', path: bgmDir });
+      });
+    } catch (e: any) {
+      console.error('[BGM] Error opening folder:', e);
+      res.status(500).json({ error: e.message });
     }
   });
 

@@ -4497,6 +4497,42 @@ function MainApp() {
 
               <details className="group border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm" open>
                 <summary className="font-bold text-gray-800 bg-gray-50 p-4 cursor-pointer list-none flex justify-between items-center hover:bg-gray-100 transition-colors">
+                  <div className="flex items-center gap-2"><Folder size={18} className="text-emerald-500"/> 背景音乐 (BGM) 目录配置</div>
+                  <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="p-5 border-t border-gray-200 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-emerald-50/50 p-4 rounded-xl border border-emerald-100 gap-3">
+                    <div>
+                      <h4 className="font-semibold text-emerald-900 text-sm flex items-center gap-1">打开音频资源存放目录</h4>
+                      <p className="text-xs text-emerald-700/80 mt-1 leading-relaxed">
+                        点击右侧/下方按钮将调用所在主机的默认资源管理器打开背景音乐存放文件夹（`bgm`）。您可以将 `.mp3` 或 `.wav` 音频文件直接放入该文件夹中。
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const res = await fetch('/api/config/open-bgm', { method: 'POST' });
+                          const data = await res.json();
+                          if (res.ok) {
+                            alert(`📂 成功打开背景音乐目录!\n路径: ${data.path || ''}`);
+                          } else {
+                            alert(`❌ 无法打开目录: ${data.error || '未知错误'}`);
+                          }
+                        } catch (err: any) {
+                          alert(`❌ 请求失败: ${err.message}`);
+                        }
+                      }}
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-xs font-bold rounded-xl transition-colors shadow-sm flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                    >
+                      <Folder size={14} /> 一键打开 BGM 目录
+                    </button>
+                  </div>
+                </div>
+              </details>
+
+              <details className="group border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm" open>
+                <summary className="font-bold text-gray-800 bg-gray-50 p-4 cursor-pointer list-none flex justify-between items-center hover:bg-gray-100 transition-colors">
                   <div className="flex items-center gap-2"><Share2 size={18} className="text-red-500"/> 小红书平台配置</div>
                   <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" />
                 </summary>

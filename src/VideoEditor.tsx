@@ -436,11 +436,11 @@ export default function VideoEditor({
                 }}
               >
                 <option value="">无背景音乐</option>
-                {bgmList.map((bgm, idx) => <option key={bgm} value={bgm}>音乐 {idx + 1}</option>)}
+                {bgmList.map((bgm, idx) => <option key={bgm} value={bgm}>{bgm}</option>)}
               </select>
-              <div className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-gray-200 mt-1">
-                <span className="text-xs text-gray-500 font-semibold select-none truncate max-w-[120px]">
-                  {task.bgm ? `已选 音乐 ${bgmList.indexOf(task.bgm) !== -1 ? bgmList.indexOf(task.bgm) + 1 : ''}` : '未选择背景音乐'}
+              <div className="flex items-center justify-between bg-white px-3 py-1.5 rounded-lg border border-gray-200 mt-1 gap-2 overflow-hidden">
+                <span className="text-xs text-gray-500 font-semibold select-none truncate flex-1" title={task.bgm || ''}>
+                  {task.bgm ? `已选: ${task.bgm}` : '未选择背景音乐'}
                 </span>
                 
                 <div className="flex gap-1.5 items-center">
