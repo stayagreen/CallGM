@@ -1436,7 +1436,7 @@ async function startServer() {
   });
 
   // Get all downloaded images
-  app.get('/api/images', requireAuth, checkAccess, (req: any, res) => {
+  app.get('/api/images', requireAuth, checkAccess, async (req: any, res) => {
     const user = req.session.user;
     
     let query = 'SELECT assets.*, users.username FROM assets LEFT JOIN users ON assets.user_id = users.id WHERE type = ?';
@@ -1451,15 +1451,39 @@ async function startServer() {
 
     try {
       const rows = db.prepare(query).all(...params) as any[];
-      // The frontend expects an array of paths or objects. Since we are upgrading it, return objects.
-      res.json(rows.map(row => ({
-        id: row.id,
-        path: row.file_path.replace(/\\/g, '/'),
-        userId: row.user_id,
-        username: row.username,
-        createdAt: row.created_at,
-        groupId: row.group_id
-      })));
+      const results = await Promise.all(rows.map(async (row) => {
+        const filePath = row.file_path.replace(/\\/g, '/');
+        const absPath = path.join(downloadDir, row.file_path);
+        let resolutionTag = '1K';
+        
+        if (fs.existsSync(absPath)) {
+          try {
+            const meta = await sharp(absPath).metadata();
+            if (meta.width && meta.height) {
+              const maxDim = Math.max(meta.width, meta.height);
+              const minDim = Math.min(meta.width, meta.height);
+              if (maxDim >= 3200 || minDim >= 2160) {
+                resolutionTag = '4K';
+              } else if (maxDim >= 2000 || minDim >= 1400) {
+                resolutionTag = '2K';
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+        
+        return {
+          id: row.id,
+          path: filePath,
+          userId: row.user_id,
+          username: row.username,
+          createdAt: row.created_at,
+          groupId: row.group_id,
+          resolutionTag
+        };
+      }));
+      res.json(results);
     } catch (err) {
       console.error('Failed to read images from DB:', err);
       res.status(500).json({ error: 'Failed to read images' });
@@ -1702,7 +1726,7 @@ async function startServer() {
   });
 
   // Get all downloaded videos
-  app.get('/api/videos', requireAuth, checkAccess, (req: any, res) => {
+  app.get('/api/videos', requireAuth, checkAccess, async (req: any, res) => {
     const user = req.session.user;
 
     let query = 'SELECT assets.*, users.username, tasks.data AS task_data FROM assets LEFT JOIN users ON assets.user_id = users.id LEFT JOIN tasks ON assets.job_id = tasks.id WHERE assets.type = ?';
@@ -1717,19 +1741,58 @@ async function startServer() {
 
     try {
       const rows = db.prepare(query).all(...params) as any[];
-      // The frontend expects paths relative to /downloads/videos/
-      res.json(rows.map(row => {
+      const results = await Promise.all(rows.map(async (row) => {
         let taskData = null;
         try { if (row.task_data) taskData = JSON.parse(row.task_data); } catch(e) {}
+        
+        let resolutionTag = '1K';
+        
+        // Check if the video has storyboards in taskData to inspect first image resolution
+        if (taskData && taskData.storyboards && taskData.storyboards.length > 0) {
+          const firstImg = taskData.storyboards[0].image;
+          if (firstImg) {
+            let relativeImgPath = firstImg;
+            if (relativeImgPath.startsWith('/uploads/')) {
+              relativeImgPath = relativeImgPath.replace('/uploads/', 'uploads/');
+            } else if (relativeImgPath.startsWith('/downloads/')) {
+              relativeImgPath = relativeImgPath.replace('/downloads/', 'download/');
+            } else if (relativeImgPath.startsWith('download/')) {
+              // keep as is
+            } else if (!relativeImgPath.startsWith('uploads/')) {
+              relativeImgPath = 'download/' + relativeImgPath;
+            }
+            
+            const absImgPath = path.join(process.cwd(), relativeImgPath);
+            if (fs.existsSync(absImgPath)) {
+              try {
+                const meta = await sharp(absImgPath).metadata();
+                if (meta.width && meta.height) {
+                  const maxDim = Math.max(meta.width, meta.height);
+                  const minDim = Math.min(meta.width, meta.height);
+                  if (maxDim >= 3200 || minDim >= 2160) {
+                    resolutionTag = '4K';
+                  } else if (maxDim >= 2000 || minDim >= 1400) {
+                    resolutionTag = '2K';
+                  }
+                }
+              } catch (e) {
+                // ignore
+              }
+            }
+          }
+        }
+        
         return {
           path: row.file_path.replace(/\\/g, '/'),
           userId: row.user_id,
           username: row.username,
           createdAt: row.created_at,
           jobId: row.job_id,
-          taskData: taskData
+          taskData: taskData,
+          resolutionTag
         };
       }));
+      res.json(results);
     } catch (err) {
       console.error('Failed to read videos from DB:', err);
       res.status(500).json({ error: 'Internal server error' });

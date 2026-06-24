@@ -40,6 +40,7 @@ interface GalleryAsset {
   createdAt?: string;
   jobId?: string;
   taskData?: VideoTask;
+  resolutionTag?: string;
 }
 
 interface Template {
@@ -2906,6 +2907,18 @@ function MainApp() {
                     <div key={img} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
                       <div onClick={() => !processingGalleryImages.has(img) && setViewingImage(`/downloads/${img}?t=${galleryUpdateToken}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
                         <img src={`/api/thumbnails/downloads/${img}?t=${galleryUpdateToken}`} alt={img} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" loading="lazy" />
+                        
+                        {/* Resolution Tag Pill */}
+                        {imgData.resolutionTag && (
+                          <div className={`absolute top-2 left-2 z-10 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm pointer-events-none uppercase tracking-wider ${
+                            imgData.resolutionTag === '4K' ? 'bg-red-600/90' :
+                            imgData.resolutionTag === '2K' ? 'bg-blue-600/90' :
+                            'bg-gray-700/80'
+                          }`}>
+                            {imgData.resolutionTag}
+                          </div>
+                        )}
+
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
                           <ImageIcon className="w-8 h-8 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                         </div>
@@ -2922,7 +2935,7 @@ function MainApp() {
                             }
                             setSelectedImages(next);
                           }}
-                          className={`absolute top-2 left-2 z-20 w-6 h-6 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
+                          className={`absolute top-2 right-2 z-20 w-6 h-6 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
                             selectedImages.has(img)
                               ? 'bg-purple-600 border-purple-600 text-white scale-110 shadow-md shadow-purple-500/30 opacity-100'
                               : 'bg-white/80 backdrop-blur-sm border-gray-300 hover:bg-white text-transparent opacity-0 group-hover:opacity-100 scale-95 hover:scale-100'
@@ -3482,6 +3495,15 @@ function MainApp() {
                 <div key={vid} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
                   <div onClick={() => setViewingVideo(`/downloads/videos/${vid}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
                     <img src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} alt={vid} className="w-full h-full object-fill group-hover:scale-105 transition-transform duration-300 bg-gray-100" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                    {vidData.resolutionTag && (
+                      <div className={`absolute top-2 left-2 z-10 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm pointer-events-none uppercase tracking-wider ${
+                        vidData.resolutionTag === '4K' ? 'bg-red-600/90' :
+                        vidData.resolutionTag === '2K' ? 'bg-blue-600/90' :
+                        'bg-gray-700/80'
+                      }`}>
+                        {vidData.resolutionTag}
+                      </div>
+                    )}
                     <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center">
                       <PlayCircle className="w-12 h-12 text-white opacity-80 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                     </div>
@@ -4612,6 +4634,15 @@ function MainApp() {
                         loading="lazy" 
                         onError={(e) => { e.currentTarget.style.display = 'none'; }}
                       />
+                      {imgData.resolutionTag && (
+                        <div className={`absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded text-[8px] font-bold text-white shadow-sm pointer-events-none uppercase tracking-wider ${
+                          imgData.resolutionTag === '4K' ? 'bg-red-600/90' :
+                          imgData.resolutionTag === '2K' ? 'bg-blue-600/90' :
+                          'bg-gray-700/80'
+                        }`}>
+                          {imgData.resolutionTag}
+                        </div>
+                      )}
                       {selectedGalleryImages.has(img) && (
                         <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
                           <CheckCircle2 className="text-white drop-shadow-md" size={32} />
@@ -5091,6 +5122,15 @@ function MainApp() {
                         loading="lazy" 
                         onError={(e) => { e.currentTarget.style.display = 'none'; }}
                       />
+                      {imgData.resolutionTag && (
+                        <div className={`absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded text-[8px] font-bold text-white shadow-sm pointer-events-none uppercase tracking-wider ${
+                          imgData.resolutionTag === '4K' ? 'bg-red-600/90' :
+                          imgData.resolutionTag === '2K' ? 'bg-blue-600/90' :
+                          'bg-gray-700/80'
+                        }`}>
+                          {imgData.resolutionTag}
+                        </div>
+                      )}
                     </div>
                   )})}
                 </div>
