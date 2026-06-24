@@ -191,8 +191,9 @@ async function processVideoTask(filePath: string, jobKey: string) {
             if (metadata.width && metadata.height) {
                 const aspect = metadata.width / metadata.height;
                 const maxDim = Math.max(metadata.width, metadata.height);
+                const minDim = Math.min(metadata.width, metadata.height);
 
-                if (maxDim >= 3840) {
+                if (maxDim >= 3200 || minDim >= 2160) {
                     // 4K Target
                     crf = '18';
                     videoBitrate = '40M';
@@ -206,7 +207,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
                         targetWidth = Math.round((3840 * aspect) / 2) * 2;
                     }
                     console.log(`[VideoEngine] 🚀 检测到 4K 原图分辨率 (${metadata.width}x${metadata.height}), 自动适配为 4K 输出: ${targetWidth}x${targetHeight}, 码率: 40M`);
-                } else if (maxDim >= 2560) {
+                } else if (maxDim >= 2000 || minDim >= 1400) {
                     // 2K Target
                     crf = '20';
                     videoBitrate = '18M';
