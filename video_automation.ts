@@ -154,6 +154,10 @@ async function processVideoTask(filePath: string, jobKey: string) {
     // Determine target resolution based on first image (1080p default)
     let targetWidth = 1920;
     let targetHeight = 1080;
+    let crf = '23';
+    let videoBitrate = '8M';
+    let maxRate = '12M';
+    let bufSize = '16M';
 
     if (storyboards.length > 0) {
         let firstImgPath = storyboards[0].image;
@@ -186,12 +190,50 @@ async function processVideoTask(filePath: string, jobKey: string) {
             
             if (metadata.width && metadata.height) {
                 const aspect = metadata.width / metadata.height;
-                if (metadata.width >= metadata.height) {
-                    targetHeight = 1080;
-                    targetWidth = Math.round((1080 * aspect) / 2) * 2; // Ensure even number
+                const maxDim = Math.max(metadata.width, metadata.height);
+
+                if (maxDim >= 3840) {
+                    // 4K Target
+                    crf = '18';
+                    videoBitrate = '40M';
+                    maxRate = '50M';
+                    bufSize = '80M';
+                    if (metadata.width >= metadata.height) {
+                        targetWidth = 3840;
+                        targetHeight = Math.round((3840 / aspect) / 2) * 2;
+                    } else {
+                        targetHeight = 3840;
+                        targetWidth = Math.round((3840 * aspect) / 2) * 2;
+                    }
+                    console.log(`[VideoEngine] 🚀 检测到 4K 原图分辨率 (${metadata.width}x${metadata.height}), 自动适配为 4K 输出: ${targetWidth}x${targetHeight}, 码率: 40M`);
+                } else if (maxDim >= 2560) {
+                    // 2K Target
+                    crf = '20';
+                    videoBitrate = '18M';
+                    maxRate = '25M';
+                    bufSize = '40M';
+                    if (metadata.width >= metadata.height) {
+                        targetWidth = 2560;
+                        targetHeight = Math.round((2560 / aspect) / 2) * 2;
+                    } else {
+                        targetHeight = 2560;
+                        targetWidth = Math.round((2560 * aspect) / 2) * 2;
+                    }
+                    console.log(`[VideoEngine] 🚀 检测到 2K 原图分辨率 (${metadata.width}x${metadata.height}), 自动适配为 2K 输出: ${targetWidth}x${targetHeight}, 码率: 18M`);
                 } else {
-                    targetWidth = 1080;
-                    targetHeight = Math.round((1080 / aspect) / 2) * 2; // Ensure even number
+                    // 1080P Target
+                    crf = '23';
+                    videoBitrate = '8M';
+                    maxRate = '12M';
+                    bufSize = '16M';
+                    if (metadata.width >= metadata.height) {
+                        targetHeight = 1080;
+                        targetWidth = Math.round((1080 * aspect) / 2) * 2;
+                    } else {
+                        targetWidth = 1080;
+                        targetHeight = Math.round((1080 / aspect) / 2) * 2;
+                    }
+                    console.log(`[VideoEngine] 🚀 使用标准 1080P 渲染: ${targetWidth}x${targetHeight}, 码率: 8M`);
                 }
             }
         } catch (e) {
@@ -205,7 +247,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
         if (cancelledVideoJobs.has(jobId)) throw new Error('CANCELLED');
         const sb = storyboards[i];
         const clipPath = path.join(videoTaskDir, `temp_${filename}_clip_${i}.mp4`);
-        await generateClip(sb, clipPath, targetWidth, targetHeight);
+        await generateClip(sb, clipPath, targetWidth, targetHeight, crf, videoBitrate, maxRate, bufSize);
         clipPaths.push(clipPath);
         videoJobProgress.set(jobKey, { progress: Math.floor((i / storyboards.length) * 40), status: 'running' });
     }
@@ -216,7 +258,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     let finalDuration = 0;
     await concatenateClips(clipPaths, storyboards, concatPath, (p) => {
         videoJobProgress.set(jobKey, { progress: 40 + Math.floor(p * 0.4), status: 'running' });
-    }).then(duration => {
+    }, crf, videoBitrate, maxRate, bufSize).then(duration => {
         finalDuration = duration;
     });
 
@@ -224,7 +266,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     if (cancelledVideoJobs.has(jobId)) throw new Error('CANCELLED');
     await addBgmAndFinalize(concatPath, finalDuration, bgm, introAnimation, outroAnimation, outputPath, (p) => {
         videoJobProgress.set(jobKey, { progress: 80 + Math.floor(p * 0.2), status: 'running' });
-    });
+    }, crf, videoBitrate, maxRate, bufSize);
 
     // 4. Generate Thumbnail
     await generateThumbnail(outputPath, thumbPath);
@@ -280,7 +322,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     console.log(`✅ 视频渲染完成: ${outputFilename} (User: ${userId || 'global'})`);
 }
 
-async function generateClip(sb: any, outputPath: string, targetWidth: number, targetHeight: number): Promise<void> {
+async function generateClip(sb: any, outputPath: string, targetWidth: number, targetHeight: number, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M'): Promise<void> {
     // Resolve image path
     let imgPath = sb.image;
     if (imgPath.startsWith('/uploads/')) {
@@ -412,7 +454,10 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         '-map', '[outv]',
         '-c:v', 'libx264',
         '-preset', 'medium',
-        '-crf', '23',
+        '-crf', crf,
+        '-b:v', bitrate,
+        '-maxrate', maxRate,
+        '-bufsize', bufSize,
         '-t', duration.toString(),
         '-r', '30',
         '-pix_fmt', 'yuv420p',
@@ -431,7 +476,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
     }
 }
 
-async function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: string, onProgress: (p: number) => void): Promise<number> {
+async function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: string, onProgress: (p: number) => void, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M'): Promise<number> {
     if (clipPaths.length === 1) {
         fs.copyFileSync(clipPaths[0], outputPath);
         return storyboards[0].duration || 3;
@@ -492,7 +537,10 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
     args.push('-map', '[outv]');
     args.push('-c:v', 'libx264');
     args.push('-preset', 'medium');
-    args.push('-crf', '23');
+    args.push('-crf', crf);
+    args.push('-b:v', bitrate);
+    args.push('-maxrate', maxRate);
+    args.push('-bufsize', bufSize);
     args.push('-pix_fmt', 'yuv420p');
     args.push('-movflags', '+faststart');
     args.push('-y');
@@ -509,7 +557,7 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
     }
 }
 
-async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string, intro: string, outro: string, outputPath: string, onProgress: (p: number) => void): Promise<void> {
+async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string, intro: string, outro: string, outputPath: string, onProgress: (p: number) => void, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M'): Promise<void> {
     const args = ['-i', videoPath];
     
     let filters = [];
@@ -543,7 +591,10 @@ async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: 
     args.push(
         '-c:v', 'libx264',
         '-preset', 'medium',
-        '-crf', '23',
+        '-crf', crf,
+        '-b:v', bitrate,
+        '-maxrate', maxRate,
+        '-bufsize', bufSize,
         '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart',
         '-y',
