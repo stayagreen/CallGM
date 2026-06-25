@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search } from 'lucide-react';
+import { Plus, Minus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -967,6 +967,43 @@ function MainApp() {
   const [movingAssetPath, setMovingAssetPath] = useState<string | null>(null);
   const [videoGallery, setVideoGallery] = useState<GalleryAsset[]>([]);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [imgZoom, setImgZoom] = useState<number>(1);
+  const [imgOffset, setImgOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [imgIsDragging, setImgIsDragging] = useState<boolean>(false);
+  const [imgDragStart, setImgDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const viewingContainerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    // Reset zoom and offset when opening/closing or switching image
+    setImgZoom(1);
+    setImgOffset({ x: 0, y: 0 });
+  }, [viewingImage]);
+
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      if (!viewingImage) return;
+      e.preventDefault();
+      
+      const zoomFactor = 0.12;
+      let direction = e.deltaY < 0 ? 1 : -1;
+      
+      setImgZoom(prev => {
+        const nextZoom = Math.max(0.5, Math.min(15, prev + direction * zoomFactor * prev));
+        return nextZoom;
+      });
+    };
+
+    const containerElement = viewingContainerRef.current;
+    if (containerElement) {
+      containerElement.addEventListener('wheel', handleWheel, { passive: false });
+    }
+    return () => {
+      if (containerElement) {
+        containerElement.removeEventListener('wheel', handleWheel);
+      }
+    };
+  }, [viewingImage]);
+
   const [viewingVideo, setViewingVideo] = useState<string | null>(null);
   const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
   const [viewingXhsNotes, setViewingXhsNotes] = useState<{ videoId: string, jobId?: string, taskData: VideoTask } | null>(null);
@@ -4837,26 +4874,102 @@ function MainApp() {
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 z-[999]" onClick={() => setViewingImage(null)}>
           <div className="relative max-w-4xl w-full max-h-[90vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
             <div className="relative w-full flex justify-center">
-              <img src={viewingImage} className="max-w-full max-h-[75vh] object-contain rounded-lg shadow-2xl" />
+              {/* Interactive Zoom/Pan Viewport */}
+              <div 
+                ref={viewingContainerRef}
+                className="relative w-full h-[70vh] overflow-hidden bg-neutral-900 rounded-xl flex items-center justify-center cursor-grab active:cursor-grabbing border border-neutral-800 shadow-2xl select-none"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setImgIsDragging(true);
+                  setImgDragStart({ x: e.clientX - imgOffset.x, y: e.clientY - imgOffset.y });
+                }}
+                onMouseMove={(e) => {
+                  if (!imgIsDragging) return;
+                  e.preventDefault();
+                  setImgOffset({
+                    x: e.clientX - imgDragStart.x,
+                    y: e.clientY - imgDragStart.y
+                  });
+                }}
+                onMouseUp={() => setImgIsDragging(false)}
+                onMouseLeave={() => setImgIsDragging(false)}
+                onTouchStart={(e) => {
+                  if (e.touches.length === 1) {
+                    setImgIsDragging(true);
+                    const touch = e.touches[0];
+                    setImgDragStart({ x: touch.clientX - imgOffset.x, y: touch.clientY - imgOffset.y });
+                  }
+                }}
+                onTouchMove={(e) => {
+                  if (!imgIsDragging || e.touches.length !== 1) return;
+                  const touch = e.touches[0];
+                  setImgOffset({
+                    x: touch.clientX - imgDragStart.x,
+                    y: touch.clientY - imgDragStart.y
+                  });
+                }}
+                onTouchEnd={() => setImgIsDragging(false)}
+              >
+                <img 
+                  src={viewingImage} 
+                  style={{
+                    transform: `translate(${imgOffset.x}px, ${imgOffset.y}px) scale(${imgZoom})`,
+                    transition: imgIsDragging ? 'none' : 'transform 0.1s ease-out',
+                    maxHeight: '100%',
+                    maxWidth: '100%',
+                    objectFit: 'contain'
+                  }}
+                  className="pointer-events-none rounded shadow-lg" 
+                  alt="Preview"
+                />
+
+                {/* Floating Controller Panel overlay */}
+                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-2 bg-neutral-950/85 backdrop-blur-md px-4 py-2 rounded-full border border-neutral-800 text-white select-none shadow-xl">
+                  <button 
+                    onClick={() => setImgZoom(prev => Math.max(0.5, prev - 0.25))}
+                    className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-neutral-800 transition active:scale-90"
+                    title="缩小"
+                  >
+                    <Minus size={16} />
+                  </button>
+                  <span className="font-mono text-xs px-2 min-w-[50px] text-center text-neutral-300">
+                    {Math.round(imgZoom * 100)}%
+                  </span>
+                  <button 
+                    onClick={() => setImgZoom(prev => Math.min(15, prev + 0.25))}
+                    className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-neutral-800 transition active:scale-90"
+                    title="放大"
+                  >
+                    <Plus size={16} />
+                  </button>
+                  <div className="w-[1px] h-4 bg-neutral-800 mx-1"></div>
+                  <button 
+                    onClick={() => { setImgZoom(1); setImgOffset({ x: 0, y: 0 }); }}
+                    className="px-3 py-1 text-xs font-semibold rounded-full bg-neutral-800 hover:bg-neutral-700 transition active:scale-90 text-neutral-200"
+                  >
+                    重置
+                  </button>
+                </div>
+              </div>
+
+              {/* Close Button on top corner */}
               <button 
                 onClick={() => setViewingImage(null)}
-                className="absolute -top-4 -right-4 w-10 h-10 bg-white text-gray-900 rounded-full flex items-center justify-center shadow-xl hover:bg-gray-100 transition-colors z-[1001]"
+                className="absolute -top-3 -right-3 w-10 h-10 bg-white text-gray-900 rounded-full flex items-center justify-center shadow-xl hover:bg-gray-100 transition-colors z-[1001]"
               >
                 <X size={24} />
               </button>
             </div>
             
-            <div className="mt-6 flex flex-col items-center gap-4 w-full">
+            <div className="mt-4 flex flex-col items-center gap-3 w-full">
               <div className="flex justify-center gap-4 w-full">
-                <a href={viewingImage} download className="flex-1 max-w-[160px] bg-white text-gray-900 px-6 py-3 rounded-full font-bold hover:bg-gray-100 transition shadow-lg text-center">下载图片</a>
-                <button onClick={() => setViewingImage(null)} className="flex-1 max-w-[160px] bg-gray-800 text-white px-6 py-3 rounded-full font-bold hover:bg-gray-700 transition shadow-lg">关闭预览</button>
+                <a href={viewingImage} download className="flex-1 max-w-[160px] bg-white text-gray-900 px-6 py-2.5 rounded-full font-bold hover:bg-gray-100 transition shadow-lg text-center text-sm">下载图片</a>
+                <button onClick={() => setViewingImage(null)} className="flex-1 max-w-[160px] bg-gray-800 text-white px-6 py-2.5 rounded-full font-bold hover:bg-gray-700 transition shadow-lg text-sm">关闭预览</button>
               </div>
               
-              {isMobile && (
-                <p className="text-white/60 text-xs bg-white/10 px-4 py-2 rounded-full backdrop-blur-sm">
-                  提示：iOS 用户请长按图片选择「保存到相册」
-                </p>
-              )}
+              <p className="text-white/40 text-xs text-center">
+                💡 提示：在图片框内滚动 <b>鼠标滑轮</b> 可自由放大/缩小，<b>按住左键拖拽</b> 可以移动画面。
+              </p>
             </div>
           </div>
         </div>
