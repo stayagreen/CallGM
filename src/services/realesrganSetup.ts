@@ -3,7 +3,7 @@ import path from 'path';
 import https from 'https';
 import AdmZip from 'adm-zip';
 
-const ZIP_URL = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/realesrgan-ncnn-vulkan-20220424-windows.zip';
+const ZIP_URL = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-windows.zip';
 
 // We can download and extract directly in the workspace
 export async function downloadAndSetupRealESRGAN(onProgress?: (msg: string) => void): Promise<string> {
