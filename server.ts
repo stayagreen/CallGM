@@ -2792,6 +2792,149 @@ async function startServer() {
     res.json({ success: true, urls: copiedUrls });
   });
 
+  // Find realesrgan-ncnn-vulkan executable command
+  function getRealESRGANCommand(): string {
+    const isWin = process.platform === 'win32';
+    const binName = isWin ? 'realesrgan-ncnn-vulkan.exe' : 'realesrgan-ncnn-vulkan';
+    
+    const possiblePaths = [
+      path.join(process.cwd(), binName),
+      path.join(process.cwd(), 'bin', binName),
+      path.join(process.cwd(), 'tools', binName),
+      path.join(process.cwd(), 'realesrgan', binName),
+    ];
+    
+    for (const p of possiblePaths) {
+      if (fs.existsSync(p)) {
+        return `"${p}"`;
+      }
+    }
+    return binName;
+  }
+
+  // Super-resolution (Upscale 2x) endpoint
+  app.post('/api/images/upscale', requireAuth, checkAccess, async (req: any, res) => {
+    const { assetId } = req.body;
+    const user = req.session.user;
+    
+    if (!assetId) {
+      return res.status(400).json({ error: '请提供图片ID (assetId is required)' });
+    }
+    
+    try {
+      // 1. Fetch asset from DB
+      const row = db.prepare('SELECT * FROM assets WHERE id = ?').get(assetId) as any;
+      if (!row) {
+        return res.status(404).json({ error: '未找到该图片资源' });
+      }
+      
+      // Permission check: admins can access any asset, regular users only their own
+      if (user.role !== 'admin' && row.user_id !== user.id) {
+        return res.status(403).json({ error: '您无权操作此图片资源' });
+      }
+      
+      const relativeInputPath = row.file_path;
+      // In the gallery, asset type is 'image', which resides relative to downloadDir
+      const absoluteInputPath = path.join(downloadDir, relativeInputPath);
+      
+      if (!fs.existsSync(absoluteInputPath)) {
+        return res.status(404).json({ error: '物理文件不存在' });
+      }
+      
+      // 2. Validate current resolution (must not be 4K)
+      let meta;
+      try {
+        meta = await sharp(absoluteInputPath).metadata();
+      } catch (e: any) {
+        return res.status(500).json({ error: `无法读取图片元数据: ${e.message}` });
+      }
+      
+      if (meta.width && meta.height) {
+        const maxDim = Math.max(meta.width, meta.height);
+        const minDim = Math.min(meta.width, meta.height);
+        if (maxDim >= 3200 || minDim >= 2160) {
+          return res.status(400).json({ error: '该图片已是4K超高清分辨率，无需继续超分' });
+        }
+      }
+      
+      // 3. Define output filename & paths
+      const ext = path.extname(relativeInputPath);
+      const baseName = path.basename(relativeInputPath, ext);
+      const dirName = path.dirname(relativeInputPath);
+      
+      // Output file path with suffix '_2x_timestamp'
+      const outputFilename = `${baseName}_2x_${Date.now()}${ext}`;
+      const relativeOutputPath = path.join(dirName, outputFilename).replace(/\\/g, '/');
+      const absoluteOutputPath = path.join(downloadDir, relativeOutputPath);
+      
+      // Ensure directory exists
+      fs.mkdirSync(path.dirname(absoluteOutputPath), { recursive: true });
+      
+      const cmdBin = getRealESRGANCommand();
+      // s = 2 for 2x upscaling
+      const cmd = `${cmdBin} -i "${absoluteInputPath}" -o "${absoluteOutputPath}" -s 2`;
+      
+      console.log(`🚀 [Super-Resolution] Attempting GPU-accelerated upscale: ${cmd}`);
+      
+      exec(cmd, (err, stdout, stderr) => {
+        if (err) {
+          console.warn(`⚠️ [Super-Resolution] GPU upscale failed or driver not supported. Error: ${err.message}. Stderr: ${stderr}`);
+          console.log(`🔄 [Super-Resolution] Falling back to CPU mode (-g -1)...`);
+          
+          const cpuCmd = `${cmdBin} -i "${absoluteInputPath}" -o "${absoluteOutputPath}" -s 2 -g -1`;
+          console.log(`🚀 [Super-Resolution] Running CPU upscale: ${cpuCmd}`);
+          
+          exec(cpuCmd, (cpuErr, cpuStdout, cpuStderr) => {
+            if (cpuErr) {
+              console.error(`❌ [Super-Resolution] CPU fallback upscale also failed! Error: ${cpuErr.message}. Stderr: ${cpuStderr}`);
+              return res.status(500).json({ error: `超分失败: 显卡与CPU处理均报错。请确保您的系统已安装且能运行 Real-ESRGAN-ncnn-vulkan。错误: ${cpuErr.message}` });
+            }
+            
+            completeUpscale(relativeOutputPath, absoluteOutputPath, row.group_id);
+          });
+        } else {
+          completeUpscale(relativeOutputPath, absoluteOutputPath, row.group_id);
+        }
+      });
+      
+      function completeUpscale(relOut: string, absOut: string, groupId: number | null) {
+        if (!fs.existsSync(absOut)) {
+          return res.status(500).json({ error: '超分成功结束，但未生成输出文件' });
+        }
+        
+        try {
+          // 4. Register new upscaled asset in the database
+          const stmt = db.prepare('INSERT INTO assets (user_id, type, file_path, group_id) VALUES (?, ?, ?, ?)');
+          const info = stmt.run(user.id, 'image', relOut, groupId);
+          const newAssetId = info.lastInsertRowid;
+          
+          console.log(`✅ [Super-Resolution] Successfully upscaled image. New Asset ID: ${newAssetId}`);
+          
+          res.json({
+            success: true,
+            message: '超分成功！',
+            asset: {
+              id: newAssetId,
+              path: relOut,
+              userId: user.id,
+              username: user.username,
+              createdAt: new Date().toISOString(),
+              groupId: groupId,
+              resolutionTag: '2K'
+            }
+          });
+        } catch (dbErr: any) {
+          console.error('❌ [Super-Resolution] Failed to insert upscaled asset into database:', dbErr);
+          res.status(500).json({ error: `超分完成，但保存到数据库失败: ${dbErr.message}` });
+        }
+      }
+      
+    } catch (err: any) {
+      console.error('❌ [Super-Resolution] Unexpected error:', err);
+      res.status(500).json({ error: `超分处理发生意外错误: ${err.message}` });
+    }
+  });
+
   app.post("/api/gallery/save-manual-edit", async (req, res) => {
     const { filename, base64 } = req.body;
     if (!filename || !base64) {

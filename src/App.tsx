@@ -972,6 +972,7 @@ function MainApp() {
   const [showXhsGalleryPicker, setShowXhsGalleryPicker] = useState(false);
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
   const [processingGalleryImages, setProcessingGalleryImages] = useState<Set<string>>(new Set());
+  const [upscalingAssetIds, setUpscalingAssetIds] = useState<Set<number>>(new Set());
   const manualProcessingImages = useRef<Set<string>>(new Set());
   const [galleryUpdateToken, setGalleryUpdateToken] = useState<number>(Date.now());
   const [editingGalleryImage, setEditingGalleryImage] = useState<{ filename: string, url: string } | null>(null);
@@ -1204,6 +1205,43 @@ function MainApp() {
       }
     }
   };
+
+  const handleUpscaleImage = async (imgData: GalleryAsset) => {
+    if (imgData.resolutionTag === '4K') {
+      alert('该图片已是 4K 高清分辨率，无需继续超分！');
+      return;
+    }
+    
+    if (window.confirm('确认要对该图片进行 2 倍超分吗？\n超分处理可能需要一些时间，超分后的图将作为新图片保存在该图组下。')) {
+      setUpscalingAssetIds(prev => new Set(prev).add(imgData.id));
+      
+      try {
+        const res = await fetch('/api/images/upscale', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assetId: imgData.id })
+        });
+        
+        const data = await res.json();
+        if (res.ok && data.success) {
+          alert('超分成功！新图片已添加至您的图库中。');
+          await fetchGallery();
+        } else {
+          alert('超分失败：' + (data.error || '未知错误'));
+        }
+      } catch (err) {
+        console.error('Super-resolution upscale request failed:', err);
+        alert('超分请求失败，请确保后台服务正常且已正确配置 Real-ESRGAN 环境。');
+      } finally {
+        setUpscalingAssetIds(prev => {
+          const next = new Set(prev);
+          next.delete(imgData.id);
+          return next;
+        });
+      }
+    }
+  };
+
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
@@ -2952,94 +2990,127 @@ function MainApp() {
                             <span className="text-[10px] text-white font-bold">正在去水印...</span>
                           </div>
                         )}
+
+                        {upscalingAssetIds.has(imgData.id) && (
+                          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center p-2 z-10">
+                            <div className="w-6 h-6 border-2 border-purple-400 border-t-transparent rounded-full animate-spin mb-2 text-purple-400"></div>
+                            <span className="text-[10px] text-white font-bold animate-pulse">正在超分2x...</span>
+                          </div>
+                        )}
                       </div>
                       <div className="mt-3 px-1">
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={img}>{img.split('/').pop()}</span>
-                          <div className="flex gap-1 relative">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!processingGalleryImages.has(img)) {
-                                  setEditingGalleryImage({ filename: img, url: `/downloads/${img}?t=${galleryUpdateToken}` });
-                                }
-                              }}
-                              disabled={processingGalleryImages.has(img)}
-                              className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-purple-500 hover:bg-purple-50'}`}
-                              title="智能填充 (手动去水印)"
-                            >
-                              <Paintbrush className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!processingGalleryImages.has(img)) {
-                                  handleOneClickWatermark(img);
-                                }
-                              }}
-                              disabled={processingGalleryImages.has(img)}
-                              className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
-                              title="一键去水印"
-                            >
-                              <Scissors className="w-4 h-4" />
-                            </button>
-                            
-                            {/* 移动至相册/图组菜单 */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!processingGalleryImages.has(img)) {
-                                  setMovingAssetPath(movingAssetPath === img ? null : img);
-                                }
-                              }}
-                              disabled={processingGalleryImages.has(img)}
-                              className={`p-1.5 rounded-md transition-colors relative ${movingAssetPath === img ? 'text-purple-700 bg-purple-100' : 'text-amber-600 hover:bg-amber-50'}`}
-                              title="移动到图组"
-                            >
-                              <Folder className="w-4 h-4" />
-                              
-                              {movingAssetPath === img && (
-                                <div 
-                                  className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden py-1 text-left" 
-                                  onClick={e => e.stopPropagation()}
+                          {(() => {
+                            const isBusy = processingGalleryImages.has(img) || upscalingAssetIds.has(imgData.id);
+                            return (
+                              <div className="flex gap-1 relative">
+                                {/* 2倍超分按钮 (4K图片不可点击) */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isBusy) {
+                                      handleUpscaleImage(imgData);
+                                    }
+                                  }}
+                                  disabled={isBusy || imgData.resolutionTag === '4K'}
+                                  className={`p-1.5 rounded-md transition-colors ${
+                                    imgData.resolutionTag === '4K' 
+                                      ? 'text-gray-200 cursor-not-allowed opacity-50' 
+                                      : isBusy 
+                                        ? 'text-gray-300 animate-pulse' 
+                                        : 'text-indigo-600 hover:bg-indigo-50'
+                                  }`}
+                                  title={imgData.resolutionTag === '4K' ? "4K图片已是最高画质" : "2倍高清超分"}
                                 >
-                                  <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 border-b border-gray-100 uppercase bg-gray-50 flex items-center gap-1">
-                                    <Folder size={10} /> 移动至图组...
-                                  </div>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); handleMoveToGroup(img, null); }}
-                                    className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 ${!imgData.groupId ? 'text-purple-600 bg-purple-50 font-bold' : 'text-gray-600 hover:bg-purple-50'}`}
-                                  >
-                                    <Folder size={12} className={!imgData.groupId ? "text-purple-600" : "text-gray-400"} /> 未分组 (默认)
-                                  </button>
-                                  {assetGroups.map(grp => (
-                                    <button
-                                      key={grp.id}
-                                      onClick={(e) => { e.stopPropagation(); handleMoveToGroup(img, grp.id); }}
-                                      className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 truncate ${imgData.groupId === grp.id ? 'text-purple-600 bg-purple-50 font-bold' : 'text-gray-600 hover:bg-purple-50'}`}
-                                      title={grp.name}
-                                    >
-                                      <Folder size={12} className={imgData.groupId === grp.id ? "text-purple-600" : "text-gray-400"} /> {grp.name}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </button>
+                                  <Sparkles className="w-4 h-4" />
+                                </button>
 
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (!processingGalleryImages.has(img)) {
-                                  deleteGalleryImage(img);
-                                }
-                              }}
-                              disabled={processingGalleryImages.has(img)}
-                              className={`p-1.5 rounded-md transition-colors ${processingGalleryImages.has(img) ? 'text-gray-300' : 'text-red-500 hover:bg-red-50'}`}
-                              title="彻底删除源文件"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isBusy) {
+                                      setEditingGalleryImage({ filename: img, url: `/downloads/${img}?t=${galleryUpdateToken}` });
+                                    }
+                                  }}
+                                  disabled={isBusy}
+                                  className={`p-1.5 rounded-md transition-colors ${isBusy ? 'text-gray-300' : 'text-purple-500 hover:bg-purple-50'}`}
+                                  title="智能填充 (手动去水印)"
+                                >
+                                  <Paintbrush className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isBusy) {
+                                      handleOneClickWatermark(img);
+                                    }
+                                  }}
+                                  disabled={isBusy}
+                                  className={`p-1.5 rounded-md transition-colors ${isBusy ? 'text-gray-300' : 'text-blue-500 hover:bg-blue-50'}`}
+                                  title="一键去水印"
+                                >
+                                  <Scissors className="w-4 h-4" />
+                                </button>
+                                
+                                {/* 移动至相册/图组菜单 */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isBusy) {
+                                      setMovingAssetPath(movingAssetPath === img ? null : img);
+                                    }
+                                  }}
+                                  disabled={isBusy}
+                                  className={`p-1.5 rounded-md transition-colors relative ${movingAssetPath === img ? 'text-purple-700 bg-purple-100' : 'text-amber-600 hover:bg-amber-50'}`}
+                                  title="移动到图组"
+                                >
+                                  <Folder className="w-4 h-4" />
+                                  
+                                  {movingAssetPath === img && (
+                                    <div 
+                                      className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden py-1 text-left" 
+                                      onClick={e => e.stopPropagation()}
+                                    >
+                                      <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 border-b border-gray-100 uppercase bg-gray-50 flex items-center gap-1">
+                                        <Folder size={10} /> 移动至图组...
+                                      </div>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); handleMoveToGroup(img, null); }}
+                                        className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 ${!imgData.groupId ? 'text-purple-600 bg-purple-50 font-bold' : 'text-gray-600 hover:bg-purple-50'}`}
+                                      >
+                                        <Folder size={12} className={!imgData.groupId ? "text-purple-600" : "text-gray-400"} /> 未分组 (默认)
+                                      </button>
+                                      {assetGroups.map(grp => (
+                                        <button
+                                          key={grp.id}
+                                          onClick={(e) => { e.stopPropagation(); handleMoveToGroup(img, grp.id); }}
+                                          className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 truncate ${imgData.groupId === grp.id ? 'text-purple-600 bg-purple-50 font-bold' : 'text-gray-600 hover:bg-purple-50'}`}
+                                          title={grp.name}
+                                        >
+                                          <Folder size={12} className={imgData.groupId === grp.id ? "text-purple-600" : "text-gray-400"} /> {grp.name}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </button>
+
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!isBusy) {
+                                      deleteGalleryImage(img);
+                                    }
+                                  }}
+                                  disabled={isBusy}
+                                  className={`p-1.5 rounded-md transition-colors ${isBusy ? 'text-gray-300' : 'text-red-500 hover:bg-red-50'}`}
+                                  title="彻底删除源文件"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            );
+                          })()}
                         </div>
                         {imgData.createdAt && (
                           <div className="flex items-center justify-between gap-1 mt-1 text-[10px] text-gray-400 font-medium">
