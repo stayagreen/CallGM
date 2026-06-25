@@ -14,6 +14,7 @@ import bcrypt from "bcryptjs";
 import db from "./src/db/db.js";
 import { proxyService } from "./src/services/proxyService.js";
 import { dispatcherService } from "./src/services/dispatcherService.js";
+import { downloadAndSetupRealESRGAN } from "./src/services/realesrganSetup.js";
 import { createServer } from "http";
 
 declare module 'express-session' {
@@ -1401,6 +1402,49 @@ async function startServer() {
     } catch (e: any) {
         console.error(`[Config] Route Error:`, e);
         res.status(500).json({ error: e.message || 'Internal Server Error' });
+    }
+  });
+
+  app.post('/api/admin/realesrgan/setup', requireAdmin, async (req, res) => {
+    try {
+      console.log('[Real-ESRGAN Setup] Initiated via API...');
+      const execPath = await downloadAndSetupRealESRGAN((msg) => {
+        console.log(`[Real-ESRGAN Setup Progress] ${msg}`);
+      });
+
+      // Automatically update the config to use this path
+      let config: any = {};
+      try {
+        const configRow = db.prepare('SELECT value FROM system_config WHERE key = ?').get('app_config') as any;
+        if (configRow && configRow.value) {
+          config = JSON.parse(configRow.value);
+        }
+      } catch (e) {}
+
+      config.realesrganPath = execPath;
+
+      // Save to File
+      if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+      // Save to Database
+      const configJson = JSON.stringify(config);
+      try {
+        const hasEntry = db.prepare('SELECT 1 FROM system_config WHERE key = ?').get('app_config');
+        if (hasEntry) {
+          db.prepare('UPDATE system_config SET value = ? WHERE key = ?').run(configJson, 'app_config');
+          try { db.exec("UPDATE system_config SET updated_at = CURRENT_TIMESTAMP WHERE key = 'app_config'"); } catch(e){}
+        } else {
+          db.prepare('INSERT INTO system_config (key, value) VALUES (?, ?)').run('app_config', configJson);
+        }
+      } catch (dbErr) {
+        console.error(`[Real-ESRGAN Setup] DB sync failed:`, dbErr);
+      }
+
+      res.json({ success: true, path: execPath, message: '部署成功！执行路径已自动配置。' });
+    } catch (e: any) {
+      console.error('[Real-ESRGAN Setup] Error:', e);
+      res.status(500).json({ error: e.message || '部署失败，请检查网络连接。' });
     }
   });
 
@@ -2794,6 +2838,28 @@ async function startServer() {
 
   // Find realesrgan-ncnn-vulkan executable command
   function getRealESRGANCommand(): string {
+    let customPath = '';
+    try {
+      const configRow = db.prepare('SELECT value FROM system_config WHERE key = ?').get('app_config') as any;
+      if (configRow && configRow.value) {
+        const config = JSON.parse(configRow.value);
+        if (config.realesrganPath && config.realesrganPath.trim()) {
+          customPath = config.realesrganPath.trim();
+        }
+      }
+    } catch (e) {}
+
+    if (customPath) {
+      if (fs.existsSync(customPath)) {
+        return `"${customPath}"`;
+      }
+      const absCustom = path.resolve(process.cwd(), customPath);
+      if (fs.existsSync(absCustom)) {
+        return `"${absCustom}"`;
+      }
+      return customPath.includes(' ') ? `"${customPath}"` : customPath;
+    }
+
     const isWin = process.platform === 'win32';
     const binName = isWin ? 'realesrgan-ncnn-vulkan.exe' : 'realesrgan-ncnn-vulkan';
     
@@ -2802,6 +2868,7 @@ async function startServer() {
       path.join(process.cwd(), 'bin', binName),
       path.join(process.cwd(), 'tools', binName),
       path.join(process.cwd(), 'realesrgan', binName),
+      path.join(process.cwd(), 'realesrgan-ncnn-vulkan', binName),
     ];
     
     for (const p of possiblePaths) {
@@ -2887,7 +2954,19 @@ async function startServer() {
           exec(cpuCmd, (cpuErr, cpuStdout, cpuStderr) => {
             if (cpuErr) {
               console.error(`❌ [Super-Resolution] CPU fallback upscale also failed! Error: ${cpuErr.message}. Stderr: ${cpuStderr}`);
-              return res.status(500).json({ error: `超分失败: 显卡与CPU处理均报错。请确保您的系统已安装且能运行 Real-ESRGAN-ncnn-vulkan。错误: ${cpuErr.message}` });
+              
+              const isWin = process.platform === 'win32';
+              const errorInstructions = isWin 
+                ? '【未找到或无法执行 Real-ESRGAN 程序】\n\n请按照以下步骤解决：\n' +
+                  '1. 访问官方发布页下载 Windows 版本：\n   https://github.com/xinntao/Real-ESRGAN/releases/tag/v0.1.0\n' +
+                  '   (请选择 "realesrgan-ncnn-vulkan-20220424-windows.zip")\n' +
+                  '2. 解压下载的压缩包，将解压后的文件夹（包含 realesrgan-ncnn-vulkan.exe 与 models 文件夹）复制到本项目根目录下。\n' +
+                  '3. 或者，在系统后台的“系统参数设置”中，在“Real-ESRGAN 超分执行文件路径”中，填写解压出来的 .exe 文件的【绝对路径】(例如: F:\\tools\\realesrgan-ncnn-vulkan.exe)。'
+                : '【未找到或无法执行 Real-ESRGAN 程序】\n\n请确保您的系统安装了 realesrgan-ncnn-vulkan，并在系统设置中配置了正确的命令或绝对路径。';
+              
+              return res.status(500).json({ 
+                error: `超分环境未就绪！\n\n${errorInstructions}\n\n系统错误详情: ${cpuErr.message}` 
+              });
             }
             
             completeUpscale(relativeOutputPath, absoluteOutputPath, row.group_id);

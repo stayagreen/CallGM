@@ -906,6 +906,7 @@ function MainApp() {
     openCodeApiKey: '',
     openCodeApiUrl: '',
     openCodeModel: '',
+    realesrganPath: 'realesrgan-ncnn-vulkan',
     xhsPrompt: `【核心要求：请务必深度结合我上传的“小红书封面图片”以及下方的视频分镜描述来创作。你生成的一切内容（包含标题、正文、情感基调与话题）都应该与这张封面图的视觉主题、画面主体、配色、情绪和文字标签高度契合，体现出根据封面图量身定制的原生质感。】
 
 你是一个小红书爆款文案专家。请结合我上传的封面图片，并根据以下提供的视频分镜画面描述，为我制作一个小红书发布的标题、正文和话题标签：
@@ -1238,6 +1239,32 @@ function MainApp() {
           next.delete(imgData.id);
           return next;
         });
+      }
+    }
+  };
+
+  const [isSettingUpESRGAN, setIsSettingUpESRGAN] = useState(false);
+
+  const handleDownloadRealESRGAN = async () => {
+    if (window.confirm('确认要一键部署/下载 Real-ESRGAN Windows 离线包吗？\n后台将直接从 GitHub 下载官方发布的 Windows 离线版本（约 25MB）并自动解压配置，无需您手动操作，这可以彻底解决“命令或文件未找到”的报错！')) {
+      setIsSettingUpESRGAN(true);
+      try {
+        const res = await fetch('/api/admin/realesrgan/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          alert('部署成功！\n\nReal-ESRGAN Windows 离线环境已配置完成！\n超分执行路径已自动更新为: ' + data.path + '\n\n现在您可以随时使用超分功能了。若本地部署到其他机器，GitHub 更新后此路径及依赖也将一并保留！');
+          setSystemConfig(prev => ({ ...prev, realesrganPath: data.path }));
+        } else {
+          alert('部署失败：' + (data.error || '未知错误'));
+        }
+      } catch (err) {
+        console.error('Real-ESRGAN automatic setup failed:', err);
+        alert('自动部署请求失败，请检查网络是否通畅（GitHub 连接状况）。');
+      } finally {
+        setIsSettingUpESRGAN(false);
       }
     }
   };
@@ -4419,6 +4446,32 @@ function MainApp() {
                       onChange={(e) => setSystemConfig({...systemConfig, systemDownloadsDir: e.target.value})}
                       placeholder="例如: C:\Users\YourName\Downloads"
                     />
+                  </div>
+                  <div>
+                    <label className="block mb-1 font-semibold text-gray-700">Real-ESRGAN 超分执行文件路径 (.exe / Command)：</label>
+                    <input
+                      type="text"
+                      className="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={systemConfig.realesrganPath || ''}
+                      onChange={(e) => setSystemConfig({...systemConfig, realesrganPath: e.target.value})}
+                      placeholder="例如: realesrgan-ncnn-vulkan.exe 或 F:\tools\realesrgan-ncnn-vulkan.exe"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">※ 若留空，将默认在项目根目录、bin、tools、realesrgan目录内寻找，或读取系统 PATH 环境。推荐在此配置您的本地绝对路径。</p>
+                    <div className="mt-2 flex items-center gap-3">
+                      <button
+                        type="button"
+                        disabled={isSettingUpESRGAN}
+                        onClick={handleDownloadRealESRGAN}
+                        className={`px-4 py-2 text-xs font-semibold rounded-lg shadow-sm transition flex items-center gap-1.5 ${
+                          isSettingUpESRGAN 
+                            ? 'bg-gray-100 text-gray-400 cursor-not-allowed animate-pulse' 
+                            : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                        }`}
+                      >
+                        <Sparkles size={14} className={isSettingUpESRGAN ? "animate-spin text-indigo-400" : "text-indigo-600"} />
+                        {isSettingUpESRGAN ? '正在下载部署，请勿关闭页面(耗时约15-30秒)...' : '📦 一键从 GitHub 下载并自动部署 Real-ESRGAN Windows 离线环境'}
+                      </button>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 pt-1">
                     <input
