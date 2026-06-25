@@ -2879,6 +2879,59 @@ async function startServer() {
     return binName;
   }
 
+  // Helper function to apply high-fidelity micro film grain
+  async function applyFilmGrain(inputPath: string, outputPath: string, strength: number = 0.015) {
+    try {
+      const img = sharp(inputPath);
+      const { width, height } = await img.metadata();
+      if (!width || !height) return;
+
+      console.log(`🎬 [Film Grain] Generating high-fidelity grain (${width}x${height}, strength: ${(strength * 100).toFixed(1)}%)`);
+
+      // Allocate single-channel grayscale raw buffer for the noise map
+      const pixelCount = width * height;
+      const noiseBuffer = Buffer.alloc(pixelCount);
+      
+      // In soft-light blend, 128 is perfectly neutral (0% change).
+      // The contrast/amplitude of the noise determines the grain's visibility.
+      // For strength = 0.015, maxOffset = 0.015 * 128 * 10 = 19 (deviation from 128)
+      const maxOffset = Math.max(5, Math.min(120, Math.round(strength * 128 * 10)));
+
+      for (let i = 0; i < pixelCount; i++) {
+        // Fast uniform random noise centered at 128
+        const offset = Math.floor((Math.random() - 0.5) * 2 * maxOffset);
+        noiseBuffer[i] = 128 + offset;
+      }
+
+      // Convert raw noise buffer to a sharp image
+      const noiseImg = await sharp(noiseBuffer, {
+        raw: {
+          width,
+          height,
+          channels: 1
+        }
+      })
+      .png()
+      .toBuffer();
+
+      // Composite the noise over the original image using soft-light blending
+      const tempPath = `${outputPath}.grain.tmp`;
+      await img
+        .composite([{
+          input: noiseImg,
+          blend: 'soft-light'
+        }])
+        .toFile(tempPath);
+
+      if (fs.existsSync(tempPath)) {
+        fs.renameSync(tempPath, outputPath);
+        console.log(`✅ [Film Grain] Successfully applied film grain to upscaled image: ${outputPath}`);
+      }
+    } catch (err: any) {
+      console.error('❌ [Film Grain] Failed to apply film grain:', err);
+    }
+  }
+
   // Super-resolution (Upscale 2x) endpoint
   app.post('/api/images/upscale', requireAuth, checkAccess, async (req: any, res) => {
     const { assetId } = req.body;
@@ -2976,12 +3029,15 @@ async function startServer() {
         }
       });
       
-      function completeUpscale(relOut: string, absOut: string, groupId: number | null) {
+      async function completeUpscale(relOut: string, absOut: string, groupId: number | null) {
         if (!fs.existsSync(absOut)) {
           return res.status(500).json({ error: '超分成功结束，但未生成输出文件' });
         }
         
         try {
+          // Apply 1.5% cinematic film grain to neutralize AI watercolor/plastic texture and make details look 100% natural!
+          await applyFilmGrain(absOut, absOut, 0.015);
+
           // 4. Register new upscaled asset in the database
           const stmt = db.prepare('INSERT INTO assets (user_id, type, file_path, group_id) VALUES (?, ?, ?, ?)');
           const info = stmt.run(user.id, 'image', relOut, groupId);
