@@ -1892,6 +1892,124 @@ async function startServer() {
     }
   });
 
+  // Pack and download Xiaohongshu notes: video, copy, and cover image in a single ZIP
+  app.post('/api/videos/xhs/download-package', requireAuth, checkAccess, async (req: any, res) => {
+    const { videoPath, coverPath, title, content, tags } = req.body;
+    if (!videoPath) {
+      return res.status(400).json({ error: '必须指定视频路径' });
+    }
+
+    try {
+      const zip = new AdmZip();
+      let hasFile = false;
+
+      // 1. Add video file
+      let fullVideoPath = '';
+      const cleanVideo = videoPath.split('?')[0];
+      if (cleanVideo.startsWith('/downloads/')) {
+        fullVideoPath = path.join(downloadDir, cleanVideo.substring('/downloads/'.length));
+      } else if (cleanVideo.startsWith('/uploads/')) {
+        fullVideoPath = path.join(uploadsDir, cleanVideo.substring('/uploads/'.length));
+      } else if (cleanVideo.startsWith('downloads/')) {
+        fullVideoPath = path.join(downloadDir, cleanVideo.substring('downloads/'.length));
+      } else if (cleanVideo.startsWith('uploads/')) {
+        fullVideoPath = path.join(uploadsDir, cleanVideo.substring('uploads/'.length));
+      } else {
+        const tryVideoPath = path.join(videoDownloadDir, path.basename(cleanVideo));
+        if (fs.existsSync(tryVideoPath)) {
+          fullVideoPath = tryVideoPath;
+        } else {
+          const tryDownloadPath = path.join(downloadDir, path.basename(cleanVideo));
+          if (fs.existsSync(tryDownloadPath)) {
+            fullVideoPath = tryDownloadPath;
+          } else {
+            const tryUploadsDir = path.join(uploadsDir, path.basename(cleanVideo));
+            if (fs.existsSync(tryUploadsDir)) {
+              fullVideoPath = tryUploadsDir;
+            }
+          }
+        }
+      }
+
+      if (fullVideoPath && fs.existsSync(fullVideoPath)) {
+        const videoExt = path.extname(fullVideoPath) || '.mp4';
+        zip.addLocalFile(fullVideoPath, '', `小红书视频_${Date.now()}${videoExt}`);
+        hasFile = true;
+      }
+
+      // 2. Add cover image
+      if (coverPath) {
+        if (coverPath.startsWith('data:image')) {
+          const matches = coverPath.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+          if (matches) {
+            const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+            const base64Data = matches[2];
+            const buffer = Buffer.from(base64Data, 'base64');
+            zip.addFile(`小红书封面_${Date.now()}.${ext}`, buffer);
+            hasFile = true;
+          }
+        } else {
+          let fullCoverPath = '';
+          const cleanCover = coverPath.split('?')[0];
+          
+          if (cleanCover.startsWith('/downloads/')) {
+            fullCoverPath = path.join(downloadDir, cleanCover.substring('/downloads/'.length));
+          } else if (cleanCover.startsWith('/uploads/')) {
+            fullCoverPath = path.join(uploadsDir, cleanCover.substring('/uploads/'.length));
+          } else if (cleanCover.startsWith('downloads/')) {
+            fullCoverPath = path.join(downloadDir, cleanCover.substring('downloads/'.length));
+          } else if (cleanCover.startsWith('uploads/')) {
+            fullCoverPath = path.join(uploadsDir, cleanCover.substring('uploads/'.length));
+          } else {
+            const tryDownloadPath = path.join(downloadDir, path.basename(cleanCover));
+            if (fs.existsSync(tryDownloadPath)) {
+              fullCoverPath = tryDownloadPath;
+            } else {
+              const tryUploadsDir = path.join(uploadsDir, path.basename(cleanCover));
+              if (fs.existsSync(tryUploadsDir)) {
+                fullCoverPath = tryUploadsDir;
+              }
+            }
+          }
+
+          if (fullCoverPath && fs.existsSync(fullCoverPath)) {
+            const imgExt = path.extname(fullCoverPath) || '.jpg';
+            zip.addLocalFile(fullCoverPath, '', `小红书封面_${Date.now()}${imgExt}`);
+            hasFile = true;
+          }
+        }
+      }
+
+      // 3. Add copy content txt file (文案及标题)
+      const txtContent = `【小红书笔记标题】
+${title || ''}
+
+【小红书笔记话题】
+${tags || ''}
+
+【小红书笔记正文】
+${content || ''}
+`;
+      const txtBuffer = Buffer.from(txtContent, 'utf-8');
+      zip.addFile('小红书文案与标题.txt', txtBuffer);
+      hasFile = true;
+
+      if (!hasFile) {
+        return res.status(404).json({ error: '未找到任何可打包的文件资源' });
+      }
+
+      const zipBuffer = zip.toBuffer();
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename=xhs_package_${Date.now()}.zip`);
+      res.setHeader('Content-Length', zipBuffer.length);
+      res.send(zipBuffer);
+
+    } catch (err: any) {
+      console.error('Failed to package xhs resources:', err);
+      res.status(500).json({ error: `打包失败: ${err.message || err}` });
+    }
+  });
+
   // Schedule or Publish a Xiaohongshu Note
   app.post('/api/videos/xhs/publish', requireAuth, checkAccess, async (req: any, res) => {
     const { videoPath, coverPath, title, content, tags, scheduledAt, isDraft } = req.body;
