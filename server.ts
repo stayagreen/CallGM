@@ -1903,9 +1903,35 @@ async function startServer() {
       const zip = new AdmZip();
       let hasFile = false;
 
+      // Helper function to recursively find a file within a directory tree
+      const findFileRecursive = (base: string, targetName: string): string => {
+        if (!fs.existsSync(base)) return '';
+        const items = fs.readdirSync(base);
+        for (const item of items) {
+          const full = path.join(base, item);
+          try {
+            if (fs.statSync(full).isDirectory()) {
+              const found = findFileRecursive(full, targetName);
+              if (found) return found;
+            } else {
+              if (item === targetName) {
+                return full;
+              }
+            }
+          } catch (e) {
+            // ignore permission errors, etc.
+          }
+        }
+        return '';
+      };
+
       // 1. Add video file
       let fullVideoPath = '';
       const cleanVideo = videoPath.split('?')[0];
+      
+      console.log(`📦 [XHS Pack] Resolving videoPath: "${videoPath}" (clean: "${cleanVideo}")`);
+
+      // Try absolute or relative resolution strategies
       if (cleanVideo.startsWith('/downloads/')) {
         fullVideoPath = path.join(downloadDir, cleanVideo.substring('/downloads/'.length));
       } else if (cleanVideo.startsWith('/uploads/')) {
@@ -1915,30 +1941,51 @@ async function startServer() {
       } else if (cleanVideo.startsWith('uploads/')) {
         fullVideoPath = path.join(uploadsDir, cleanVideo.substring('uploads/'.length));
       } else {
-        const tryVideoPath = path.join(videoDownloadDir, path.basename(cleanVideo));
-        if (fs.existsSync(tryVideoPath)) {
-          fullVideoPath = tryVideoPath;
-        } else {
-          const tryDownloadPath = path.join(downloadDir, path.basename(cleanVideo));
-          if (fs.existsSync(tryDownloadPath)) {
-            fullVideoPath = tryDownloadPath;
-          } else {
-            const tryUploadsDir = path.join(uploadsDir, path.basename(cleanVideo));
-            if (fs.existsSync(tryUploadsDir)) {
-              fullVideoPath = tryUploadsDir;
-            }
+        // Try direct combinations of sub-paths or users structure
+        const pathsToTry = [
+          path.join(videoDownloadDir, cleanVideo),
+          path.join(downloadDir, cleanVideo),
+          path.join(uploadsDir, cleanVideo),
+          path.join(videoDownloadDir, path.basename(cleanVideo)),
+          path.join(downloadDir, path.basename(cleanVideo)),
+          path.join(uploadsDir, path.basename(cleanVideo)),
+        ];
+
+        for (const p of pathsToTry) {
+          if (fs.existsSync(p)) {
+            fullVideoPath = p;
+            break;
+          }
+        }
+
+        // If still not found, do a robust recursive search in videoDownloadDir and downloadDir
+        if (!fullVideoPath || !fs.existsSync(fullVideoPath)) {
+          const baseName = path.basename(cleanVideo);
+          console.log(`🔍 [XHS Pack] Video file not found via direct paths. Searching recursively for "${baseName}"...`);
+          
+          let foundPath = findFileRecursive(videoDownloadDir, baseName);
+          if (!foundPath) foundPath = findFileRecursive(downloadDir, baseName);
+          if (!foundPath) foundPath = findFileRecursive(uploadsDir, baseName);
+
+          if (foundPath) {
+            fullVideoPath = foundPath;
+            console.log(`🎯 [XHS Pack] Found video file recursively at: "${fullVideoPath}"`);
           }
         }
       }
 
       if (fullVideoPath && fs.existsSync(fullVideoPath)) {
+        console.log(`✅ [XHS Pack] Video verified at: "${fullVideoPath}"`);
         const videoExt = path.extname(fullVideoPath) || '.mp4';
         zip.addLocalFile(fullVideoPath, '', `小红书视频_${Date.now()}${videoExt}`);
         hasFile = true;
+      } else {
+        console.warn(`❌ [XHS Pack] Video NOT found anywhere: "${videoPath}"`);
       }
 
       // 2. Add cover image
       if (coverPath) {
+        console.log(`📸 [XHS Pack] Resolving coverPath: "${coverPath}"`);
         if (coverPath.startsWith('data:image')) {
           const matches = coverPath.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
           if (matches) {
@@ -1947,6 +1994,7 @@ async function startServer() {
             const buffer = Buffer.from(base64Data, 'base64');
             zip.addFile(`小红书封面_${Date.now()}.${ext}`, buffer);
             hasFile = true;
+            console.log(`✅ [XHS Pack] Base64 Cover added successfully.`);
           }
         } else {
           let fullCoverPath = '';
@@ -1961,21 +2009,41 @@ async function startServer() {
           } else if (cleanCover.startsWith('uploads/')) {
             fullCoverPath = path.join(uploadsDir, cleanCover.substring('uploads/'.length));
           } else {
-            const tryDownloadPath = path.join(downloadDir, path.basename(cleanCover));
-            if (fs.existsSync(tryDownloadPath)) {
-              fullCoverPath = tryDownloadPath;
-            } else {
-              const tryUploadsDir = path.join(uploadsDir, path.basename(cleanCover));
-              if (fs.existsSync(tryUploadsDir)) {
-                fullCoverPath = tryUploadsDir;
+            const pathsToTry = [
+              path.join(downloadDir, cleanCover),
+              path.join(uploadsDir, cleanCover),
+              path.join(downloadDir, path.basename(cleanCover)),
+              path.join(uploadsDir, path.basename(cleanCover)),
+            ];
+
+            for (const p of pathsToTry) {
+              if (fs.existsSync(p)) {
+                fullCoverPath = p;
+                break;
+              }
+            }
+
+            if (!fullCoverPath || !fs.existsSync(fullCoverPath)) {
+              const baseName = path.basename(cleanCover);
+              console.log(`🔍 [XHS Pack] Cover image not found via direct paths. Searching recursively for "${baseName}"...`);
+              
+              let foundPath = findFileRecursive(downloadDir, baseName);
+              if (!foundPath) foundPath = findFileRecursive(uploadsDir, baseName);
+
+              if (foundPath) {
+                fullCoverPath = foundPath;
+                console.log(`🎯 [XHS Pack] Found cover image recursively at: "${fullCoverPath}"`);
               }
             }
           }
 
           if (fullCoverPath && fs.existsSync(fullCoverPath)) {
+            console.log(`✅ [XHS Pack] Cover image verified at: "${fullCoverPath}"`);
             const imgExt = path.extname(fullCoverPath) || '.jpg';
             zip.addLocalFile(fullCoverPath, '', `小红书封面_${Date.now()}${imgExt}`);
             hasFile = true;
+          } else {
+            console.warn(`❌ [XHS Pack] Cover image NOT found anywhere: "${coverPath}"`);
           }
         }
       }
