@@ -1537,11 +1537,16 @@ async function startServer() {
   // Get all custom asset groups (folders)
   app.get('/api/groups', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
-    let query = 'SELECT * FROM asset_groups';
+    const type = req.query.type as string; // 'image' or 'video'
+    let query = 'SELECT * FROM asset_groups WHERE 1=1';
     let params: any[] = [];
     if (user.role !== 'admin') {
-      query += ' WHERE user_id = ?';
+      query += ' AND user_id = ?';
       params.push(user.id);
+    }
+    if (type) {
+      query += ' AND type = ?';
+      params.push(type);
     }
     query += ' ORDER BY created_at DESC';
     try {
@@ -1556,27 +1561,61 @@ async function startServer() {
   // Create a new custom group
   app.post('/api/groups', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
-    const { name } = req.body;
+    const { name, type } = req.body;
+    const groupType = type || 'image'; // default to 'image' for backwards compatibility
     if (!name || !name.trim()) {
       return res.status(400).json({ error: '组名不能为空' });
     }
     try {
-      const stmt = db.prepare('INSERT INTO asset_groups (user_id, name) VALUES (?, ?)');
-      const result = stmt.run(user.id, name.trim());
-      res.json({ success: true, id: result.lastInsertRowid, user_id: user.id, name: name.trim() });
+      const stmt = db.prepare('INSERT INTO asset_groups (user_id, name, type) VALUES (?, ?, ?)');
+      const result = stmt.run(user.id, name.trim(), groupType);
+      res.json({ success: true, id: result.lastInsertRowid, user_id: user.id, name: name.trim(), type: groupType });
     } catch (err) {
       console.error('Failed to create group:', err);
       res.status(500).json({ error: 'Failed to create group' });
     }
   });
 
+  // Rename an existing custom group
+  app.put('/api/groups/:id', requireAuth, checkAccess, (req: any, res) => {
+    const user = req.session.user;
+    const groupId = parseInt(req.params.id, 10);
+    const { name } = req.body;
+    
+    if (isNaN(groupId)) {
+      return res.status(400).json({ error: '无效的分组ID' });
+    }
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: '组名不能为空' });
+    }
+
+    try {
+      // Verify existence and ownership if user is not admin
+      const groupQuery = user.role === 'admin'
+        ? 'SELECT * FROM asset_groups WHERE id = ?'
+        : 'SELECT * FROM asset_groups WHERE id = ? AND user_id = ?';
+      const groupParams = user.role === 'admin' ? [groupId] : [groupId, user.id];
+      const group = db.prepare(groupQuery).get(...groupParams) as any;
+      if (!group) {
+        return res.status(404).json({ error: '分组未找到或无权操作' });
+      }
+
+      db.prepare('UPDATE asset_groups SET name = ? WHERE id = ?').run(name.trim(), groupId);
+      res.json({ success: true, id: groupId, name: name.trim() });
+    } catch (err: any) {
+      console.error('Failed to rename group:', err);
+      res.status(500).json({ error: '修改组名失败' });
+    }
+  });
+
   // Move an asset to a custom group (or set to null, i.e. move out of any group)
   app.post('/api/groups/move', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
-    const { filePath, groupId } = req.body;
+    const { filePath, groupId, type } = req.body;
     if (!filePath) {
-      return res.status(400).json({ error: '缺少图片路径' });
+      return res.status(400).json({ error: '缺少资源路径' });
     }
+    const assetType = type || 'image'; // default to 'image' for backward compatibility
     // Normalize path to match DB representation
     const dbPath1 = filePath.replace(/\//g, '\\');
     const dbPath2 = filePath.replace(/\\/g, '/');
@@ -1591,7 +1630,7 @@ async function startServer() {
       }
       
       const stmt = db.prepare('UPDATE assets SET group_id = ? WHERE (file_path = ? OR file_path = ?) AND type = ?');
-      const result = stmt.run(parsedGroupId, dbPath1, dbPath2, 'image');
+      const result = stmt.run(parsedGroupId, dbPath1, dbPath2, assetType);
       
       res.json({ success: true, changes: result.changes });
     } catch (err) {
@@ -1618,10 +1657,10 @@ async function startServer() {
         return res.status(404).json({ error: '分组未找到或无权操作' });
       }
 
-      // 2. Check if group contains any images
-      const imagesInGroup = db.prepare('SELECT COUNT(*) as count FROM assets WHERE group_id = ?').get(groupId) as any;
-      if (imagesInGroup && imagesInGroup.count > 0) {
-        return res.status(400).json({ error: '该图组内存有图片，不支持删除。请先将图片移动至其他分组。' });
+      // 2. Check if group contains any assets (images or videos)
+      const assetsInGroup = db.prepare('SELECT COUNT(*) as count FROM assets WHERE group_id = ?').get(groupId) as any;
+      if (assetsInGroup && assetsInGroup.count > 0) {
+        return res.status(400).json({ error: '该组内存有资源，不支持删除。请先将资源移动至其他分组。' });
       }
 
       // 3. Delete group
@@ -1729,15 +1768,16 @@ async function startServer() {
     }
   });
 
-  // Batch move images to a group
+  // Batch move assets to a group
   app.post('/api/groups/batch-move', requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
-    const { filePaths, groupId } = req.body;
+    const { filePaths, groupId, type } = req.body;
     
     if (!filePaths || !Array.isArray(filePaths) || filePaths.length === 0) {
-      return res.status(400).json({ error: '未选择任何图片' });
+      return res.status(400).json({ error: '未选择任何资源' });
     }
 
+    const assetType = type || 'image'; // default to 'image'
     const parsedGroupId = groupId === null ? null : parseInt(groupId, 10);
     try {
       if (parsedGroupId !== null && !isNaN(parsedGroupId) && user.role !== 'admin') {
@@ -1755,8 +1795,8 @@ async function startServer() {
           const dbPath1 = fp.replace(/\//g, '\\');
           const dbPath2 = fp.replace(/\\/g, '/');
           const params = user.role === 'admin' 
-            ? [parsedGroupId, dbPath1, dbPath2, 'image'] 
-            : [parsedGroupId, dbPath1, dbPath2, 'image', user.id];
+            ? [parsedGroupId, dbPath1, dbPath2, assetType] 
+            : [parsedGroupId, dbPath1, dbPath2, assetType, user.id];
           const resInfo = stmt.run(...params);
           updatedCount += resInfo.changes;
         }
@@ -1765,7 +1805,7 @@ async function startServer() {
       res.json({ success: true, updatedCount });
     } catch (err) {
       console.error('Failed to batch move assets:', err);
-      res.status(500).json({ error: '批量移动图片失败' });
+      res.status(500).json({ error: '批量移动资源失败' });
     }
   });
 

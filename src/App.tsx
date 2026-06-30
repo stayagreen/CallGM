@@ -907,6 +907,9 @@ function MainApp() {
     openCodeApiUrl: '',
     openCodeModel: '',
     realesrganPath: 'realesrgan-ncnn-vulkan',
+    videoFps: 60,
+    videoQualityMode: 'highSharpen',
+    videoColorProtection: 'bt709',
     xhsPrompt: `【核心要求：请务必深度结合我上传的“小红书封面图片”以及下方的视频分镜描述来创作。你生成的一切内容（包含标题、正文、情感基调与话题）都应该与这张封面图的视觉主题、画面主体、配色、情绪和文字标签高度契合，体现出根据封面图量身定制的原生质感。】
 
 你是一个小红书爆款文案专家。请结合我上传的封面图片，并根据以下提供的视频分镜画面描述，为我制作一个小红书发布的标题、正文和话题标签：
@@ -939,6 +942,13 @@ function MainApp() {
   const [groupFilterSearch, setGroupFilterSearch] = useState('');
   const [isGroupDropdownOpen, setIsGroupDropdownOpen] = useState(false);
   const knownGroupIdsRef = useRef<Set<number>>(new Set());
+  
+  const [createGroupType, setCreateGroupType] = useState<'image' | 'video'>('image');
+  const [selectedVideoGroupFilterIds, setSelectedVideoGroupFilterIds] = useState<number[]>([]);
+  const [videoGroupFilterSearch, setVideoGroupFilterSearch] = useState('');
+  const [isVideoGroupDropdownOpen, setIsVideoGroupDropdownOpen] = useState(false);
+  const [expandedVideoGroups, setExpandedVideoGroups] = useState<Set<number | 'unassigned'>>(new Set(['unassigned']));
+  const knownVideoGroupIdsRef = useRef<Set<number>>(new Set());
 
   // Auto-select newly created groups and initialize on first load
   useEffect(() => {
@@ -957,6 +967,25 @@ function MainApp() {
         });
         return changed ? next : prev;
       });
+
+      // Same for video groups
+      const videoGrps = assetGroups.filter(g => g.type === 'video');
+      if (videoGrps.length > 0) {
+        setSelectedVideoGroupFilterIds(prev => {
+          const next = [...prev];
+          let changed = false;
+          videoGrps.forEach(g => {
+            if (!knownVideoGroupIdsRef.current.has(g.id)) {
+              knownVideoGroupIdsRef.current.add(g.id);
+              if (!next.includes(g.id)) {
+                next.push(g.id);
+                changed = true;
+              }
+            }
+          });
+          return changed ? next : prev;
+        });
+      }
     }
   }, [assetGroups]);
 
@@ -1491,47 +1520,77 @@ function MainApp() {
       const res = await fetch('/api/groups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newGroupName.trim() }),
+        body: JSON.stringify({ name: newGroupName.trim(), type: createGroupType }),
       });
       const data = await res.json();
       if (res.ok) {
         setNewGroupName('');
         setShowCreateGroupModal(false);
         fetchGallery();
+        fetchVideoGallery();
       } else {
-        alert(data.error || '创建图组失败');
+        alert(data.error || '创建组失败');
       }
     } catch (err) {
       console.error('Failed to create group:', err);
     }
   };
 
-  const handleMoveToGroup = async (filePath: string, groupId: number | null) => {
+  const handleRenameGroup = async (groupId: number, currentName: string) => {
+    const newName = window.prompt('请输入新的组名:', currentName);
+    if (newName === null) return; // Cancelled
+    if (!newName.trim()) {
+      alert('组名不能为空');
+      return;
+    }
+    try {
+      const res = await fetch(`/api/groups/${groupId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchAssetGroups();
+      } else {
+        alert(data.error || '修改组名失败');
+      }
+    } catch (err) {
+      console.error('Failed to rename group:', err);
+    }
+  };
+
+  const handleMoveToGroup = async (filePath: string, groupId: number | null, assetType: 'image' | 'video' = 'image') => {
     try {
       const res = await fetch('/api/groups/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filePath, groupId }),
+        body: JSON.stringify({ filePath, groupId, type: assetType }),
       });
       const data = await res.json();
       if (res.ok) {
         setMovingAssetPath(null);
-        fetchGallery();
+        if (assetType === 'image') {
+          fetchGallery();
+        } else {
+          fetchVideoGallery();
+        }
       } else {
-        alert(data.error || '移动图片失败');
+        alert(data.error || '移动失败');
       }
     } catch (err) {
-      console.error('Failed to move image:', err);
+      console.error('Failed to move asset:', err);
     }
   };
 
   const handleDeleteGroup = async (groupId: number) => {
     const imagesInThisGroup = galleryImages.filter(img => img.groupId === groupId);
-    if (imagesInThisGroup.length > 0) {
-      alert('该图组内还存在图片，不支持删除，请先将图片移动至其他分组。');
+    const videosInThisGroup = videoGallery.filter(vid => vid.groupId === groupId);
+    if (imagesInThisGroup.length > 0 || videosInThisGroup.length > 0) {
+      alert('该分组内还存在资源，不支持删除，请先将资源移动至其他分组。');
       return;
     }
-    if (!window.confirm('确定要删除此图组吗？')) return;
+    if (!window.confirm('确定要删除此分组吗？')) return;
     try {
       const res = await fetch(`/api/groups/${groupId}`, {
         method: 'DELETE',
@@ -1539,8 +1598,9 @@ function MainApp() {
       const data = await res.json();
       if (res.ok) {
         fetchGallery();
+        fetchVideoGallery();
       } else {
-        alert(data.error || '删除图组失败');
+        alert(data.error || '删除分组失败');
       }
     } catch (err) {
       console.error('Failed to delete group:', err);
@@ -2821,7 +2881,10 @@ function MainApp() {
                 )}
               </div>
               <button 
-                onClick={() => setShowCreateGroupModal(true)} 
+                onClick={() => {
+                  setCreateGroupType('image');
+                  setShowCreateGroupModal(true);
+                }} 
                 className="px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition shadow-sm flex items-center gap-1.5"
               >
                 <FolderPlus size={16} /> 新建图组
@@ -3362,6 +3425,13 @@ function MainApp() {
                               
                               <div className="flex items-center gap-4" onClick={e => e.stopPropagation()}>
                                 <button
+                                  onClick={() => handleRenameGroup(grp.id, grp.name)}
+                                  className="p-1.5 rounded-md text-amber-500 hover:bg-amber-50 transition-colors cursor-pointer"
+                                  title="修改组名"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                                <button
                                   onClick={() => handleDeleteGroup(grp.id)}
                                   disabled={grpImages.length > 0}
                                   className={`p-1.5 rounded-md transition-colors ${grpImages.length > 0 ? 'text-gray-400 opacity-40 cursor-not-allowed' : 'text-red-500 hover:bg-red-50'}`}
@@ -3654,108 +3724,434 @@ function MainApp() {
       )}
 
       {activeTab === 'video_gallery' && (
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2"><Film className="text-blue-600"/> 本地视频库</h2>
-            <div className="flex gap-2">
-              <button onClick={fetchVideoGallery} className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm">刷新视频库</button>
+        <div className="space-y-6">
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+              <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <Film className="text-blue-600"/> 本地视频库
+              </h2>
+              <div className="flex flex-wrap gap-2">
+                <button 
+                  onClick={() => {
+                    setCreateGroupType('video');
+                    setShowCreateGroupModal(true);
+                  }}
+                  className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FolderPlus size={16} /> 新建视频组
+                </button>
+                <button 
+                  onClick={() => {
+                    const allIds: (number | 'unassigned')[] = [...assetGroups.filter(g => g.type === 'video').map(g => g.id), 'unassigned'];
+                    setExpandedVideoGroups(new Set(allIds));
+                  }}
+                  className="px-3 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-700 transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  title="一键展开所有视频组列表"
+                >
+                  <ChevronDown size={16} className="text-gray-500" /> 全部展开
+                </button>
+                <button 
+                  onClick={() => {
+                    setExpandedVideoGroups(new Set());
+                  }}
+                  className="px-3 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-700 transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  title="一键折叠所有视频组列表"
+                >
+                  <ChevronUp size={16} className="text-gray-500" /> 全部折叠
+                </button>
+                <button 
+                  onClick={fetchVideoGallery} 
+                  className="px-4 py-2 text-sm font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition shadow-sm cursor-pointer"
+                >
+                  刷新视频库
+                </button>
+              </div>
             </div>
-          </div>
-          
-          {videoGallery.length === 0 ? (
-            <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
-              <Film className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-              <p className="text-lg font-medium text-gray-600">暂无视频</p>
-            </div>
-          ) : (() => {
-            const renderVideoItem = (vidData: GalleryAsset) => {
-              const vid = vidData.path;
-              return (
-                <div key={vid} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
-                  <div onClick={() => setViewingVideo(`/downloads/videos/${vid}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
-                    <img src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} alt={vid} className="w-full h-full object-fill group-hover:scale-105 transition-transform duration-300 bg-gray-100" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-                    {vidData.resolutionTag && (
-                      <div className={`absolute top-2 left-2 z-10 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm pointer-events-none uppercase tracking-wider ${
-                        vidData.resolutionTag === '4K' ? 'bg-red-600/90' :
-                        vidData.resolutionTag === '2K' ? 'bg-blue-600/90' :
-                        'bg-gray-700/80'
-                      }`}>
-                        {vidData.resolutionTag}
-                      </div>
+
+            {/* Searchable Multi-Select Dropdown for Video Groups */}
+            <div className="bg-white border border-gray-150 rounded-2xl p-5 shadow-sm space-y-3 mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="text-sm font-bold text-gray-800 flex items-center gap-1.5 select-none">
+                  <Folder className="w-4 h-4 text-blue-600" /> 展示分类视频组范围过滤
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allIds = assetGroups.filter(g => g.type === 'video').map(g => g.id);
+                      setSelectedVideoGroupFilterIds(allIds);
+                      // Also expand them
+                      const newSet = new Set(expandedVideoGroups);
+                      allIds.forEach(id => newSet.add(id));
+                      setExpandedVideoGroups(newSet);
+                    }}
+                    className="px-2.5 py-1 text-xs font-semibold bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition cursor-pointer select-none"
+                  >
+                    全部展示
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVideoGroupFilterIds([])}
+                    className="px-2.5 py-1 text-xs font-semibold bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition cursor-pointer select-none"
+                  >
+                    全部隐藏
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative w-full video-group-filter-container">
+                {/* Trigger Button / Display selected tags */}
+                <div
+                  onClick={() => setIsVideoGroupDropdownOpen(!isVideoGroupDropdownOpen)}
+                  className="w-full min-h-[44px] bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 cursor-pointer flex items-center justify-between transition hover:bg-gray-100/50 hover:border-gray-300"
+                >
+                  <div className="flex flex-wrap gap-1.5 max-w-[90%] items-center">
+                    {selectedVideoGroupFilterIds.length === 0 ? (
+                      <span className="text-xs text-gray-400 font-medium select-none flex items-center gap-1.5 py-1">
+                        <FolderPlus className="w-3.5 h-3.5 text-gray-400 animate-bounce" /> 
+                        点击在此选择想要显示的视频组列表...（未选中任何其它视频组，仅展示未分组视频）
+                      </span>
+                    ) : (
+                      selectedVideoGroupFilterIds.map(id => {
+                        const grp = assetGroups.find(g => g.id === id);
+                        if (!grp) return null;
+                        const count = videoGallery.filter(vid => vid.groupId === id).length;
+                        return (
+                          <span 
+                            key={id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedVideoGroupFilterIds(prev => prev.filter(x => x !== id));
+                            }}
+                            className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-full border border-blue-100 hover:bg-red-50 hover:text-red-700 hover:border-red-100 transition-all cursor-pointer group"
+                            title="点击快速移除此视频组"
+                          >
+                            <Folder className="w-3.5 h-3.5 text-blue-500 group-hover:text-red-500" />
+                            <span>{grp.name} ({count} 个)</span>
+                            <X className="w-3 h-3 text-blue-400 group-hover:text-red-500 transition text-center" />
+                          </span>
+                        );
+                      })
                     )}
-                    <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-                      <PlayCircle className="w-12 h-12 text-white opacity-80 group-hover:opacity-100 transition-opacity drop-shadow-md" />
-                    </div>
                   </div>
-                  <div className="mt-3 px-1">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid.split('/').pop()}</span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => {
-                            fetchGallery();
-                            setViewingXhsNotes({ videoId: vidData.path, jobId: vidData.jobId, taskData: vidData.taskData || {} as VideoTask });
-                          }}
-                          className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors animate-pulse"
-                          title="小红书配置"
-                        >
-                          <Target className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={async () => {
-                            if (!window.confirm('确定要删除这个视频吗？')) return;
-                            await fetch(`/api/videos/${vid}`, { method: 'DELETE' });
-                            fetchVideoGallery();
-                          }}
-                          className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                          title="彻底删除源文件"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                    {vidData.createdAt && (
-                      <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-400 font-medium">
-                        <Clock size={10} />
-                        {(() => {
-                          const d = new Date(vidData.createdAt.endsWith('Z') ? vidData.createdAt : vidData.createdAt.replace(' ', 'T') + 'Z');
-                          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                        })()}
-                      </div>
-                    )}
+                  <div className="text-gray-400 shrink-0">
+                    {isVideoGroupDropdownOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
                   </div>
                 </div>
-              );
-            };
 
-            return user?.role === 'admin' ? (
-              <div className="flex flex-col gap-6 w-full">
-                {Object.entries(groupByUser(videoGallery)).map(([uname, vids]) => (
-                  <div key={uname} className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                {/* Dropdown Menu */}
+                {isVideoGroupDropdownOpen && (
+                  <div className="absolute left-0 right-0 mt-1.5 bg-white rounded-xl shadow-2xl border border-gray-150 z-[1000] overflow-hidden py-1">
+                    {/* Search inside Dropdown */}
+                    <div className="px-3 pb-2 pt-2 border-b border-gray-100 flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="检索视频组名称..."
+                          value={videoGroupFilterSearch}
+                          onChange={(e) => setVideoGroupFilterSearch(e.target.value)}
+                          className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-xs font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/25 transition"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </div>
+                      {videoGroupFilterSearch && (
+                        <button 
+                          type="button" 
+                          onClick={(e) => { e.stopPropagation(); setVideoGroupFilterSearch(''); }}
+                          className="text-xs text-blue-600 hover:text-blue-800 font-bold px-2 py-1 hover:bg-blue-50 rounded"
+                        >
+                          清除检索
+                        </button>
+                      )}
+                    </div>
+
+                    {/* List of groups */}
+                    <div className="max-h-60 overflow-y-auto pt-1 bg-white">
+                      {(() => {
+                        const filtered = assetGroups.filter(grp => 
+                          grp.type === 'video' && grp.name.toLowerCase().includes(videoGroupFilterSearch.toLowerCase())
+                        );
+
+                        if (filtered.length === 0) {
+                          return (
+                            <div className="text-center py-6 text-gray-400 text-xs font-medium select-none">
+                              没有找到匹配的视频组
+                            </div>
+                          );
+                        }
+
+                        return filtered.map(grp => {
+                          const isChecked = selectedVideoGroupFilterIds.includes(grp.id);
+                          const count = videoGallery.filter(vid => vid.groupId === grp.id).length;
+                          return (
+                            <div
+                              key={grp.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (isChecked) {
+                                  setSelectedVideoGroupFilterIds(prev => prev.filter(x => x !== grp.id));
+                                } else {
+                                  setSelectedVideoGroupFilterIds(prev => [...prev, grp.id]);
+                                  // Auto expand it so they see it
+                                  const newSet = new Set(expandedVideoGroups);
+                                  newSet.add(grp.id);
+                                  setExpandedVideoGroups(newSet);
+                                }
+                              }}
+                              className={`px-4 py-2.5 flex items-center justify-between cursor-pointer text-xs font-medium transition-colors ${
+                                isChecked ? 'bg-blue-50/40 text-blue-900 hover:bg-blue-50/70' : 'text-gray-700 hover:bg-gray-50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={() => {}} // handled by div click
+                                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer pointer-events-none"
+                                />
+                                <Folder className={`w-4 h-4 shrink-0 ${isChecked ? 'text-blue-600' : 'text-gray-400'}`} />
+                                <span className="truncate pr-2 font-semibold">{grp.name}</span>
+                              </div>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                isChecked ? 'bg-blue-100 text-blue-700' : 'bg-gray-150 text-gray-500'
+                              }`}>
+                                {count} 个视频
+                              </span>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {videoGallery.length === 0 ? (
+              <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
+                <Film className="w-16 h-16 mx-auto mb-4 text-gray-300" />
+                <p className="text-lg font-medium text-gray-600">暂无视频</p>
+              </div>
+            ) : (() => {
+              const renderVideoItem = (vidData: GalleryAsset) => {
+                const vid = vidData.path;
+                return (
+                  <div key={vid} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
+                    <div onClick={() => setViewingVideo(`/downloads/videos/${vid}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
+                      <img src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} alt={vid} className="w-full h-full object-fill group-hover:scale-105 transition-transform duration-300 bg-gray-100" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                      {vidData.resolutionTag && (
+                        <div className={`absolute top-2 left-2 z-10 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm pointer-events-none uppercase tracking-wider ${
+                          vidData.resolutionTag === '4K' ? 'bg-red-600/90' :
+                          vidData.resolutionTag === '2K' ? 'bg-blue-600/90' :
+                          'bg-gray-700/80'
+                        }`}>
+                          {vidData.resolutionTag}
+                        </div>
+                      )}
+                      <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                        <PlayCircle className="w-12 h-12 text-white opacity-80 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                      </div>
+                    </div>
+                    <div className="mt-3 px-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid.split('/').pop()}</span>
+                        <div className="flex items-center gap-1 relative">
+                          <button
+                            onClick={() => {
+                              fetchGallery();
+                              setViewingXhsNotes({ videoId: vidData.path, jobId: vidData.jobId, taskData: vidData.taskData || {} as VideoTask });
+                            }}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors animate-pulse"
+                            title="小红书配置"
+                          >
+                            <Target className="w-4 h-4" />
+                          </button>
+                          
+                          {/* Move to video group */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMovingAssetPath(movingAssetPath === vid ? null : vid);
+                            }}
+                            className={`p-1.5 rounded-md transition-colors relative ${movingAssetPath === vid ? 'text-blue-700 bg-blue-100' : 'text-amber-650 hover:bg-amber-50'}`}
+                            title="移动到视频组"
+                          >
+                            <Folder className="w-4 h-4" />
+                            
+                            {movingAssetPath === vid && (
+                              <div 
+                                className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden py-1 text-left" 
+                                onClick={e => e.stopPropagation()}
+                              >
+                                <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 border-b border-gray-100 uppercase bg-gray-50 flex items-center gap-1">
+                                  <Folder size={10} /> 移动至视频组...
+                                </div>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleMoveToGroup(vid, null, 'video'); }}
+                                  className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 ${!vidData.groupId ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-600 hover:bg-blue-50'}`}
+                                >
+                                  <Folder size={12} className={!vidData.groupId ? "text-blue-600" : "text-gray-400"} /> 未分组 (默认)
+                                </button>
+                                {assetGroups.filter(g => g.type === 'video').map(grp => (
+                                  <button
+                                    key={grp.id}
+                                    onClick={(e) => { e.stopPropagation(); handleMoveToGroup(vid, grp.id, 'video'); }}
+                                    className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 truncate ${vidData.groupId === grp.id ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-600 hover:bg-blue-50'}`}
+                                    title={grp.name}
+                                  >
+                                    <Folder size={12} className={vidData.groupId === grp.id ? "text-blue-600" : "text-gray-400"} /> {grp.name}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </button>
+
+                          <button
+                            onClick={async () => {
+                              if (!window.confirm('确定要删除这个视频吗？')) return;
+                              await fetch(`/api/videos/${vid}`, { method: 'DELETE' });
+                              fetchVideoGallery();
+                            }}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                            title="彻底删除源文件"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      {vidData.createdAt && (
+                        <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-400 font-medium">
+                          <Clock size={10} />
+                          {(() => {
+                            const d = new Date(vidData.createdAt.endsWith('Z') ? vidData.createdAt : vidData.createdAt.replace(' ', 'T') + 'Z');
+                            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              };
+
+              const unassignedVideos = videoGallery.filter(vid => !vid.groupId || !assetGroups.some(g => g.id === vid.groupId));
+              const isUnassignedCollapsed = !expandedVideoGroups.has('unassigned');
+
+              return (
+                <div className="flex flex-col gap-6 w-full">
+                  {/* Unassigned videos */}
+                  <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
                     <div 
-                      onClick={() => toggleUserExpand(uname + '_videoGallery')}
+                      onClick={() => {
+                        const newSet = new Set(expandedVideoGroups);
+                        if (newSet.has('unassigned')) {
+                          newSet.delete('unassigned');
+                        } else {
+                          newSet.add('unassigned');
+                        }
+                        setExpandedVideoGroups(newSet);
+                      }}
                       className="bg-gray-50 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-200 hover:bg-gray-100 transition"
                     >
                       <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                        <span>👤 {uname}</span>
-                        <span className="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full font-bold">{vids.length} 个视频</span>
+                        <Folder className="w-5 h-5 text-gray-400" />
+                        <span>未分类视频</span>
+                        <span className="bg-blue-100 text-blue-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">{unassignedVideos.length} 个视频</span>
                       </h3>
-                      {expandedUsers.has(uname + '_videoGallery') ? <ChevronUp size={20} className="text-gray-500" /> : <ChevronDown size={20} className="text-gray-500" />}
+                      {isUnassignedCollapsed ? <ChevronDown size={20} className="text-gray-500" /> : <ChevronUp size={20} className="text-gray-500" />}
                     </div>
-                    {expandedUsers.has(uname + '_videoGallery') && (
-                      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 bg-gray-50/50">
-                        {vids.map(renderVideoItem)}
+                    
+                    {!isUnassignedCollapsed && (
+                      <div className="p-4 bg-gray-50/10">
+                        {unassignedVideos.length === 0 ? (
+                          <div className="text-center py-12 text-gray-400 text-sm">
+                            各个视频均已划分至相对应的视频组中
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                            {unassignedVideos.map(renderVideoItem)}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {videoGallery.map(renderVideoItem)}
-              </div>
-            );
-          })()}
+
+                  {/* Video groups */}
+                  {assetGroups
+                    .filter(grp => grp.type === 'video' && selectedVideoGroupFilterIds.includes(grp.id))
+                    .map(grp => {
+                      const grpVideos = videoGallery.filter(vid => vid.groupId === grp.id);
+                      const isCollapsed = !expandedVideoGroups.has(grp.id);
+                      
+                      return (
+                        <div key={grp.id} className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                          <div 
+                            onClick={() => {
+                              const newSet = new Set(expandedVideoGroups);
+                              if (newSet.has(grp.id)) {
+                                newSet.delete(grp.id);
+                              } else {
+                                newSet.add(grp.id);
+                              }
+                              setExpandedVideoGroups(newSet);
+                            }}
+                            className="bg-blue-50/10 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-100 hover:bg-blue-50/20 transition"
+                          >
+                            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                              <Folder className="w-5 h-5 text-blue-500" />
+                              <span>{grp.name}</span>
+                              <span className="bg-blue-100 text-blue-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">{grpVideos.length} 个视频</span>
+                            </h3>
+                            <div className="flex items-center gap-4" onClick={e => e.stopPropagation()}>
+                              <button
+                                onClick={() => handleRenameGroup(grp.id, grp.name)}
+                                className="p-1.5 rounded-md text-amber-500 hover:bg-amber-50 transition-colors cursor-pointer"
+                                title="修改组名"
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteGroup(grp.id)}
+                                disabled={grpVideos.length > 0}
+                                className={`p-1.5 rounded-md transition-colors ${grpVideos.length > 0 ? 'text-gray-400 opacity-40 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 cursor-pointer'}`}
+                                title={grpVideos.length > 0 ? '视频组存在视频时不支持删除' : '删除视频组'}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                              <div className="text-gray-400">
+                                {isCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {!isCollapsed && (
+                            <div className="p-4 bg-gray-50/10">
+                              {grpVideos.length === 0 ? (
+                                <div className="text-center py-8 text-gray-400 text-xs">
+                                  <span>当前视频组暂无视频，请在视频卡片上点击移动按钮将其归纳至此组</span>
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                  {grpVideos.map(renderVideoItem)}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                  {/* Notification if some groups are hidden */}
+                  {selectedVideoGroupFilterIds.length === 0 && assetGroups.filter(g => g.type === 'video').length > 0 && (
+                    <div className="text-center py-10 bg-gray-50/50 border border-dashed border-gray-200 rounded-2xl text-gray-400 text-xs shadow-sm">
+                      <Folder className="w-8 h-8 text-gray-250 mx-auto mb-2 animate-pulse" />
+                      <span>已折叠并隐藏所有视频分类。请在上方输入或点击多选框选择想要展示哪些视频分类。</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
 
@@ -4724,6 +5120,53 @@ function MainApp() {
 
               <details className="group border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm" open>
                 <summary className="font-bold text-gray-800 bg-gray-50 p-4 cursor-pointer list-none flex justify-between items-center hover:bg-gray-100 transition-colors">
+                  <div className="flex items-center gap-2"><Film size={18} className="text-orange-500"/> 视频渲染与音视频质量配置</div>
+                  <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="p-5 border-t border-gray-200 space-y-4 bg-white">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">合成视频帧率 (FPS)：</label>
+                      <select 
+                        className="w-full p-2.5 border border-gray-200 rounded-lg outline-none bg-white font-medium text-orange-700 animate-fade-in"
+                        value={systemConfig.videoFps !== undefined ? systemConfig.videoFps : 60}
+                        onChange={(e) => setSystemConfig({...systemConfig, videoFps: parseInt(e.target.value) || 60})}
+                      >
+                        <option value={60}>60 FPS (德味超丝滑 · 默认)</option>
+                        <option value={30}>30 FPS (常规流畅)</option>
+                      </select>
+                      <p className="text-xs text-gray-400 mt-1">※ 60 帧会让平移、缩放（Pan/Zoom）及视频切片转场流畅度提升一倍，适合精致细节展示。</p>
+                    </div>
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">1080P/2K 视频压缩与码率：</label>
+                      <select 
+                        className="w-full p-2.5 border border-gray-200 rounded-lg outline-none bg-white font-medium text-orange-700"
+                        value={systemConfig.videoQualityMode || 'highSharpen'}
+                        onChange={(e) => setSystemConfig({...systemConfig, videoQualityMode: e.target.value})}
+                      >
+                        <option value="highSharpen">强制高清晰度 (CRF 17 + 15M~25M高码率 · 默认)</option>
+                        <option value="standard">标准清晰度 (常规 CRF + 8M~18M码率)</option>
+                      </select>
+                      <p className="text-xs text-gray-400 mt-1">※ 开启高清晰度会强制将 CRF 压缩参数设定为 17 并提高码率，即使经过小红书压缩依旧保持超高锐度。</p>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block mb-1 font-semibold text-gray-700">Rec.709 (BT.709) 色彩空间与色域保护：</label>
+                    <select 
+                      className="w-full p-2.5 border border-gray-200 rounded-lg outline-none bg-white font-medium text-orange-700"
+                      value={systemConfig.videoColorProtection || 'bt709'}
+                      onChange={(e) => setSystemConfig({...systemConfig, videoColorProtection: e.target.value})}
+                    >
+                      <option value="bt709">开启保护 (锁定 Rec. 709 与 YUV420P 色域 · 默认)</option>
+                      <option value="none">关闭保护 (使用默认色彩空间)</option>
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">※ 开启后，在 FFmpeg 合成滤镜中自动应用 BT.709 色彩映射和格式转换，能确保 HDR/10-bit 等素材在手机端/小红书里看到的亮度和色彩质感与您在电脑上看到的一致，防止饱和度下降和色彩断层。</p>
+                  </div>
+                </div>
+              </details>
+
+              <details className="group border border-gray-200 rounded-xl bg-white overflow-hidden shadow-sm" open>
+                <summary className="font-bold text-gray-800 bg-gray-50 p-4 cursor-pointer list-none flex justify-between items-center hover:bg-gray-100 transition-colors">
                   <div className="flex items-center gap-2"><Folder size={18} className="text-emerald-500"/> 背景音乐 (BGM) 目录配置</div>
                   <ChevronDown className="w-5 h-5 text-gray-400 group-open:rotate-180 transition-transform" />
                 </summary>
@@ -5527,8 +5970,8 @@ function MainApp() {
           <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-gray-100 p-6 animate-scale-in">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-gray-950 flex items-center gap-2">
-                <FolderPlus className="text-purple-600 w-5 h-5" />
-                新建图片分组目录
+                <FolderPlus className={`${createGroupType === 'video' ? 'text-blue-600' : 'text-purple-600'} w-5 h-5`} />
+                新建{createGroupType === 'video' ? '视频' : '图片'}分组目录
               </h3>
               <button 
                 onClick={() => setShowCreateGroupModal(false)}
@@ -5540,13 +5983,15 @@ function MainApp() {
             
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">中文图组名称</label>
+                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                  中文{createGroupType === 'video' ? '视频组' : '图组'}名称
+                </label>
                 <input 
                   type="text"
-                  placeholder="如：工作日常、产品图库..."
+                  placeholder={createGroupType === 'video' ? "如：宣传视频、素材备用..." : "如：工作日常、产品图库..."}
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
-                  className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition"
+                  className={`w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:ring-2 ${createGroupType === 'video' ? 'focus:ring-blue-500 focus:border-blue-500' : 'focus:ring-purple-500 focus:border-purple-500'} outline-none transition`}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleCreateGroup();
                   }}
@@ -5564,7 +6009,11 @@ function MainApp() {
                 <button 
                   onClick={handleCreateGroup}
                   disabled={!newGroupName.trim()}
-                  className="px-5 py-2 text-xs font-bold text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md shadow-purple-100"
+                  className={`px-5 py-2 text-xs font-bold text-white rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md ${
+                    createGroupType === 'video' 
+                      ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-100' 
+                      : 'bg-purple-600 hover:bg-purple-700 shadow-purple-100'
+                  }`}
                 >
                   创建并保存
                 </button>
