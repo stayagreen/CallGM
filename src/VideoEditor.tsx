@@ -217,8 +217,14 @@ export default function VideoEditor({
           
           const w = image.width / 2;
           const h = image.height / 2;
-          canvas.width = w;
-          canvas.height = h;
+          
+          // Shrink each border inwards by 4 pixels (within 3-5px range) to prevent white lines/borders
+          const shrink = Math.min(4, Math.floor(w / 4), Math.floor(h / 4));
+          const canvasW = w - (shrink * 2);
+          const canvasH = h - (shrink * 2);
+          
+          canvas.width = canvasW;
+          canvas.height = canvasH;
 
           const quadrants = [
             { x: 0, y: 0 },
@@ -228,8 +234,18 @@ export default function VideoEditor({
           ];
 
           const res = quadrants.map((q) => {
-            context.clearRect(0, 0, w, h);
-            context.drawImage(image, q.x, q.y, w, h, 0, 0, w, h);
+            context.clearRect(0, 0, canvasW, canvasH);
+            context.drawImage(
+              image, 
+              q.x + shrink, 
+              q.y + shrink, 
+              w - (shrink * 2), 
+              h - (shrink * 2), 
+              0, 
+              0, 
+              canvasW, 
+              canvasH
+            );
             return canvas.toDataURL('image/jpeg', 0.9);
           });
           resolve(res);
@@ -267,8 +283,14 @@ export default function VideoEditor({
             
             const w = img.width / 2;
             const h = img.height / 2;
-            canvas.width = w;
-            canvas.height = h;
+            
+            // Shrink each border inwards by 4 pixels (within 3-5px range) to prevent white lines/borders
+            const shrink = Math.min(4, Math.floor(w / 4), Math.floor(h / 4));
+            const canvasW = w - (shrink * 2);
+            const canvasH = h - (shrink * 2);
+            
+            canvas.width = canvasW;
+            canvas.height = canvasH;
 
             const quadrants = [
               { x: 0, y: 0 },
@@ -278,8 +300,18 @@ export default function VideoEditor({
             ];
 
             const newImages = quadrants.map((q) => {
-              context.clearRect(0, 0, w, h);
-              context.drawImage(img, q.x, q.y, w, h, 0, 0, w, h);
+              context.clearRect(0, 0, canvasW, canvasH);
+              context.drawImage(
+                img, 
+                q.x + shrink, 
+                q.y + shrink, 
+                w - (shrink * 2), 
+                h - (shrink * 2), 
+                0, 
+                0, 
+                canvasW, 
+                canvasH
+              );
               return canvas.toDataURL('image/jpeg', 0.9);
             });
             resolve(newImages);
