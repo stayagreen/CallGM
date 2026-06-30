@@ -475,30 +475,53 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         if (sb.textEffect === 'fade') {
             filterComplex += `;${lastLabel}drawtext=${textParams}:alpha='min(1,t/0.5)'[v2]`;
         } else if (sb.textEffect === 'blur') {
-            // 毛玻璃淡入: 双图层交叉淡入模糊
-            filterComplex += `;color=c=black@0:s=${w}x${h}[txt_canvas_blur];`;
-            filterComplex += `[txt_canvas_blur]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[txt_full_blur];`;
-            filterComplex += `[txt_full_blur]split[txt_to_blur][txt_sharp];`;
-            filterComplex += `[txt_to_blur]boxblur=15,fade=t=out:st=0:d=1.0:alpha=1[txt_blurred];`;
-            filterComplex += `[txt_sharp]fade=t=in:st=0:d=1.0:alpha=1[txt_sharp_faded];`;
-            filterComplex += `;${lastLabel}[txt_blurred]overlay=x=0:y=0:format=auto[v_temp_blur];`;
-            filterComplex += `[v_temp_blur][txt_sharp_faded]overlay=x=0:y=0:format=auto[v2]`;
-        } else if (sb.textEffect === 'typewriter') {
-            // 打字机
-            const revealSpeed = 10; // chars per second
-            const revealDuration = Math.min(duration, sb.text.length / revealSpeed);
+            const blurDuration = duration;
+            let blurChain = [];
+            blurChain.push(`color=c=black@0:s=${w}x${h}:r=${fps}:d=${blurDuration}[canvas_blur]`);
+            blurChain.push(`[canvas_blur]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[text_blur_full]`);
+            blurChain.push(`[text_blur_full]split[to_blur][to_sharp]`);
+            blurChain.push(`[to_blur]gblur=sigma=12,fade=t=out:st=0:d=1.0:alpha=1[blurred]`);
+            blurChain.push(`[to_sharp]fade=t=in:st=0:d=1.0:alpha=1[sharp_faded]`);
+            blurChain.push(`${lastLabel}[blurred]overlay=x=0:y=0:shortest=1:format=auto[v_temp_blur]`);
+            blurChain.push(`[v_temp_blur][sharp_faded]overlay=x=0:y=0:shortest=1:format=auto[v2]`);
             
-            filterComplex += `;color=c=black@0:s=${w}x${h}[txt_canvas];`;
-            filterComplex += `[txt_canvas]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[txt_full];`;
-            filterComplex += `[txt_full]crop=w='max(1, (${w}-${textW})/2 + ${textW}*min(1, t/${revealDuration}))':h=ih:x=0:y=0[txt_reveal];`;
-            filterComplex += `;${lastLabel}[txt_reveal]overlay=x=0:y=0:format=auto[v_with_text];`;
-            filterComplex += `[v_with_text]drawtext=text='|':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x='(${w}-${textW})/2 + ${textW}*min(1, t/${revealDuration})':y='(h-text_h)/2':alpha='if(lt(t, ${revealDuration}), 1, if(lt(mod(t,0.5),0.25),1,0))'[v2]`;
+            filterComplex += `;${blurChain.join(';')}`;
+        } else if (sb.textEffect === 'typewriter') {
+            const textStr = sb.text;
+            const revealDuration = Math.min(1.5, duration * 0.5);
+            const charDuration = revealDuration / Math.max(1, textStr.length);
+            
+            let typewriterChain = [];
+            for (let i = 1; i <= textStr.length; i++) {
+                const subStr = textStr.substring(0, i);
+                const escapedSubStr = subStr
+                    .replace(/\\/g, "\\\\\\\\")
+                    .replace(/:/g, "\\\\:")
+                    .replace(/'/g, "'\\\\\\''")
+                    .replace(/%/g, "\\\\%");
+                
+                const startTime = (i - 1) * charDuration;
+                const endTime = i * charDuration;
+                const showCursor = i < textStr.length ? '|' : '';
+                const displayText = escapedSubStr + showCursor;
+                
+                const enableCond = i === textStr.length
+                    ? `gte(t,${startTime.toFixed(3)})`
+                    : `between(t,${startTime.toFixed(3)},${endTime.toFixed(3)})`;
+                
+                typewriterChain.push(`drawtext=text='${displayText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6:enable='${enableCond}'`);
+            }
+            
+            filterComplex += `;${lastLabel}${typewriterChain.join(',')}[v2]`;
         } else if (sb.textEffect === 'rotate') {
-            // 文字旋转进入
-            filterComplex += `;color=c=black@0:s=${w}x${h}[txt_canvas_rot];`;
-            filterComplex += `[txt_canvas_rot]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[txt_full_rot];`;
-            filterComplex += `[txt_full_rot]rotate=a='if(lt(t,1), (1-t)*2*PI, 0)':c=black@0,fade=t=in:st=0:d=1.0:alpha=1[txt_rotated];`;
-            filterComplex += `;${lastLabel}[txt_rotated]overlay=x=0:y=0:format=auto[v2]`;
+            const rotDuration = duration;
+            let rotChain = [];
+            rotChain.push(`color=c=black@0:s=${w}x${h}:r=${fps}:d=${rotDuration}[canvas_rot]`);
+            rotChain.push(`[canvas_rot]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[text_rot]`);
+            rotChain.push(`[text_rot]rotate=a='if(lt(t,1.0), (1.0-t)*2*PI, 0)':fillcolor=black@0,fade=t=in:st=0:d=1.0:alpha=1[text_rotated]`);
+            rotChain.push(`${lastLabel}[text_rotated]overlay=x=0:y=0:shortest=1:format=auto[v2]`);
+            
+            filterComplex += `;${rotChain.join(';')}`;
         } else {
             // 无特效
             filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
