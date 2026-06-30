@@ -290,7 +290,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
         if (cancelledVideoJobs.has(jobId)) throw new Error('CANCELLED');
         const sb = storyboards[i];
         const clipPath = path.join(videoTaskDir, `temp_${filename}_clip_${i}.mp4`);
-        await generateClip(sb, clipPath, targetWidth, targetHeight, crf, videoBitrate, maxRate, bufSize, videoFps, videoColorProtection);
+        await generateClip(sb, clipPath, targetWidth, targetHeight, crf, videoBitrate, maxRate, bufSize, videoFps, videoColorProtection, videoQualityMode);
         clipPaths.push(clipPath);
         videoJobProgress.set(jobKey, { progress: Math.floor((i / storyboards.length) * 40), status: 'running' });
     }
@@ -301,7 +301,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     let finalDuration = 0;
     await concatenateClips(clipPaths, storyboards, concatPath, (p) => {
         videoJobProgress.set(jobKey, { progress: 40 + Math.floor(p * 0.4), status: 'running' });
-    }, crf, videoBitrate, maxRate, bufSize, videoFps, videoColorProtection).then(duration => {
+    }, crf, videoBitrate, maxRate, bufSize, videoFps, videoColorProtection, videoQualityMode).then(duration => {
         finalDuration = duration;
     });
 
@@ -309,7 +309,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     if (cancelledVideoJobs.has(jobId)) throw new Error('CANCELLED');
     await addBgmAndFinalize(concatPath, finalDuration, bgm, introAnimation, outroAnimation, outputPath, (p) => {
         videoJobProgress.set(jobKey, { progress: 80 + Math.floor(p * 0.2), status: 'running' });
-    }, crf, videoBitrate, maxRate, bufSize, videoFps, videoColorProtection);
+    }, crf, videoBitrate, maxRate, bufSize, videoFps, videoColorProtection, videoQualityMode);
 
     // 4. Generate Thumbnail
     await generateThumbnail(outputPath, thumbPath);
@@ -365,7 +365,7 @@ async function processVideoTask(filePath: string, jobKey: string) {
     console.log(`✅ 视频渲染完成: ${outputFilename} (User: ${userId || 'global'})`);
 }
 
-async function generateClip(sb: any, outputPath: string, targetWidth: number, targetHeight: number, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M', fps: number = 60, videoColorProtection: string = 'bt709'): Promise<void> {
+async function generateClip(sb: any, outputPath: string, targetWidth: number, targetHeight: number, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M', fps: number = 60, videoColorProtection: string = 'bt709', videoQualityMode: string = 'highSharpen'): Promise<void> {
     // Resolve image path
     let imgPath = sb.image;
     if (imgPath.startsWith('/uploads/')) {
@@ -391,7 +391,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
     // 1. Scale and Pad to a LARGER size for better zoom quality (2x target)
     const scaleW = w * 2;
     const scaleH = h * 2;
-    let filterComplex = `[0:v]scale=${scaleW}:${scaleH}:force_original_aspect_ratio=decrease,pad=${scaleW}:${scaleH}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv444p[v0]`;
+    let filterComplex = `[0:v]scale=${scaleW}:${scaleH}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd,pad=${scaleW}:${scaleH}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv444p[v0]`;
 
     // 2. Add Animation (Zoompan)
     let panZoom = '';
@@ -491,10 +491,16 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         lastLabel = '[v2]';
     }
 
+    let finalLabel = lastLabel;
+    if (videoQualityMode === 'highSharpen') {
+        filterComplex += `;${lastLabel}unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.5:chroma_msize_x=5:chroma_msize_y=5:chroma_amount=0.0[v_sharp]`;
+        finalLabel = '[v_sharp]';
+    }
+
     if (videoColorProtection === 'bt709') {
-        filterComplex += `;${lastLabel}scale=w=iw:h=ih:out_color_matrix=bt709,format=yuv420p[outv]`;
+        filterComplex += `;${finalLabel}scale=w=iw:h=ih:out_color_matrix=bt709:flags=lanczos+accurate_rnd,format=yuv420p[outv]`;
     } else {
-        filterComplex += `;${lastLabel}format=yuv420p[outv]`;
+        filterComplex += `;${finalLabel}format=yuv420p[outv]`;
     }
 
     const args = [
@@ -502,7 +508,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         '-filter_complex', filterComplex,
         '-map', '[outv]',
         '-c:v', 'libx264',
-        '-preset', 'medium',
+        '-preset', videoQualityMode === 'highSharpen' ? 'slow' : 'medium',
         '-crf', crf,
         '-b:v', bitrate,
         '-maxrate', maxRate,
@@ -514,6 +520,10 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
 
     if (videoColorProtection === 'bt709') {
         args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
+    }
+
+    if (videoQualityMode === 'highSharpen') {
+        args.push('-tune', 'stillimage', '-profile:v', 'high');
     }
 
     args.push(
@@ -532,7 +542,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
     }
 }
 
-async function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: string, onProgress: (p: number) => void, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M', fps: number = 60, videoColorProtection: string = 'bt709'): Promise<number> {
+async function concatenateClips(clipPaths: string[], storyboards: any[], outputPath: string, onProgress: (p: number) => void, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M', fps: number = 60, videoColorProtection: string = 'bt709', videoQualityMode: string = 'highSharpen'): Promise<number> {
     if (clipPaths.length === 1) {
         fs.copyFileSync(clipPaths[0], outputPath);
         return storyboards[0].duration || 3;
@@ -561,7 +571,7 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
         clipPaths.forEach((_, i) => { filterComplex += `[v${i}]`; });
         filterComplex += `concat=n=${clipPaths.length}:v=1:a=0`;
         if (videoColorProtection === 'bt709') {
-            filterComplex += `,scale=w=iw:h=ih:out_color_matrix=bt709,format=yuv420p[outv]`;
+            filterComplex += `,scale=w=iw:h=ih:out_color_matrix=bt709:flags=lanczos+accurate_rnd,format=yuv420p[outv]`;
         } else {
             filterComplex += `,format=yuv420p[outv]`;
         }
@@ -592,7 +602,7 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
             totalDuration += currentStoryboardDuration - transitionDuration;
         }
         if (videoColorProtection === 'bt709') {
-            filterComplex += `${currentStream}scale=w=iw:h=ih:out_color_matrix=bt709,format=yuv420p[outv]`;
+            filterComplex += `${currentStream}scale=w=iw:h=ih:out_color_matrix=bt709:flags=lanczos+accurate_rnd,format=yuv420p[outv]`;
         } else {
             filterComplex += `${currentStream}format=yuv420p[outv]`;
         }
@@ -601,7 +611,7 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
     args.push('-filter_complex', filterComplex);
     args.push('-map', '[outv]');
     args.push('-c:v', 'libx264');
-    args.push('-preset', 'medium');
+    args.push('-preset', videoQualityMode === 'highSharpen' ? 'slow' : 'medium');
     args.push('-crf', crf);
     args.push('-b:v', bitrate);
     args.push('-maxrate', maxRate);
@@ -611,6 +621,10 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
     
     if (videoColorProtection === 'bt709') {
         args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
+    }
+
+    if (videoQualityMode === 'highSharpen') {
+        args.push('-tune', 'stillimage', '-profile:v', 'high');
     }
 
     args.push(
@@ -630,7 +644,7 @@ async function concatenateClips(clipPaths: string[], storyboards: any[], outputP
     }
 }
 
-async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string, intro: string, outro: string, outputPath: string, onProgress: (p: number) => void, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M', fps: number = 60, videoColorProtection: string = 'bt709'): Promise<void> {
+async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: string, intro: string, outro: string, outputPath: string, onProgress: (p: number) => void, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M', fps: number = 60, videoColorProtection: string = 'bt709', videoQualityMode: string = 'highSharpen'): Promise<void> {
     const args = ['-i', videoPath];
     
     let filters = [];
@@ -647,7 +661,7 @@ async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: 
     }
     
     if (videoColorProtection === 'bt709') {
-        filterComplex += ',scale=w=iw:h=ih:out_color_matrix=bt709,format=yuv420p[v]';
+        filterComplex += ',scale=w=iw:h=ih:out_color_matrix=bt709:flags=lanczos+accurate_rnd,format=yuv420p[v]';
     } else {
         filterComplex += ',format=yuv420p[v]';
     }
@@ -667,7 +681,7 @@ async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: 
 
     args.push(
         '-c:v', 'libx264',
-        '-preset', 'medium',
+        '-preset', videoQualityMode === 'highSharpen' ? 'slow' : 'medium',
         '-crf', crf,
         '-b:v', bitrate,
         '-maxrate', maxRate,
@@ -678,6 +692,10 @@ async function addBgmAndFinalize(videoPath: string, totalDuration: number, bgm: 
 
     if (videoColorProtection === 'bt709') {
         args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
+    }
+
+    if (videoQualityMode === 'highSharpen') {
+        args.push('-tune', 'stillimage', '-profile:v', 'high');
     }
 
     args.push(
