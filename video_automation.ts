@@ -457,33 +457,48 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             ? 'C\\:/Windows/Fonts/msyh.ttc' 
             : '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc';
 
-        let textParams = `text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:fontfile='${fontPath}'`;
+        let textParams = `text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:fontfile='${fontPath}':borderw=2:bordercolor=black@0.6`;
         
+        let estimatedTextWidth = 0;
+        for (const char of sb.text) {
+            if (/[\u4e00-\u9fa5]/.test(char)) {
+                estimatedTextWidth += fontSize;
+            } else if (/[a-zA-Z0-9]/.test(char)) {
+                estimatedTextWidth += fontSize * 0.55;
+            } else {
+                estimatedTextWidth += fontSize * 0.4;
+            }
+        }
+        const textW = Math.max(10, Math.round(estimatedTextWidth));
+
         // Implement effects
         if (sb.textEffect === 'fade') {
-            textParams += `:alpha='min(t/1,1)'`; // 1s fade in
-            filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
+            filterComplex += `;${lastLabel}drawtext=${textParams}:alpha='min(1,t/0.5)'[v2]`;
         } else if (sb.textEffect === 'blur') {
-            // 毛玻璃淡入: 使用固定模糊半径并淡出
-            filterComplex += `;${lastLabel}split[v_pre_blur][v_blur_layer];[v_blur_layer]boxblur=20,fade=t=out:st=0:d=0.8:alpha=1[v_blurred];[v_pre_blur][v_blurred]overlay=format=auto[v_overlayed]`;
-            // 重新应用文字绘制到 v_overlayed 的输出，并最终命名为 [v2]
-            filterComplex += `;[v_overlayed]drawtext=${textParams}:alpha='min(t/0.8,1)'[v2]`;
+            // 毛玻璃淡入: 双图层交叉淡入模糊
+            filterComplex += `;color=c=black@0:s=${w}x${h}[txt_canvas_blur];`;
+            filterComplex += `[txt_canvas_blur]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[txt_full_blur];`;
+            filterComplex += `[txt_full_blur]split[txt_to_blur][txt_sharp];`;
+            filterComplex += `[txt_to_blur]boxblur=15,fade=t=out:st=0:d=1.0:alpha=1[txt_blurred];`;
+            filterComplex += `[txt_sharp]fade=t=in:st=0:d=1.0:alpha=1[txt_sharp_faded];`;
+            filterComplex += `;${lastLabel}[txt_blurred]overlay=x=0:y=0:format=auto[v_temp_blur];`;
+            filterComplex += `[v_temp_blur][txt_sharp_faded]overlay=x=0:y=0:format=auto[v2]`;
         } else if (sb.textEffect === 'typewriter') {
             // 打字机
             const revealSpeed = 10; // chars per second
             const revealDuration = Math.min(duration, sb.text.length / revealSpeed);
-            const textX = '(w-text_w)/2';
-            const textY = '(h-text_h)/2';
             
             filterComplex += `;color=c=black@0:s=${w}x${h}[txt_canvas];`;
-            filterComplex += `[txt_canvas]drawtext=${textParams}:text='${escapedText}':x=${textX}:y=${textY}[txt_full];`;
-            filterComplex += `[txt_full]drawtext=text='|':x=${textX}+text_w:y=${textY}:fontfile='${fontPath}':fontsize=${fontSize}:fontcolor=${color}:alpha='if(lt(mod(t,0.5),0.25),1,0)'[txt_full_cursor];`;
-            filterComplex += `[txt_full_cursor]crop=w='iw*min(1, t/${revealDuration})':h=ih:x=0:y=0[txt_reveal];`;
-            filterComplex += `;${lastLabel}[txt_reveal]overlay=x=0:y=0:format=auto[v2]`;
+            filterComplex += `[txt_canvas]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[txt_full];`;
+            filterComplex += `[txt_full]crop=w='max(1, (${w}-${textW})/2 + ${textW}*min(1, t/${revealDuration}))':h=ih:x=0:y=0[txt_reveal];`;
+            filterComplex += `;${lastLabel}[txt_reveal]overlay=x=0:y=0:format=auto[v_with_text];`;
+            filterComplex += `[v_with_text]drawtext=text='|':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x='(${w}-${textW})/2 + ${textW}*min(1, t/${revealDuration})':y='(h-text_h)/2':alpha='if(lt(t, ${revealDuration}), 1, if(lt(mod(t,0.5),0.25),1,0))'[v2]`;
         } else if (sb.textEffect === 'rotate') {
-            // 文字转圈
-            textParams += `:rotation='t*360/2'`;
-            filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
+            // 文字旋转进入
+            filterComplex += `;color=c=black@0:s=${w}x${h}[txt_canvas_rot];`;
+            filterComplex += `[txt_canvas_rot]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[txt_full_rot];`;
+            filterComplex += `[txt_full_rot]rotate=a='if(lt(t,1), (1-t)*2*PI, 0)':c=black@0,fade=t=in:st=0:d=1.0:alpha=1[txt_rotated];`;
+            filterComplex += `;${lastLabel}[txt_rotated]overlay=x=0:y=0:format=auto[v2]`;
         } else {
             // 无特效
             filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
