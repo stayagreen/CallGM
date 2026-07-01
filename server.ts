@@ -2089,14 +2089,24 @@ async function startServer() {
       }
 
       // 3. Add copy content txt file (文案及标题)
+      let formattedTags = '';
+      if (tags) {
+        const parsedTags = tags
+          .split(/[\s,#，]+/)
+          .map((t: string) => t.trim())
+          .filter((t: string) => t.length > 0)
+          .map((t: string) => t.startsWith('#') ? t : `#${t}`)
+          .join('  ');
+        if (parsedTags) {
+          formattedTags = '\n\n' + parsedTags;
+        }
+      }
+
       const txtContent = `【小红书笔记标题】
 ${title || ''}
 
-【小红书笔记话题】
-${tags || ''}
-
 【小红书笔记正文】
-${content || ''}
+${content || ''}${formattedTags}
 `;
       const txtBuffer = Buffer.from(txtContent, 'utf-8');
       zip.addFile('小红书文案与标题.txt', txtBuffer);

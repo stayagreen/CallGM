@@ -5,6 +5,7 @@ import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Login } from './components/Login';
 import { ImageCropper } from './components/ImageCropper';
+import { XhsPhonePreview } from './components/XhsPhonePreview';
 
 // Shared type interfaces
 interface Task {
@@ -873,6 +874,7 @@ function MainApp() {
   const [publishingXhsNoteId, setPublishingXhsNoteId] = useState<number | null>(null);
   const [xhsPublishProgress, setXhsPublishProgress] = useState<any>(null);
   const [editingXhsNote, setEditingXhsNote] = useState<any | null>(null);
+  const [previewingXhsNoteId, setPreviewingXhsNoteId] = useState<any | null>(null);
   const [showNavDropdown, setShowNavDropdown] = useState<'tasks' | 'records' | 'gallery' | 'admin' | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -4402,6 +4404,15 @@ function MainApp() {
 
                                   <button 
                                     type="button"
+                                    onClick={() => setPreviewingXhsNoteId(note.id)}
+                                    className="flex-grow py-1 px-2 text-[11px] font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition hover:scale-[1.02]"
+                                  >
+                                    <Eye size={11} />
+                                    排版预览
+                                  </button>
+
+                                  <button 
+                                    type="button"
                                     onClick={() => setEditingXhsNote({ ...note })}
                                     className="flex-grow py-1 px-2 text-[11px] font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition hover:scale-[1.02]"
                                   >
@@ -4605,7 +4616,7 @@ function MainApp() {
 
       {editingXhsNote && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
-          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-lg">
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full lg:max-w-5xl md:max-w-4xl max-w-lg flex flex-col max-h-[90vh] overflow-hidden">
             <div className="flex justify-between items-center mb-4 pb-2 border-b">
               <h2 className="text-lg font-bold text-gray-800">编辑小红书笔记配置</h2>
               <button type="button" onClick={() => setEditingXhsNote(null)} className="text-gray-400 hover:text-gray-600 cursor-pointer"><X size={20}/></button>
@@ -4635,66 +4646,86 @@ function MainApp() {
               } catch (err) {
                 alert('请求失败');
               }
-            }} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">笔记标题 (Title)</label>
-                <input
-                  type="text"
-                  value={editingXhsNote.title || ''}
-                  onChange={e => setEditingXhsNote({ ...editingXhsNote, title: e.target.value })}
-                  placeholder="请输入笔记标题"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
-                />
-              </div>
+            }} className="flex-grow overflow-y-auto flex flex-col justify-between">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start pb-4">
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">笔记标题 (Title)</label>
+                    <input
+                      type="text"
+                      value={editingXhsNote.title || ''}
+                      onChange={e => setEditingXhsNote({ ...editingXhsNote, title: e.target.value })}
+                      placeholder="请输入笔记标题"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">笔记说明/正文 (Content)</label>
-                <textarea
-                  rows={4}
-                  value={editingXhsNote.content || ''}
-                  onChange={e => setEditingXhsNote({ ...editingXhsNote, content: e.target.value })}
-                  placeholder="请输入笔记说明/正文描述"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition h-24"
-                />
-              </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">笔记说明/正文 (Content)</label>
+                    <textarea
+                      rows={4}
+                      value={editingXhsNote.content || ''}
+                      onChange={e => setEditingXhsNote({ ...editingXhsNote, content: e.target.value })}
+                      placeholder="请输入笔记说明/正文描述"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition h-24"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">正文话题标签 (Tags)</label>
-                <input
-                  type="text"
-                  value={editingXhsNote.tags || ''}
-                  onChange={e => setEditingXhsNote({ ...editingXhsNote, tags: e.target.value })}
-                  placeholder="用逗号分隔，如: 穿搭,日常,好物分享"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
-                />
-              </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">正文话题标签 (Tags)</label>
+                    <input
+                      type="text"
+                      value={editingXhsNote.tags || ''}
+                      onChange={e => setEditingXhsNote({ ...editingXhsNote, tags: e.target.value })}
+                      placeholder="用逗号分隔，如: 穿搭,日常,好物分享"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">计划发布时间 (Scheduled Release Time)</label>
-                <input
-                  type="datetime-local"
-                  value={editingXhsNote.scheduled_at ? new Date(new Date(editingXhsNote.scheduled_at).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 16) : ''}
-                  onChange={e => {
-                    const val = e.target.value;
-                    setEditingXhsNote({ ...editingXhsNote, scheduled_at: val ? new Date(val).getTime() : null });
-                  }}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
-                />
-              </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">计划发布时间 (Scheduled Release Time)</label>
+                    <input
+                      type="datetime-local"
+                      value={editingXhsNote.scheduled_at ? new Date(new Date(editingXhsNote.scheduled_at).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0, 16) : ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setEditingXhsNote({ ...editingXhsNote, scheduled_at: val ? new Date(val).getTime() : null });
+                      }}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">已发布笔记 URL (Publish Note Link)</label>
-                <input
-                  type="text"
-                  value={editingXhsNote.publish_url || ''}
-                  onChange={e => setEditingXhsNote({ ...editingXhsNote, publish_url: e.target.value })}
-                  placeholder="https://www.xiaohongshu.com/explore/xxxxxxxx"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
-                />
-              </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-700 mb-1">已发布笔记 URL (Publish Note Link)</label>
+                    <input
+                      type="text"
+                      value={editingXhsNote.publish_url || ''}
+                      onChange={e => setEditingXhsNote({ ...editingXhsNote, publish_url: e.target.value })}
+                      placeholder="https://www.xiaohongshu.com/explore/xxxxxxxx"
+                      className="w-full px-3 py-2 border border-gray-200 rounded-xl focus:ring-2 focus:ring-red-400 focus:border-red-400 outline-none text-sm transition"
+                    />
+                  </div>
 
-              <div className="bg-yellow-50 border border-yellow-100 p-3 rounded-lg text-[11px] text-yellow-800">
-                ⚠️ 注意：该编辑功能允许您优化笔记说明与修正外部回传链接。“绑定视频”、“绑定封面”以及当前的“自动化发布状态”由于底层数据流锁定，当前面板不提供手动覆盖。
+                  <div className="bg-yellow-50 border border-yellow-100 p-3 rounded-lg text-[11px] text-yellow-800">
+                    ⚠️ 注意：该编辑功能允许您优化笔记说明与修正外部回传链接。“绑定视频”、“绑定封面”以及当前的“自动化发布状态”由于底层数据流锁定，当前面板不提供手动覆盖。
+                  </div>
+                </div>
+
+                {/* Right column: live preview */}
+                <div className="flex flex-col justify-start items-center bg-gray-50 border border-gray-150 p-4 rounded-2xl shadow-inner max-h-[65vh] overflow-y-auto">
+                  <div className="text-xs font-bold text-gray-500 mb-3 flex items-center gap-1.5 self-start select-none">
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                    小红书真机排版模拟预览 (1:1 还原)
+                  </div>
+                  <XhsPhonePreview 
+                    title={editingXhsNote.title || ''}
+                    content={editingXhsNote.content || ''}
+                    tags={editingXhsNote.tags || ''}
+                    coverImage={editingXhsNote.cover_path || ''}
+                    aspectRatio="3:4"
+                    authorName={editingXhsNote.username || user?.username || '小红书创作者'}
+                  />
+                </div>
               </div>
 
               <div className="flex justify-end gap-3 pt-3 border-t border-gray-100">
@@ -4716,6 +4747,38 @@ function MainApp() {
           </div>
         </div>
       )}
+
+      {previewingXhsNoteId && (() => {
+        const noteToPreview = xhsNotesList.find(n => n.id === previewingXhsNoteId);
+        if (!noteToPreview) return null;
+        return (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[999]" onClick={() => setPreviewingXhsNoteId(null)}>
+            <div className="bg-white p-5 rounded-3xl shadow-2xl w-full max-w-sm flex flex-col items-center relative animate-in fade-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
+              <button 
+                type="button" 
+                onClick={() => setPreviewingXhsNoteId(null)} 
+                className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 bg-gray-100 hover:bg-gray-200 p-1.5 rounded-full cursor-pointer transition"
+              >
+                <X size={18}/>
+              </button>
+              
+              <div className="text-xs font-bold text-gray-500 mb-4 flex items-center gap-1.5 self-start select-none pl-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                小红书笔记真机排版预览 (1:1 还原)
+              </div>
+              
+              <XhsPhonePreview 
+                title={noteToPreview.title || ''}
+                content={noteToPreview.content || ''}
+                tags={noteToPreview.tags || ''}
+                coverImage={noteToPreview.cover_path || ''}
+                aspectRatio="3:4"
+                authorName={noteToPreview.username || user?.username || '小红书创作者'}
+              />
+            </div>
+          </div>
+        );
+      })()}
 
       {showProfileModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
@@ -5487,7 +5550,7 @@ function MainApp() {
 
       {viewingXhsNotes && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999]" onClick={() => setViewingXhsNotes(null)}>
-          <div className="relative bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+          <div className="relative bg-white w-full lg:max-w-6xl md:max-w-4xl max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
             <div className="bg-red-50 p-4 border-b border-red-100 flex justify-between items-center">
               <h2 className="text-xl font-bold text-red-600 flex items-center gap-2"><Target size={24}/> 小红书笔记详情</h2>
               <div className="flex items-center gap-2">
@@ -5539,8 +5602,8 @@ function MainApp() {
               </div>
             </div>
             
-            <div className="p-6 overflow-y-auto w-full grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50">
-              <div className="space-y-4">
+            <div className="p-6 overflow-y-auto w-full grid grid-cols-1 lg:grid-cols-3 gap-6 bg-gray-50">
+              <div className="space-y-4 lg:col-span-1">
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-1">小红书标题</label>
                   <input
@@ -5573,7 +5636,7 @@ function MainApp() {
                 </div>
               </div>
 
-              <div>
+              <div className="lg:col-span-1">
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-sm font-bold text-gray-700">笔记封面图</label>
                   <select 
@@ -5650,8 +5713,26 @@ function MainApp() {
                 </div>
               </div>
 
+              {/* Column 3: Xiaohongshu Real Mobile Live Preview */}
+              <div className="lg:col-span-1 lg:row-span-2 flex flex-col justify-start items-center bg-white border border-gray-150 p-4 rounded-2xl shadow-inner max-h-[75vh]">
+                <div className="text-xs font-bold text-gray-500 mb-3 flex items-center gap-1.5 self-start select-none">
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                  小红书真机排版模拟预览 (1:1 还原)
+                </div>
+                <div className="overflow-y-auto w-full scrollbar-none flex justify-center">
+                  <XhsPhonePreview 
+                    title={viewingXhsNotes.taskData?.xhsTitle || ''}
+                    content={viewingXhsNotes.taskData?.xhsBody || ''}
+                    tags={viewingXhsNotes.taskData?.xhsTags || ''}
+                    coverImage={viewingXhsNotes.taskData?.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards[0]?.image)}
+                    aspectRatio={viewingXhsNotes.taskData?.xhsCoverAspectRatio || '3:4'}
+                    authorName={user?.username || '小红书创作者'}
+                  />
+                </div>
+              </div>
+
               {/* Timing/Publish Settings (小红书定时与发布) */}
-              <div className="md:col-span-2 pt-4 mt-2 border-t border-gray-100">
+              <div className="lg:col-span-2 pt-4 mt-2 border-t border-gray-100">
                 <h3 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-1.5">
                   <span className="w-1.5 h-3 bg-red-500 rounded-full"></span>
                   定时发布及立即发布设置
