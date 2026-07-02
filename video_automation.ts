@@ -818,6 +818,161 @@ async function processVideoTask(filePath: string, jobKey: string) {
     console.log(`✅ 视频渲染完成: ${outputFilename} (User: ${userId || 'global'})`);
 }
 
+function escapeXml(unsafe: string): string {
+    return unsafe.replace(/[<>&'"]/g, (c) => {
+        switch (c) {
+            case '<': return '&lt;';
+            case '>': return '&gt;';
+            case '&': return '&amp;';
+            case '\'': return '&apos;';
+            case '"': return '&quot;';
+            default: return c;
+        }
+    });
+}
+
+function generateTextOverlaySvg(sb: any, f: number, frames: number, duration: number, w: number, h: number, fps: number): string {
+    const fontSize = sb.textSize || 40;
+    const color = sb.textColor || 'white';
+    const text = sb.text || '';
+    
+    const progress = f / Math.max(1, frames - 1);
+    const timeElapsed = f / fps;
+    
+    const centerX = w / 2;
+    const centerY = h / 2;
+    
+    const fontFamily = process.platform === 'win32'
+        ? 'Microsoft YaHei, sans-serif'
+        : 'WenQuanYi Micro Hei, sans-serif';
+        
+    let svgContent = '';
+    let filterDef = '';
+    
+    if (sb.textEffect === 'rotate') {
+        const radius = fontSize * 1.8;
+        const angleRad = progress * Math.PI * 2;
+        const angleDeg = angleRad * 180 / Math.PI;
+        
+        const chars = text.replace(/\n/g, ' ').split('');
+        const angleStep = (Math.PI * 2) / Math.max(1, chars.length);
+        
+        let charGroups = '';
+        chars.forEach((char, index) => {
+            const charAngle = index * angleStep;
+            const cx = Math.cos(charAngle) * radius;
+            const cy = Math.sin(charAngle) * radius;
+            const charRotDeg = (charAngle + Math.PI / 2) * 180 / Math.PI;
+            
+            const escapedChar = escapeXml(char);
+            charGroups += `
+      <g transform="translate(${cx.toFixed(3)}, ${cy.toFixed(3)}) rotate(${charRotDeg.toFixed(3)})">
+        <text 
+          x="0" 
+          y="0" 
+          font-family="${fontFamily}" 
+          font-size="${fontSize}" 
+          fill="${color}" 
+          text-anchor="middle" 
+          dominant-baseline="central"
+        >${escapedChar}</text>
+      </g>`;
+        });
+        
+        svgContent = `
+  <g transform="translate(${centerX}, ${centerY}) rotate(${angleDeg.toFixed(3)})">
+    ${charGroups}
+  </g>`;
+    } else {
+        // Handle other text effects
+        let opacity = 1;
+        let scale = 1;
+        let blurRadius = 0;
+        let displayText = text;
+        
+        if (sb.textEffect === 'fade') {
+            opacity = Math.min(1, timeElapsed / 0.5);
+        } else if (sb.textEffect === 'blur') {
+            const pBlur = Math.min(1, timeElapsed / 0.8);
+            opacity = pBlur;
+            blurRadius = (1 - pBlur) * 20;
+            scale = 0.9 + pBlur * 0.1;
+        } else if (sb.textEffect === 'typewriter') {
+            const pType = Math.min(1, progress / 0.5);
+            const charsToShow = Math.floor(pType * text.length);
+            displayText = text.substring(0, charsToShow);
+            
+            // Add typewriter cursor
+            const hasCursor = pType < 1 || (Math.floor(timeElapsed * 4) % 2 === 0);
+            if (hasCursor) {
+                displayText += '|';
+            }
+        }
+        
+        if (blurRadius > 0.1) {
+            filterDef = `
+    <filter id="blur-filter" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="${blurRadius.toFixed(3)}" />
+    </filter>`;
+        }
+        
+        const lines = displayText.split('\n');
+        const lineHeight = fontSize * 1.3;
+        
+        let textLinesXml = '';
+        lines.forEach((line, i) => {
+            const yOffset = (i - (lines.length - 1) / 2) * lineHeight;
+            const escapedLine = escapeXml(line);
+            textLinesXml += `
+      <text 
+        x="0" 
+        y="${yOffset.toFixed(3)}" 
+        font-family="${fontFamily}" 
+        font-size="${fontSize}" 
+        fill="${color}" 
+        text-anchor="middle" 
+        dominant-baseline="central"
+      >${escapedLine}</text>`;
+        });
+        
+        const filterAttr = blurRadius > 0.1 ? 'filter="url(#blur-filter)"' : '';
+        
+        svgContent = `
+  <g transform="translate(${centerX}, ${centerY}) scale(${scale.toFixed(3)})" opacity="${opacity.toFixed(3)}" ${filterAttr}>
+    ${textLinesXml}
+  </g>`;
+    }
+    
+    return `<?xml version="1.0" encoding="utf-8"?>
+<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    ${filterDef}
+  </defs>
+  ${svgContent}
+</svg>`;
+}
+
+async function runWithLimit<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+    const results: T[] = [];
+    const executing: Promise<void>[] = [];
+    
+    for (const task of tasks) {
+        const p = Promise.resolve().then(() => task());
+        results.push(p as any);
+        
+        if (limit < tasks.length) {
+            const e: Promise<void> = p.then(() => {
+                executing.splice(executing.indexOf(e), 1);
+            });
+            executing.push(e);
+            if (executing.length >= limit) {
+                await Promise.race(executing);
+            }
+        }
+    }
+    return Promise.all(results);
+}
+
 async function generateClip(sb: any, outputPath: string, targetWidth: number, targetHeight: number, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M', fps: number = 60, videoColorProtection: string = 'bt709', videoQualityMode: string = 'highSharpen'): Promise<void> {
     // Resolve image path
     let imgPath = sb.image;
@@ -896,155 +1051,95 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
 
     // 3. Text Overlay
     let lastLabel = '[v1]';
-    if (sb.text) {
-        const fontSize = sb.textSize || 40; 
-        const color = sb.textColor || 'white';
-        const escapedText = sb.text
-            .replace(/\\/g, "\\\\\\\\")
-            .replace(/:/g, "\\\\:")
-            .replace(/'/g, "'\\\\\\''")
-            .replace(/%/g, "\\\\%");
-        
-        // Font path for Chinese support (Windows & Linux)
-        const fontPath = process.platform === 'win32' 
-            ? 'C\\:/Windows/Fonts/msyh.ttc' 
-            : '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc';
+    let tempOverlayDir = '';
 
-        let textParams = `text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:fontfile='${fontPath}'`;
-        
-        let estimatedTextWidth = 0;
-        for (const char of sb.text) {
-            if (/[\u4e00-\u9fa5]/.test(char)) {
-                estimatedTextWidth += fontSize;
-            } else if (/[a-zA-Z0-9]/.test(char)) {
-                estimatedTextWidth += fontSize * 0.55;
-            } else {
-                estimatedTextWidth += fontSize * 0.4;
-            }
-        }
-        const textW = Math.max(10, Math.round(estimatedTextWidth));
-
-        // Implement effects
-        if (sb.textEffect === 'fade') {
-            filterComplex += `;${lastLabel}drawtext=${textParams}:alpha='min(1,t/0.5)'[v2]`;
-        } else if (sb.textEffect === 'blur') {
-            const blurDuration = duration;
-            let blurChain = [];
-            blurChain.push(`color=c=black@0:s=${w}x${h}:r=${fps}:d=${blurDuration}[canvas_blur]`);
-            blurChain.push(`[canvas_blur]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2[text_raw]`);
-            blurChain.push(`[text_raw]split[to_blur][to_sharp]`);
-            blurChain.push(`[to_blur]boxblur=10:2,fade=t=out:st=0:d=0.8:alpha=1[blur_faded]`);
-            blurChain.push(`[to_sharp]fade=t=in:st=0:d=0.8:alpha=1[sharp_faded]`);
-            blurChain.push(`${lastLabel}[blur_faded]overlay=x=0:y=0:shortest=1[v_temp_blur]`);
-            blurChain.push(`[v_temp_blur][sharp_faded]overlay=x=0:y=0:shortest=1[v2]`);
-            
-            filterComplex += `;${blurChain.join(';')}`;
-        } else if (sb.textEffect === 'typewriter') {
-            const textStr = sb.text;
-            const revealDuration = Math.min(1.5, duration * 0.5);
-            
-            // If the text is very long, step by 2 or more characters to avoid too many filters
-            const maxLength = 30;
-            const step = textStr.length > maxLength ? Math.ceil(textStr.length / maxLength) : 1;
-            
-            let typewriterChain = [];
-            const indices = [];
-            for (let i = 1; i <= textStr.length; i += step) {
-                indices.push(i);
-            }
-            if (indices[indices.length - 1] !== textStr.length) {
-                indices.push(textStr.length);
-            }
-            
-            const totalSteps = indices.length;
-            const charDuration = revealDuration / totalSteps;
-            
-            for (let sIdx = 0; sIdx < totalSteps; sIdx++) {
-                const i = indices[sIdx];
-                const subStr = textStr.substring(0, i);
-                const escapedSubStr = subStr
-                    .replace(/\\/g, "\\\\\\\\")
-                    .replace(/:/g, "\\\\:")
-                    .replace(/'/g, "'\\\\\\''")
-                    .replace(/%/g, "\\\\%");
-                
-                const startTime = sIdx * charDuration;
-                const endTime = (sIdx + 1) * charDuration;
-                const showCursor = i < textStr.length ? '|' : '';
-                const displayText = escapedSubStr + showCursor;
-                
-                const enableCond = i === textStr.length
-                    ? `gte(t,${startTime.toFixed(3)})`
-                    : `between(t,${startTime.toFixed(3)},${endTime.toFixed(3)})`;
-                
-                typewriterChain.push(`drawtext=text='${displayText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:enable='${enableCond}'`);
-            }
-            
-            filterComplex += `;${lastLabel}${typewriterChain.join(',')}[v2]`;
-        } else if (sb.textEffect === 'rotate') {
-            const rotDuration = duration;
-            let rotChain = [];
-            rotChain.push(`color=c=black@0:s=${w}x${h}:r=${fps}:d=${rotDuration}[canvas_rot]`);
-            rotChain.push(`[canvas_rot]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2[text_rot]`);
-            rotChain.push(`[text_rot]rotate=a='max(0,1-t)*2*PI':fillcolor=black@0,fade=t=in:st=0:d=1.0:alpha=1[text_rotated]`);
-            rotChain.push(`${lastLabel}[text_rotated]overlay=x=0:y=0:shortest=1[v2]`);
-            
-            filterComplex += `;${rotChain.join(';')}`;
-        } else {
-            // 无特效
-            filterComplex += `;${lastLabel}drawtext=${textParams}[v2]`;
-        }
-        lastLabel = '[v2]';
-    }
-
-    let finalLabel = lastLabel;
-    if (videoQualityMode === 'highSharpen') {
-        filterComplex += `;${lastLabel}unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.5:chroma_msize_x=5:chroma_msize_y=5:chroma_amount=0.0[v_sharp]`;
-        finalLabel = '[v_sharp]';
-    }
-
-    if (videoColorProtection === 'bt709') {
-        filterComplex += `;${finalLabel}scale=w=iw:h=ih:out_color_matrix=bt709:flags=lanczos+accurate_rnd,format=yuv420p[outv]`;
-    } else {
-        filterComplex += `;${finalLabel}format=yuv420p[outv]`;
-    }
-
-    const args = [
-        '-i', imgPath,
-        '-filter_complex', filterComplex,
-        '-map', '[outv]',
-        '-c:v', 'libx264',
-        '-preset', videoQualityMode === 'highSharpen' ? 'slow' : 'medium',
-        '-crf', crf,
-        '-b:v', bitrate,
-        '-maxrate', maxRate,
-        '-bufsize', bufSize,
-        '-t', duration.toString(),
-        '-r', fps.toString(),
-        '-pix_fmt', 'yuv420p',
-    ];
-
-    if (videoColorProtection === 'bt709') {
-        args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
-    }
-
-    if (videoQualityMode === 'highSharpen') {
-        args.push('-tune', 'stillimage', '-profile:v', 'high');
-    }
-
-    args.push(
-        '-movflags', '+faststart',
-        '-y',
-        outputPath
-    );
-
-    console.log(`[FFmpeg] Executing: ${FFMPEG_PATH} ${args.join(' ')}`);
-    
     try {
+        if (sb.text) {
+            tempOverlayDir = path.join(videoTaskDir, `temp_overlay_${Date.now()}_${Math.floor(Math.random() * 10000)}`);
+            fs.mkdirSync(tempOverlayDir, { recursive: true });
+            
+            const tasks = [];
+            for (let f = 0; f < frames; f++) {
+                const frameNum = f;
+                tasks.push(async () => {
+                    const svgString = generateTextOverlaySvg(sb, frameNum, frames, duration, w, h, fps);
+                    const fileName = `frame_${frameNum.toString().padStart(5, '0')}.png`;
+                    const filePath = path.join(tempOverlayDir, fileName);
+                    await sharp(Buffer.from(svgString)).png().toFile(filePath);
+                });
+            }
+            await runWithLimit(tasks, 16);
+            
+            filterComplex += `;[v1][1:v]overlay=0:0[v2]`;
+            lastLabel = '[v2]';
+        }
+
+        let finalLabel = lastLabel;
+        if (videoQualityMode === 'highSharpen') {
+            filterComplex += `;${lastLabel}unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.5:chroma_msize_x=5:chroma_msize_y=5:chroma_amount=0.0[v_sharp]`;
+            finalLabel = '[v_sharp]';
+        }
+
+        if (videoColorProtection === 'bt709') {
+            filterComplex += `;${finalLabel}scale=w=iw:h=ih:out_color_matrix=bt709:flags=lanczos+accurate_rnd,format=yuv420p[outv]`;
+        } else {
+            filterComplex += `;${finalLabel}format=yuv420p[outv]`;
+        }
+
+        const args = [
+            '-i', imgPath,
+        ];
+
+        if (sb.text) {
+            args.push(
+                '-f', 'image2',
+                '-framerate', fps.toString(),
+                '-i', path.join(tempOverlayDir, 'frame_%05d.png')
+            );
+        }
+
+        args.push(
+            '-filter_complex', filterComplex,
+            '-map', '[outv]',
+            '-c:v', 'libx264',
+            '-preset', videoQualityMode === 'highSharpen' ? 'slow' : 'medium',
+            '-crf', crf,
+            '-b:v', bitrate,
+            '-maxrate', maxRate,
+            '-bufsize', bufSize,
+            '-t', duration.toString(),
+            '-r', fps.toString(),
+            '-pix_fmt', 'yuv420p'
+        );
+
+        if (videoColorProtection === 'bt709') {
+            args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
+        }
+
+        if (videoQualityMode === 'highSharpen') {
+            args.push('-tune', 'stillimage', '-profile:v', 'high');
+        }
+
+        args.push(
+            '-movflags', '+faststart',
+            '-y',
+            outputPath
+        );
+
+        console.log(`[FFmpeg] Executing: ${FFMPEG_PATH} ${args.join(' ')}`);
         await execa(FFMPEG_PATH, args);
+
     } catch (err: any) {
         console.error(`[FFmpeg] Error generating clip: ${err.stderr || err.message}`);
         throw err;
+    } finally {
+        if (tempOverlayDir && fs.existsSync(tempOverlayDir)) {
+            try {
+                fs.rmSync(tempOverlayDir, { recursive: true, force: true });
+            } catch (err) {
+                console.warn(`[FFmpeg] Failed to clean up temp overlay directory ${tempOverlayDir}:`, err);
+            }
+        }
     }
 }
 
