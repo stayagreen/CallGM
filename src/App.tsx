@@ -2679,7 +2679,7 @@ function MainApp() {
                             } : j));
 
                             // Start rendering
-                            const silentBlob = await renderVideoClientSide(job.data, 30, (progressUpdate) => {
+                            const silentBlob = await renderVideoClientSide(job.data, 60, (progressUpdate) => {
                               setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
                                 ...j, 
                                 progress: progressUpdate.progress, 

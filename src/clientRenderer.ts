@@ -73,9 +73,9 @@ function drawSingleStoryboard(
 
     let zoom = 1.0;
     if (sb.animation === 'zoom_in') {
-      zoom = 1.0 + p * 0.5;
+      zoom = 1.0 + p * 0.08;
     } else if (sb.animation && sb.animation.startsWith('pan_')) {
-      zoom = 1.2;
+      zoom = 1.15;
     }
 
     const sw = fitW / zoom;
@@ -88,42 +88,45 @@ function drawSingleStoryboard(
     let offsetRefX = 0;
     let offsetRefY = 0;
 
+    // Use a gentler interpolation range centered in the middle of the zoom buffer to slow down movement and ensure consistency
+    const pSlow = 0.25 + p * 0.50;
+
     switch (sb.animation) {
       case 'zoom_in':
         offsetRefX = centerX;
         offsetRefY = centerY;
         break;
       case 'pan_lr':
-        offsetRefX = p * rangeX;
+        offsetRefX = pSlow * rangeX;
         offsetRefY = centerY;
         break;
       case 'pan_rl':
-        offsetRefX = (1 - p) * rangeX;
+        offsetRefX = (1 - pSlow) * rangeX;
         offsetRefY = centerY;
         break;
       case 'pan_tb':
         offsetRefX = centerX;
-        offsetRefY = p * rangeY;
+        offsetRefY = pSlow * rangeY;
         break;
       case 'pan_bt':
         offsetRefX = centerX;
-        offsetRefY = (1 - p) * rangeY;
+        offsetRefY = (1 - pSlow) * rangeY;
         break;
       case 'pan_tl_br':
-        offsetRefX = p * rangeX;
-        offsetRefY = p * rangeY;
+        offsetRefX = pSlow * rangeX;
+        offsetRefY = pSlow * rangeY;
         break;
       case 'pan_br_tl':
-        offsetRefX = (1 - p) * rangeX;
-        offsetRefY = (1 - p) * rangeY;
+        offsetRefX = (1 - pSlow) * rangeX;
+        offsetRefY = (1 - pSlow) * rangeY;
         break;
       case 'pan_tr_bl':
-        offsetRefX = (1 - p) * rangeX;
-        offsetRefY = p * rangeY;
+        offsetRefX = (1 - pSlow) * rangeX;
+        offsetRefY = pSlow * rangeY;
         break;
       case 'pan_bl_tr':
-        offsetRefX = p * rangeX;
-        offsetRefY = (1 - p) * rangeY;
+        offsetRefX = pSlow * rangeX;
+        offsetRefY = (1 - pSlow) * rangeY;
         break;
       default:
         offsetRefX = 0;
@@ -255,7 +258,7 @@ function drawSingleStoryboard(
  */
 export async function renderVideoClientSide(
   task: any,
-  fps: number = 30,
+  fps: number = 60,
   onProgress: (p: ClientRenderProgress) => void
 ): Promise<Blob> {
   if (typeof VideoEncoder === 'undefined') {
