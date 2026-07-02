@@ -6,6 +6,10 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import sharp from 'sharp';
 import { execa } from 'execa';
+
+// Optimize sharp for batch processing
+sharp.concurrency(1);
+sharp.cache(false);
 import db from './src/db/db.js';
 import { GoogleGenAI, Type } from '@google/genai';
 
@@ -1055,11 +1059,36 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
 
     try {
         if (sb.text) {
-            tempOverlayDir = path.join(videoTaskDir, `temp_overlay_${Date.now()}_${Math.floor(Math.random() * 10000)}`);
+            // RAM Disk optimization: detect if /dev/shm is available and writable under Linux
+            let baseTmpDir = videoTaskDir;
+            if (process.platform === 'linux' && fs.existsSync('/dev/shm')) {
+                try {
+                    const testPath = path.join('/dev/shm', `test_${Date.now()}`);
+                    fs.writeFileSync(testPath, 'test');
+                    fs.unlinkSync(testPath);
+                    baseTmpDir = '/dev/shm';
+                } catch (e) {
+                    baseTmpDir = videoTaskDir;
+                }
+            }
+
+            tempOverlayDir = path.join(baseTmpDir, `temp_overlay_${Date.now()}_${Math.floor(Math.random() * 10000)}`);
             fs.mkdirSync(tempOverlayDir, { recursive: true });
             
+            // Separation of Dynamic and Static Frames Optimization (动静分离)
+            let dynamicFrames = frames;
+            if (sb.textEffect === 'none' || !sb.textEffect) {
+                dynamicFrames = 2; // Keep at least 2 frames to satisfy image2 pattern sequence
+            } else if (sb.textEffect === 'fade') {
+                dynamicFrames = Math.min(frames, Math.ceil(0.5 * fps) + 1);
+                if (dynamicFrames < 2) dynamicFrames = 2;
+            } else if (sb.textEffect === 'blur') {
+                dynamicFrames = Math.min(frames, Math.ceil(0.8 * fps) + 1);
+                if (dynamicFrames < 2) dynamicFrames = 2;
+            }
+
             const tasks = [];
-            for (let f = 0; f < frames; f++) {
+            for (let f = 0; f < dynamicFrames; f++) {
                 const frameNum = f;
                 tasks.push(async () => {
                     const svgString = generateTextOverlaySvg(sb, frameNum, frames, duration, w, h, fps);
@@ -1109,7 +1138,8 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             '-bufsize', bufSize,
             '-t', duration.toString(),
             '-r', fps.toString(),
-            '-pix_fmt', 'yuv420p'
+            '-pix_fmt', 'yuv420p',
+            '-threads', '0' // Enable full thread utilization
         );
 
         if (videoColorProtection === 'bt709') {
