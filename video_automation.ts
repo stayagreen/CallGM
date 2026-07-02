@@ -7,6 +7,7 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import sharp from 'sharp';
 import { execa } from 'execa';
 import db from './src/db/db.js';
+import { GoogleGenAI, Type } from '@google/genai';
 
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 let FFMPEG_PATH = 'ffmpeg'; // Default to system ffmpeg
@@ -141,11 +142,284 @@ function getAppConfig() {
     return {};
 }
 
+function getXhsCoverImageBase64(xhsCoverImage: string, taskDir: string): { data: string; mimeType: string } | null {
+    if (!xhsCoverImage) return null;
+    
+    // Strip query parameters like timestamp `?t=...`
+    const cleanUrl = xhsCoverImage.split('?')[0];
+    
+    if (cleanUrl.startsWith('data:image/')) {
+      const matches = cleanUrl.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        return { mimeType: matches[1], data: matches[2] };
+      }
+      return null;
+    }
+
+    // Handle local path
+    let relativePath = cleanUrl;
+    if (relativePath.startsWith('/')) {
+      relativePath = relativePath.substring(1);
+    }
+
+    let fullPath = '';
+    if (relativePath.startsWith('uploads/')) {
+      fullPath = path.join(process.cwd(), relativePath);
+    } else if (relativePath.startsWith('downloads/')) {
+      fullPath = path.join(process.cwd(), 'download', relativePath.substring('downloads/'.length));
+    } else if (relativePath.startsWith('download/')) {
+      fullPath = path.join(process.cwd(), relativePath);
+    } else {
+      const tryUploadPath = path.join(process.cwd(), 'uploads', relativePath);
+      if (fs.existsSync(tryUploadPath)) {
+        fullPath = tryUploadPath;
+      } else {
+        const tryDownloadPath = path.join(process.cwd(), 'download', relativePath);
+        if (fs.existsSync(tryDownloadPath)) {
+          fullPath = tryDownloadPath;
+        } else {
+          fullPath = path.join(process.cwd(), relativePath);
+        }
+      }
+    }
+
+    console.log(`[AI-GEN-BACKGROUND] Reading cover image from path: "${fullPath}"`);
+
+    if (fs.existsSync(fullPath)) {
+      try {
+        const ext = path.extname(fullPath).toLowerCase().replace('.', '');
+        let mimeType = 'image/jpeg';
+        if (ext === 'png') mimeType = 'image/png';
+        else if (ext === 'webp') mimeType = 'image/webp';
+        else if (ext === 'gif') mimeType = 'image/gif';
+
+        const fileBuffer = fs.readFileSync(fullPath);
+        return {
+          mimeType,
+          data: fileBuffer.toString('base64'),
+        };
+      } catch (e) {
+        console.error('[AI-GEN-BACKGROUND] Error reading local cover image:', e);
+        return null;
+      }
+    }
+
+    return null;
+}
+
+function extractJSON(text: string): any {
+    const cleaned = text.trim();
+    
+    try {
+      return JSON.parse(cleaned);
+    } catch (e) {}
+
+    const markdownRegex = /```(?:json|JSON)?\s*([\s\S]*?)\s*```/;
+    const match = cleaned.match(markdownRegex);
+    if (match) {
+      const blockContent = match[1].trim();
+      try {
+        return JSON.parse(blockContent);
+      } catch (e) {}
+    }
+
+    const firstOpen = cleaned.indexOf('{');
+    const lastClose = cleaned.lastIndexOf('}');
+    if (firstOpen !== -1 && lastClose !== -1 && lastClose > firstOpen) {
+      const jsonCandidate = cleaned.substring(firstOpen, lastClose + 1);
+      try {
+        return JSON.parse(jsonCandidate);
+      } catch (e) {}
+
+      let fuzzyClean = jsonCandidate.trim();
+      fuzzyClean = fuzzyClean.replace(/,\s*([\]}])/g, '$1');
+      try {
+        return JSON.parse(fuzzyClean);
+      } catch (e) {}
+    }
+
+    try {
+      const xhsTitleMatch = text.match(/(?:xhsTitle|标题|Title)["'：\s]+([^"'\n]+)/i);
+      const xhsTagsMatch = text.match(/(?:xhsTags|标签|话题|Tags)["'：\s]+([^"'\n]+)/i);
+      
+      let xhsBody = '';
+      const bodyMatch = text.match(/(?:xhsBody|正文|内容|Body)["'：\s]+([\s\S]+?)(?=(?:"?xhsTags|标签|话题|Tags|$))/i);
+      if (bodyMatch) {
+        xhsBody = bodyMatch[1].trim();
+        xhsBody = xhsBody.replace(/^["'\s]+|["'\s]+$/g, '');
+      } else {
+        xhsBody = text;
+      }
+
+      if (xhsTitleMatch) {
+        return {
+          xhsTitle: xhsTitleMatch[1].trim().replace(/^["'\s]+|["'\s]+$/g, ''),
+          xhsBody: xhsBody,
+          xhsTags: xhsTagsMatch ? xhsTagsMatch[1].trim().replace(/^["'\s]+|["'\s]+$/g, '') : "#话题"
+        };
+      }
+    } catch (e) {}
+
+    throw new Error("无法从回复中解析出具有标准结构的 JSON 文档。原始内容为: " + text);
+}
+
+async function generateXhsCopyBackground(taskData: any): Promise<any> {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+        console.warn("[AI-GEN-BACKGROUND] GEMINI_API_KEY not set, skipping background copy generation");
+        return null;
+    }
+
+    const storyboards = taskData.storyboards || [];
+    const videoName = taskData.videoName || '';
+    
+    let coverUrl = taskData.xhsCoverImage;
+    if (!coverUrl && storyboards && storyboards.length > 0) {
+        coverUrl = storyboards[0]?.image;
+    }
+
+    if (!coverUrl) {
+        console.warn("[AI-GEN-BACKGROUND] No cover URL or storyboards to generate from, skipping background copy generation");
+        return null;
+    }
+
+    const imgData = getXhsCoverImageBase64(coverUrl, videoTaskDir);
+    if (!imgData) {
+        console.warn("[AI-GEN-BACKGROUND] Could not read cover image file, skipping background copy generation");
+        return null;
+    }
+
+    let config: any = {};
+    try {
+        const configRow = db.prepare('SELECT value FROM system_config WHERE key = ?').get('app_config') as any;
+        if (configRow && configRow.value) {
+            config = JSON.parse(configRow.value);
+        }
+    } catch(e) {}
+
+    const defaultPromptTemplate = `【核心要求：请务必深度结合我上传的“小红书封面图片”以及下方的视频分镜描述来创作。你生成的一切内容（包含标题、正文、情感基调与话题）都应该与这张封面图的视觉主题、画面主体、配色、情绪和文字标签高度契合，体现出根据封面图量身定制的原生质感。】
+
+你是一个小红书爆款文案专家。请结合我上传的封面图片，并根据以下提供的视频分镜画面描述，为我制作一个小红书发布的标题、正文和话题标签：
+
+视频分镜详情：
+{storyboardTexts}
+
+请遵循以下极严限制：
+1. **标题**（xhsTitle）：标题必须短小精悍且极具吸引力（例如使用爆款问句、感叹句、情绪词、emoji），且**总字数（包含文字、标点、特殊符号和emoji）绝对不能超过20字**（严格 ≤ 20字）。
+2. **正文**（xhsBody）：正文要求生动活泼，语气要像小红书个人博主日常分享，分段清晰，善用表情符号/emoji。**绝对不能出现任何营销、导流、推广、购买、加好友、链接、加微信等政治敏感/营销广告引导语**，以天然真实原生态分享为主。
+3. **话题**（xhsTags）：精选**刚好 10 个**极具热度和深度相关的爆款小红书话题。格式为“#话题1 #话题2 ...”，每个话题带#号，空格隔开，严格返回正好 10 个，不能多也不能少。
+
+请使用以下标准的纯JSON格式返回：
+{
+  "xhsTitle": "20字内极富吸引力小红书标题",
+  "xhsBody": "元气活泼的小红书正文...",
+  "xhsTags": "#话题1 #话题2 #话题3 #话题4 #话题5 #话题6 #话题7 #话题8 #话题9 #话题10"
+}`;
+
+    const xhsPromptTemplate = config.xhsPrompt || defaultPromptTemplate;
+
+    let storyboardTexts = '';
+    if (storyboards && Array.isArray(storyboards) && storyboards.length > 0) {
+      storyboardTexts = storyboards.map((s: any, idx: number) => {
+        return `分镜 ${idx + 1}: ${s.text || '（无描述）'}`;
+      }).join('\n');
+    } else if (videoName) {
+      storyboardTexts = `视频名称/场景内容: ${videoName}`;
+    } else {
+      storyboardTexts = `视频场景内容: 这是一个精美的创意视频作品`;
+    }
+
+    let prompt = xhsPromptTemplate;
+    if (prompt.includes('{storyboardTexts}')) {
+      prompt = prompt.split('{storyboardTexts}').join(storyboardTexts);
+    } else if (prompt.includes('${storyboardTexts}')) {
+      prompt = prompt.split('${storyboardTexts}').join(storyboardTexts);
+    } else {
+      prompt = prompt + `\n\n视频分镜详情：\n${storyboardTexts}`;
+    }
+
+    console.log(`[AI-GEN-BACKGROUND] Initiating Gemini model to generate copy...`);
+    const ai = new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              data: imgData.data,
+              mimeType: imgData.mimeType
+            }
+          },
+          {
+            text: prompt
+          }
+        ]
+      },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            xhsTitle: {
+              type: Type.STRING,
+              description: "小红书爆款标题，不超过20个字"
+            },
+            xhsBody: {
+              type: Type.STRING,
+              description: "符合人设要求的小红书正文，不带广告、加微等引流用语"
+            },
+            xhsTags: {
+              type: Type.STRING,
+              description: "10个爆款话题标签，格式固定为：#话题1 #话题2 #话题3 #话题4 #话题5 #话题6 #话题7 #话题8 #话题9 #话题10，正好十个，空格隔开"
+            }
+          },
+          required: ["xhsTitle", "xhsBody", "xhsTags"]
+        }
+      }
+    });
+
+    const resultText = response.text;
+    if (!resultText) {
+      throw new Error("Gemini API 返回了空内容。");
+    }
+    
+    const parsed = extractJSON(resultText);
+    if (parsed && parsed.xhsTitle && parsed.xhsTitle.length > 20) {
+      parsed.xhsTitle = parsed.xhsTitle.substring(0, 20);
+    }
+    return parsed;
+}
+
 async function processVideoTask(filePath: string, jobKey: string) {
     const filename = path.basename(filePath);
     const jobId = filename.replace('.json', '');
     const taskData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     const { storyboards, bgm, introAnimation, outroAnimation, userId } = taskData;
+    
+    // Start generating XHS copy concurrently if it doesn't exist
+    let xhsGenPromise: Promise<any> = Promise.resolve();
+    const hasCopy = taskData.xhsTitle || taskData.xhsBody;
+    if (!hasCopy) {
+        console.log(`[AI-GEN-BACKGROUND] 检测到当前视频没有小红书文案，启动后台 AI 自动生成...`);
+        xhsGenPromise = generateXhsCopyBackground(taskData).then(result => {
+            if (result) {
+                taskData.xhsTitle = result.xhsTitle;
+                taskData.xhsBody = result.xhsBody;
+                taskData.xhsTags = result.xhsTags;
+                console.log(`[AI-GEN-BACKGROUND] 后台 AI 小红书文案生成成功：标题="${result.xhsTitle}"`);
+            }
+        }).catch(err => {
+            console.error(`[AI-GEN-BACKGROUND] 后台 AI 小红书文案生成失败:`, err);
+        });
+    }
     
     // Update DB: Status -> Running
     try {
@@ -317,6 +591,13 @@ async function processVideoTask(filePath: string, jobKey: string) {
     // Cleanup temp files
     clipPaths.forEach(p => { if (fs.existsSync(p)) fs.unlinkSync(p); });
     if (fs.existsSync(concatPath)) fs.unlinkSync(concatPath);
+
+    // Ensure background AI copy generation completes before finalizing task data
+    try {
+        await xhsGenPromise;
+    } catch(e) {
+        console.error('[AI-GEN-BACKGROUND] Wait for background XHS generation failed:', e);
+    }
 
     // Move task to history
     const relativeAssetPath = userId ? `${userId}/${outputFilename}` : outputFilename;
