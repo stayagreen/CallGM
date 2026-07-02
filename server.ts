@@ -1323,7 +1323,7 @@ async function startServer() {
     imageQuality: 'performance',
     watermarkRoiWPercent: 15,
     watermarkRoiHPercent: 10,
-    videoConcurrency: 3,
+    videoConcurrency: 1,
     dispatchStrategy: 'all',
     globalConcurrency: 3,
     headless: true,
@@ -3398,14 +3398,7 @@ ${content || ''}${formattedTags}
 
   // Start the video automation watcher
   const getVideoConcurrency = () => {
-    try {
-      const configRow = db.prepare('SELECT value FROM system_config WHERE key = ?').get('app_config') as any;
-      if (configRow) {
-        const config = JSON.parse(configRow.value);
-        return config.videoConcurrency || 1; // Default 1
-      }
-    } catch (e) {}
-    return 1;
+    return 1; // Strictly enforce sequential execution (one-by-one)
   };
   startVideoAutomationWatcher(getVideoConcurrency);
 

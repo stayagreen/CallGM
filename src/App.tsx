@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Minus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search } from 'lucide-react';
+import { Plus, Minus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search, Music } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -898,7 +898,7 @@ function MainApp() {
     taskMax: 5,
     downloadCheckDelay: 1,
     downloadRetries: 3,
-    videoConcurrency: 3,
+    videoConcurrency: 1,
     imageQuality: 'performance',
     watermarkRoiWPercent: 15,
     watermarkRoiHPercent: 10,
@@ -933,6 +933,7 @@ function MainApp() {
   });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
+  const [videoThumbErrors, setVideoThumbErrors] = useState<Record<string, boolean>>({});
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [showBatchDropdown, setShowBatchDropdown] = useState(false);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
@@ -1446,6 +1447,33 @@ function MainApp() {
       console.error('Failed to fetch jobs:', error);
       setJobs([]);
     }
+  };
+
+  const getJobCoverSrc = (job: any) => {
+    const isFailedVideoThumb = videoThumbErrors[job.id];
+    if (isFailedVideoThumb || job.status !== 'completed') {
+      let coverImg = job.data?.xhsCoverImage || job.data?.storyboards?.[0]?.image;
+      if (!coverImg) return '';
+      let cleanedImg = coverImg;
+      if (cleanedImg.startsWith('/')) cleanedImg = cleanedImg.substring(1);
+      if (cleanedImg.startsWith('uploads/')) {
+        return `/api/thumbnails/uploads/${cleanedImg.substring(8)}${galleryUpdateToken ? `?t=${galleryUpdateToken}` : ''}`;
+      } else if (cleanedImg.startsWith('downloads/')) {
+        return `/api/thumbnails/downloads/${cleanedImg.substring(10)}${galleryUpdateToken ? `?t=${galleryUpdateToken}` : ''}`;
+      }
+      return coverImg;
+    }
+    
+    let videoPath = job.resultFiles?.[0] || job.data?.outputVideo;
+    if (videoPath) {
+      let cleanedVideo = videoPath;
+      if (cleanedVideo.startsWith('/')) cleanedVideo = cleanedVideo.substring(1);
+      if (cleanedVideo.startsWith('downloads/videos/')) {
+        cleanedVideo = cleanedVideo.substring(17);
+      }
+      return `/api/thumbnails/videos/${cleanedVideo.replace(/\.[^/.]+$/, ".jpg")}${galleryUpdateToken ? `?t=${galleryUpdateToken}` : ''}`;
+    }
+    return '';
   };
 
   const fetchVideoJobs = async () => {
@@ -3540,184 +3568,302 @@ function MainApp() {
                   {expandedUsers.has(uname + '_video') && (
                     <div className="p-4 space-y-4 bg-gray-50/50">
                       {jobs.map((job: any) => (
-                        <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
-                          <div className="flex justify-between items-center mb-3">
-                            <div className="flex items-center gap-3">
-                              <span className="font-bold text-gray-900 text-lg">{new Date(job.timestamp).toLocaleString()}</span>
-                              <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
-                                job.status === 'completed' ? 'bg-green-100 text-green-700' : 
-                                job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
-                                job.status === 'error' ? 'bg-red-100 text-red-700' :
-                                'bg-yellow-100 text-yellow-700'
-                              }`}>
-                                {job.status === 'completed' && <CheckCircle2 size={14} />}
-                                {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
-                                {job.status === 'pending' && <Clock size={14} />}
-                                {job.status === 'error' && <X size={14} />}
-                                {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
-                              </span>
-                            </div>
-                            <button 
-                              onClick={async () => {
-                                if (confirm('确定要删除这条视频渲染记录吗？')) {
-                                  try {
-                                    const res = await fetch(`/api/video/jobs/${job.id}`, { method: 'DELETE' });
-                                    if (res.ok) fetchVideoJobs();
-                                  } catch (e) {
-                                    console.error('Failed to delete video job', e);
-                                  }
-                                }
-                              }}
-                              className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
-                              title="删除记录"
-                            >
-                              <Trash2 size={18} />
-                            </button>
-                          </div>
-                          
-                          {job.status === 'running' && (
-                            <div className="w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden border border-gray-200">
-                              <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
-                                <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                        <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all">
+                          <div className="flex flex-col sm:flex-row gap-5">
+                            {/* Cover Thumbnail */}
+                            <div className="relative aspect-[3/4] w-full sm:w-28 bg-gray-950 rounded-xl overflow-hidden shadow-md shrink-0 flex items-center justify-center group/thumb">
+                              {getJobCoverSrc(job) ? (
+                                <img 
+                                  src={getJobCoverSrc(job)} 
+                                  alt="视频封面" 
+                                  className="w-full h-full object-cover transition-transform duration-300 group-hover/thumb:scale-105"
+                                  onError={() => {
+                                    setVideoThumbErrors(prev => ({ ...prev, [job.id]: true }));
+                                  }}
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <Film className="w-10 h-10 text-gray-750" />
+                              )}
+                              
+                              {job.status === 'running' && (
+                                <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center text-white gap-1.5 p-2">
+                                  <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                  <span className="text-[10px] font-bold tracking-wider">{job.progress}%</span>
+                                </div>
+                              )}
+                              
+                              {job.status === 'completed' && (
+                                <div 
+                                  onClick={() => {
+                                    let videoPath = job.resultFiles?.[0] || job.data?.outputVideo;
+                                    if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                                    setViewingVideo(videoPath);
+                                  }}
+                                  className="absolute inset-0 bg-black/30 opacity-0 group-hover/thumb:opacity-100 flex items-center justify-center cursor-pointer transition-opacity duration-200"
+                                >
+                                  <PlayCircle size={32} className="text-white drop-shadow" />
+                                </div>
+                              )}
+                              
+                              <div className="absolute bottom-1.5 right-1.5 bg-black/75 px-1.5 py-0.5 rounded text-[10px] text-white font-medium">
+                                {job.data?.storyboards?.length || 0}P
                               </div>
                             </div>
-                          )}
 
-                          {job.status === 'error' && (
-                            <div className="text-red-500 text-sm mb-3 bg-red-50 p-3 rounded-lg">
-                              视频渲染失败
+                            {/* Info */}
+                            <div className="flex-grow flex flex-col justify-between">
+                              <div>
+                                <div className="flex justify-between items-start mb-2 gap-2">
+                                  <div className="flex items-center gap-3 flex-wrap">
+                                    <span className="font-bold text-gray-900 text-base sm:text-lg">{new Date(job.timestamp).toLocaleString()}</span>
+                                    <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
+                                      job.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                                      job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
+                                      job.status === 'error' ? 'bg-red-100 text-red-700' :
+                                      'bg-yellow-100 text-yellow-700'
+                                    }`}>
+                                      {job.status === 'completed' && <CheckCircle2 size={14} />}
+                                      {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
+                                      {job.status === 'pending' && <Clock size={14} />}
+                                      {job.status === 'error' && <X size={14} />}
+                                      {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
+                                    </span>
+                                  </div>
+                                  
+                                  <button 
+                                    onClick={async () => {
+                                      if (confirm('确定要删除这条视频渲染记录吗？')) {
+                                        try {
+                                          const res = await fetch(`/api/video/jobs/${job.id}`, { method: 'DELETE' });
+                                          if (res.ok) fetchVideoJobs();
+                                        } catch (e) {
+                                          console.error('Failed to delete video job', e);
+                                        }
+                                      }
+                                    }}
+                                    className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
+                                    title="删除记录"
+                                  >
+                                    <Trash2 size={18} />
+                                  </button>
+                                </div>
+
+                                {job.data?.xhsTitle && (
+                                  <p className="text-sm font-bold text-gray-800 mb-1 line-clamp-1">标题: {job.data.xhsTitle}</p>
+                                )}
+                                {job.data?.bgm && (
+                                  <p className="text-xs text-gray-500 flex items-center gap-1 mb-2">
+                                    <Music size={12} /> BGM: {job.data.bgm}
+                                  </p>
+                                )}
+
+                                {job.status === 'running' && (
+                                  <div className="w-full bg-gray-150 rounded-full h-2 mb-3 overflow-hidden border border-gray-200">
+                                    <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
+                                      <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {job.status === 'error' && (
+                                  <div className="text-red-500 text-xs mb-3 bg-red-50 p-2.5 rounded-lg border border-red-100 flex items-center gap-1.5">
+                                    <X size={14} />
+                                    <span>视频渲染失败</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
+                                <span className="text-xs text-gray-500">ID: {job.id.substring(11)}</span>
+                                <div className="flex gap-3">
+                                  <button 
+                                    onClick={() => setViewingVideoJobDetails(job)}
+                                    className="text-xs font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-200 px-3 py-1.5 rounded-lg transition-all"
+                                  >
+                                    查看详情
+                                  </button>
+                                  
+                                  {((job.status === 'completed' && job.data?.outputVideo) || (job.status === 'completed' && job.resultFiles && job.resultFiles.length > 0)) && (
+                                    <>
+                                      <button 
+                                        onClick={() => {
+                                          let videoPath = job.resultFiles?.[0] || job.data?.outputVideo;
+                                          if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                                          setViewingVideo(videoPath);
+                                        }}
+                                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition border border-blue-100"
+                                      >
+                                        <PlayCircle size={14}/> 预览视频
+                                      </button>
+                                      <a 
+                                        href={(() => {
+                                          let videoPath = job.resultFiles?.[0] || job.data?.outputVideo;
+                                          if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                                          return videoPath;
+                                        })()} 
+                                        download
+                                        className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-100 transition border border-emerald-100"
+                                      >
+                                        <Download size={14}/> 下载视频
+                                      </a>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
                             </div>
-                          )}
-                          
-                          <div className="flex justify-between items-center">
-                            <div className="text-sm text-gray-600">
-                              包含 {job.data.storyboards?.length || 0} 个分镜
-                            </div>
-                            <button 
-                              onClick={() => setViewingVideoJobDetails(job)}
-                              className="text-sm text-blue-600 font-medium hover:underline"
-                            >
-                              查看详情
-                            </button>
                           </div>
-
-                          {((job.status === 'completed' && job.data.outputVideo) || (job.status === 'completed' && job.resultFiles && job.resultFiles.length > 0)) && (
-                            <div className="mt-4 flex gap-3">
-                              <button 
-                                onClick={() => {
-                                  let videoPath = job.resultFiles?.[0] || job.data.outputVideo;
-                                  if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
-                                  setViewingVideo(videoPath);
-                                }}
-                                className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg font-medium hover:bg-blue-100 transition"
-                              >
-                                <PlayCircle size={16}/> 预览视频
-                              </button>
-                              <a 
-                                href={(() => {
-                                  let videoPath = job.resultFiles?.[0] || job.data.outputVideo;
-                                  if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
-                                  return videoPath;
-                                })()} 
-                                download
-                                className="flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg font-medium hover:bg-gray-100 transition border border-gray-200"
-                              >
-                                <Download size={16}/> 下载视频
-                              </a>
-                            </div>
-                          )}
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
               )) : videoJobs.map(job => (
-                <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
-                  <div className="flex justify-between items-center mb-3">
-                    <div className="flex items-center gap-3">
-                      <span className="font-bold text-gray-900 text-lg">{new Date(job.timestamp).toLocaleString()}</span>
-                      <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
-                        job.status === 'completed' ? 'bg-green-100 text-green-700' : 
-                        job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
-                        job.status === 'error' ? 'bg-red-100 text-red-700' :
-                        'bg-yellow-100 text-yellow-700'
-                      }`}>
-                        {job.status === 'completed' && <CheckCircle2 size={14} />}
-                        {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
-                        {job.status === 'pending' && <Clock size={14} />}
-                        {job.status === 'error' && <X size={14} />}
-                        {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
-                      </span>
-                    </div>
-                    <button 
-                      onClick={async () => {
-                        if (confirm('确定要删除这条视频渲染记录吗？')) {
-                          try {
-                            const res = await fetch(`/api/video/jobs/${job.id}`, { method: 'DELETE' });
-                            if (res.ok) fetchVideoJobs();
-                          } catch (e) {
-                            console.error('Failed to delete video job', e);
-                          }
-                        }
-                      }}
-                      className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
-                      title="删除记录"
-                    >
-                      <Trash2 size={18} />
-                    </button>
-                  </div>
-                  
-                  {job.status === 'running' && (
-                    <div className="w-full bg-gray-100 rounded-full h-3 mb-3 overflow-hidden border border-gray-200">
-                      <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
-                        <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all">
+                  <div className="flex flex-col sm:flex-row gap-5">
+                    {/* Cover Thumbnail */}
+                    <div className="relative aspect-[3/4] w-full sm:w-28 bg-gray-950 rounded-xl overflow-hidden shadow-md shrink-0 flex items-center justify-center group/thumb">
+                      {getJobCoverSrc(job) ? (
+                        <img 
+                          src={getJobCoverSrc(job)} 
+                          alt="视频封面" 
+                          className="w-full h-full object-cover transition-transform duration-300 group-hover/thumb:scale-105"
+                          onError={() => {
+                            setVideoThumbErrors(prev => ({ ...prev, [job.id]: true }));
+                          }}
+                          loading="lazy"
+                        />
+                      ) : (
+                        <Film className="w-10 h-10 text-gray-750" />
+                      )}
+                      
+                      {job.status === 'running' && (
+                        <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center text-white gap-1.5 p-2">
+                          <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span className="text-[10px] font-bold tracking-wider">{job.progress}%</span>
+                        </div>
+                      )}
+                      
+                      {job.status === 'completed' && (
+                        <div 
+                          onClick={() => {
+                            let videoPath = job.resultFiles?.[0] || job.data?.outputVideo;
+                            if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                            setViewingVideo(videoPath);
+                          }}
+                          className="absolute inset-0 bg-black/30 opacity-0 group-hover/thumb:opacity-100 flex items-center justify-center cursor-pointer transition-opacity duration-200"
+                        >
+                          <PlayCircle size={32} className="text-white drop-shadow" />
+                        </div>
+                      )}
+                      
+                      <div className="absolute bottom-1.5 right-1.5 bg-black/75 px-1.5 py-0.5 rounded text-[10px] text-white font-medium">
+                        {job.data?.storyboards?.length || 0}P
                       </div>
                     </div>
-                  )}
 
-                  {job.status === 'error' && (
-                    <div className="text-red-500 text-sm mb-3 bg-red-50 p-3 rounded-lg">
-                      视频渲染失败
+                    {/* Info */}
+                    <div className="flex-grow flex flex-col justify-between">
+                      <div>
+                        <div className="flex justify-between items-start mb-2 gap-2">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span className="font-bold text-gray-900 text-base sm:text-lg">{new Date(job.timestamp).toLocaleString()}</span>
+                            <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
+                              job.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                              job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
+                              job.status === 'error' ? 'bg-red-100 text-red-700' :
+                              'bg-yellow-100 text-yellow-700'
+                            }`}>
+                              {job.status === 'completed' && <CheckCircle2 size={14} />}
+                              {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
+                              {job.status === 'pending' && <Clock size={14} />}
+                              {job.status === 'error' && <X size={14} />}
+                              {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
+                            </span>
+                          </div>
+                          
+                          <button 
+                            onClick={async () => {
+                              if (confirm('确定要删除这条视频渲染记录吗？')) {
+                                try {
+                                  const res = await fetch(`/api/video/jobs/${job.id}`, { method: 'DELETE' });
+                                  if (res.ok) fetchVideoJobs();
+                                } catch (e) {
+                                  console.error('Failed to delete video job', e);
+                                }
+                              }
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
+                            title="删除记录"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+
+                        {job.data?.xhsTitle && (
+                          <p className="text-sm font-bold text-gray-800 mb-1 line-clamp-1">标题: {job.data.xhsTitle}</p>
+                        )}
+                        {job.data?.bgm && (
+                          <p className="text-xs text-gray-500 flex items-center gap-1 mb-2">
+                            <Music size={12} /> BGM: {job.data.bgm}
+                          </p>
+                        )}
+
+                        {job.status === 'running' && (
+                          <div className="w-full bg-gray-150 rounded-full h-2 mb-3 overflow-hidden border border-gray-200">
+                            <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
+                              <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                            </div>
+                          </div>
+                        )}
+
+                        {job.status === 'error' && (
+                          <div className="text-red-500 text-xs mb-3 bg-red-50 p-2.5 rounded-lg border border-red-100 flex items-center gap-1.5">
+                            <X size={14} />
+                            <span>视频渲染失败</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
+                        <span className="text-xs text-gray-500">ID: {job.id.substring(11)}</span>
+                        <div className="flex gap-3">
+                          <button 
+                            onClick={() => setViewingVideoJobDetails(job)}
+                            className="text-xs font-bold text-gray-600 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-200 px-3 py-1.5 rounded-lg transition-all"
+                          >
+                            查看详情
+                          </button>
+                          
+                          {((job.status === 'completed' && job.data?.outputVideo) || (job.status === 'completed' && job.resultFiles && job.resultFiles.length > 0)) && (
+                            <>
+                              <button 
+                                onClick={() => {
+                                  let videoPath = job.resultFiles?.[0] || job.data?.outputVideo;
+                                  if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                                  setViewingVideo(videoPath);
+                                }}
+                                className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition border border-blue-100"
+                              >
+                                <PlayCircle size={14}/> 预览视频
+                              </button>
+                              <a 
+                                href={(() => {
+                                  let videoPath = job.resultFiles?.[0] || job.data?.outputVideo;
+                                  if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
+                                  return videoPath;
+                                })()} 
+                                download
+                                className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-100 transition border border-emerald-100"
+                              >
+                                <Download size={14}/> 下载视频
+                              </a>
+                            </>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  )}
-                  
-                  <div className="flex justify-between items-center">
-                    <div className="text-sm text-gray-600">
-                      包含 {job.data.storyboards?.length || 0} 个分镜
-                    </div>
-                    <button 
-                      onClick={() => setViewingVideoJobDetails(job)}
-                      className="text-sm text-blue-600 font-medium hover:underline"
-                    >
-                      查看详情
-                    </button>
                   </div>
-
-                  {((job.status === 'completed' && job.data.outputVideo) || (job.status === 'completed' && job.resultFiles && job.resultFiles.length > 0)) && (
-                    <div className="mt-4 flex gap-3">
-                      <button 
-                        onClick={() => {
-                          let videoPath = job.resultFiles?.[0] || job.data.outputVideo;
-                          if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
-                          setViewingVideo(videoPath);
-                        }}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg font-medium hover:bg-blue-100 transition"
-                      >
-                        <PlayCircle size={16}/> 预览视频
-                      </button>
-                      <a 
-                        href={(() => {
-                          let videoPath = job.resultFiles?.[0] || job.data.outputVideo;
-                          if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
-                          return videoPath;
-                        })()} 
-                        download
-                        className="flex items-center gap-2 px-4 py-2 bg-gray-50 text-gray-700 rounded-lg font-medium hover:bg-gray-100 transition border border-gray-200"
-                      >
-                        <Download size={16}/> 下载视频
-                      </a>
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
@@ -5052,8 +5198,17 @@ function MainApp() {
                       <input type="number" min="1" className="w-full p-2 border border-gray-200 rounded-lg outline-none font-medium text-gray-800" value={systemConfig.globalConcurrency || 3} onChange={(e) => setSystemConfig({...systemConfig, globalConcurrency: parseInt(e.target.value) || 1})} />
                     </div>
                     <div>
-                      <label className="block mb-1 font-semibold text-gray-700">视频渲染并发数:</label>
-                      <input type="number" className="w-full p-2 border border-gray-200 rounded-lg" value={systemConfig.videoConcurrency || 3} onChange={(e) => setSystemConfig({...systemConfig, videoConcurrency: parseInt(e.target.value)})} />
+                      <label className="block mb-1 font-semibold text-gray-700 flex items-center gap-1.5">
+                        视频渲染并发数:
+                        <span className="text-[10px] font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">排队单通道</span>
+                      </label>
+                      <input 
+                        type="number" 
+                        disabled 
+                        className="w-full p-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-400 cursor-not-allowed font-medium" 
+                        value={1} 
+                      />
+                      <p className="text-[10px] text-gray-400 mt-1">※ 已锁定为“单任务排队执行”机制，一个完成再接下一个，保障服务器/电脑性能与稳定。</p>
                     </div>
                     <div>
                       <label className="block mb-1 font-semibold text-gray-700">图片质量模式:</label>
