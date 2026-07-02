@@ -1968,8 +1968,9 @@ async function startServer() {
       // 1. Add video file
       let fullVideoPath = '';
       const cleanVideo = videoPath.split('?')[0];
+      const folderName = path.basename(cleanVideo, path.extname(cleanVideo)) || '小红书笔记资源';
       
-      console.log(`📦 [XHS Pack] Resolving videoPath: "${videoPath}" (clean: "${cleanVideo}")`);
+      console.log(`📦 [XHS Pack] Resolving videoPath: "${videoPath}" (clean: "${cleanVideo}"), folderName: "${folderName}"`);
 
       // Try absolute or relative resolution strategies
       if (cleanVideo.startsWith('/downloads/')) {
@@ -2017,7 +2018,7 @@ async function startServer() {
       if (fullVideoPath && fs.existsSync(fullVideoPath)) {
         console.log(`✅ [XHS Pack] Video verified at: "${fullVideoPath}"`);
         const videoExt = path.extname(fullVideoPath) || '.mp4';
-        zip.addLocalFile(fullVideoPath, '', `小红书视频_${Date.now()}${videoExt}`);
+        zip.addLocalFile(fullVideoPath, folderName, `小红书视频_${Date.now()}${videoExt}`);
         hasFile = true;
       } else {
         console.warn(`❌ [XHS Pack] Video NOT found anywhere: "${videoPath}"`);
@@ -2032,7 +2033,7 @@ async function startServer() {
             const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
             const base64Data = matches[2];
             const buffer = Buffer.from(base64Data, 'base64');
-            zip.addFile(`小红书封面_${Date.now()}.${ext}`, buffer);
+            zip.addFile(`${folderName}/小红书封面_${Date.now()}.${ext}`, buffer);
             hasFile = true;
             console.log(`✅ [XHS Pack] Base64 Cover added successfully.`);
           }
@@ -2080,7 +2081,7 @@ async function startServer() {
           if (fullCoverPath && fs.existsSync(fullCoverPath)) {
             console.log(`✅ [XHS Pack] Cover image verified at: "${fullCoverPath}"`);
             const imgExt = path.extname(fullCoverPath) || '.jpg';
-            zip.addLocalFile(fullCoverPath, '', `小红书封面_${Date.now()}${imgExt}`);
+            zip.addLocalFile(fullCoverPath, folderName, `小红书封面_${Date.now()}${imgExt}`);
             hasFile = true;
           } else {
             console.warn(`❌ [XHS Pack] Cover image NOT found anywhere: "${coverPath}"`);
@@ -2109,7 +2110,7 @@ ${title || ''}
 ${content || ''}${formattedTags}
 `;
       const txtBuffer = Buffer.from(txtContent, 'utf-8');
-      zip.addFile('小红书文案与标题.txt', txtBuffer);
+      zip.addFile(`${folderName}/小红书文案与标题.txt`, txtBuffer);
       hasFile = true;
 
       if (!hasFile) {
