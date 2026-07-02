@@ -930,7 +930,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         } else if (sb.textEffect === 'blur') {
             const blurDuration = duration;
             let blurChain = [];
-            blurChain.push(`color=color=black@0:size=${w}x${h}:rate=${fps}:duration=${blurDuration}[canvas_blur]`);
+            blurChain.push(`color=c=black@0:s=${w}x${h}:r=${fps}:d=${blurDuration}[canvas_blur]`);
             blurChain.push(`[canvas_blur]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2[text_raw]`);
             blurChain.push(`[text_raw]split[to_blur][to_sharp]`);
             blurChain.push(`[to_blur]boxblur=10:2,fade=t=out:st=0:d=0.8:alpha=1[blur_faded]`);
@@ -984,9 +984,9 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         } else if (sb.textEffect === 'rotate') {
             const rotDuration = duration;
             let rotChain = [];
-            rotChain.push(`color=color=black@0:size=${w}x${h}:rate=${fps}:duration=${rotDuration}[canvas_rot]`);
+            rotChain.push(`color=c=black@0:s=${w}x${h}:r=${fps}:d=${rotDuration}[canvas_rot]`);
             rotChain.push(`[canvas_rot]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2[text_rot]`);
-            rotChain.push(`[text_rot]rotate=a='if(lt(t,1.0), (1.0-t)*2*pi, 0)':fillcolor=none,fade=t=in:st=0:d=1.0:alpha=1[text_rotated]`);
+            rotChain.push(`[text_rot]rotate=a='max(0,1-t)*2*PI':fillcolor=black@0,fade=t=in:st=0:d=1.0:alpha=1[text_rotated]`);
             rotChain.push(`${lastLabel}[text_rotated]overlay=x=0:y=0:shortest=1[v2]`);
             
             filterComplex += `;${rotChain.join(';')}`;
