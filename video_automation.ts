@@ -910,7 +910,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             ? 'C\\:/Windows/Fonts/msyh.ttc' 
             : '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc';
 
-        let textParams = `text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:fontfile='${fontPath}':borderw=2:bordercolor=black@0.6`;
+        let textParams = `text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:x=(w-text_w)/2:y=(h-text_h)/2:fontfile='${fontPath}'`;
         
         let estimatedTextWidth = 0;
         for (const char of sb.text) {
@@ -930,22 +930,37 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
         } else if (sb.textEffect === 'blur') {
             const blurDuration = duration;
             let blurChain = [];
-            blurChain.push(`color=c=black@0:s=${w}x${h}:r=${fps}:d=${blurDuration}[canvas_blur]`);
-            blurChain.push(`[canvas_blur]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[text_blur_full]`);
-            blurChain.push(`[text_blur_full]split[to_blur][to_sharp]`);
-            blurChain.push(`[to_blur]gblur=sigma=12,fade=t=out:st=0:d=1.0:alpha=1[blurred]`);
-            blurChain.push(`[to_sharp]fade=t=in:st=0:d=1.0:alpha=1[sharp_faded]`);
-            blurChain.push(`${lastLabel}[blurred]overlay=x=0:y=0:shortest=1:format=auto[v_temp_blur]`);
-            blurChain.push(`[v_temp_blur][sharp_faded]overlay=x=0:y=0:shortest=1:format=auto[v2]`);
+            blurChain.push(`color=color=black@0:size=${w}x${h}:rate=${fps}:duration=${blurDuration}[canvas_blur]`);
+            blurChain.push(`[canvas_blur]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2[text_raw]`);
+            blurChain.push(`[text_raw]split[to_blur][to_sharp]`);
+            blurChain.push(`[to_blur]boxblur=10:2,fade=t=out:st=0:d=0.8:alpha=1[blur_faded]`);
+            blurChain.push(`[to_sharp]fade=t=in:st=0:d=0.8:alpha=1[sharp_faded]`);
+            blurChain.push(`${lastLabel}[blur_faded]overlay=x=0:y=0:shortest=1[v_temp_blur]`);
+            blurChain.push(`[v_temp_blur][sharp_faded]overlay=x=0:y=0:shortest=1[v2]`);
             
             filterComplex += `;${blurChain.join(';')}`;
         } else if (sb.textEffect === 'typewriter') {
             const textStr = sb.text;
             const revealDuration = Math.min(1.5, duration * 0.5);
-            const charDuration = revealDuration / Math.max(1, textStr.length);
+            
+            // If the text is very long, step by 2 or more characters to avoid too many filters
+            const maxLength = 30;
+            const step = textStr.length > maxLength ? Math.ceil(textStr.length / maxLength) : 1;
             
             let typewriterChain = [];
-            for (let i = 1; i <= textStr.length; i++) {
+            const indices = [];
+            for (let i = 1; i <= textStr.length; i += step) {
+                indices.push(i);
+            }
+            if (indices[indices.length - 1] !== textStr.length) {
+                indices.push(textStr.length);
+            }
+            
+            const totalSteps = indices.length;
+            const charDuration = revealDuration / totalSteps;
+            
+            for (let sIdx = 0; sIdx < totalSteps; sIdx++) {
+                const i = indices[sIdx];
                 const subStr = textStr.substring(0, i);
                 const escapedSubStr = subStr
                     .replace(/\\/g, "\\\\\\\\")
@@ -953,8 +968,8 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
                     .replace(/'/g, "'\\\\\\''")
                     .replace(/%/g, "\\\\%");
                 
-                const startTime = (i - 1) * charDuration;
-                const endTime = i * charDuration;
+                const startTime = sIdx * charDuration;
+                const endTime = (sIdx + 1) * charDuration;
                 const showCursor = i < textStr.length ? '|' : '';
                 const displayText = escapedSubStr + showCursor;
                 
@@ -962,17 +977,17 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
                     ? `gte(t,${startTime.toFixed(3)})`
                     : `between(t,${startTime.toFixed(3)},${endTime.toFixed(3)})`;
                 
-                typewriterChain.push(`drawtext=text='${displayText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6:enable='${enableCond}'`);
+                typewriterChain.push(`drawtext=text='${displayText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:enable='${enableCond}'`);
             }
             
             filterComplex += `;${lastLabel}${typewriterChain.join(',')}[v2]`;
         } else if (sb.textEffect === 'rotate') {
             const rotDuration = duration;
             let rotChain = [];
-            rotChain.push(`color=c=black@0:s=${w}x${h}:r=${fps}:d=${rotDuration}[canvas_rot]`);
-            rotChain.push(`[canvas_rot]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2:borderw=2:bordercolor=black@0.6[text_rot]`);
-            rotChain.push(`[text_rot]rotate=a='if(lt(t,1.0), (1.0-t)*2*PI, 0)':fillcolor=black@0,fade=t=in:st=0:d=1.0:alpha=1[text_rotated]`);
-            rotChain.push(`${lastLabel}[text_rotated]overlay=x=0:y=0:shortest=1:format=auto[v2]`);
+            rotChain.push(`color=color=black@0:size=${w}x${h}:rate=${fps}:duration=${rotDuration}[canvas_rot]`);
+            rotChain.push(`[canvas_rot]drawtext=text='${escapedText}':fontcolor=${color}:fontsize=${fontSize}:fontfile='${fontPath}':x=(w-text_w)/2:y=(h-text_h)/2[text_rot]`);
+            rotChain.push(`[text_rot]rotate=a='if(lt(t,1.0), (1.0-t)*2*pi, 0)':fillcolor=none,fade=t=in:st=0:d=1.0:alpha=1[text_rotated]`);
+            rotChain.push(`${lastLabel}[text_rotated]overlay=x=0:y=0:shortest=1[v2]`);
             
             filterComplex += `;${rotChain.join(';')}`;
         } else {
