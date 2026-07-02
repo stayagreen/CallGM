@@ -3749,6 +3749,8 @@ function MainApp() {
                                     onClick={async () => {
                                       if (confirm('确定要删除这条视频渲染记录吗？')) {
                                         try {
+                                          // Optimistically filter from state to instantly refresh UI and prevent reinstatement
+                                          setVideoJobs(prev => prev.filter(j => j.id !== job.id));
                                           const res = await fetch(`/api/video/jobs/${job.id}`, { method: 'DELETE' });
                                           if (res.ok) fetchVideoJobs();
                                         } catch (e) {
@@ -3910,6 +3912,8 @@ function MainApp() {
                             onClick={async () => {
                               if (confirm('确定要删除这条视频渲染记录吗？')) {
                                 try {
+                                  // Optimistically filter from state to instantly refresh UI and prevent reinstatement
+                                  setVideoJobs(prev => prev.filter(j => j.id !== job.id));
                                   const res = await fetch(`/api/video/jobs/${job.id}`, { method: 'DELETE' });
                                   if (res.ok) fetchVideoJobs();
                                 } catch (e) {
