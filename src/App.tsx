@@ -2731,6 +2731,8 @@ function MainApp() {
                                 statusMessage: '渲染完成！视频文件已保存。',
                                 data: { ...j.data, outputVideo: data.outputVideo }
                               } : j));
+                              fetchVideoGallery();
+                              fetchGallery();
                             } else {
                               throw new Error(data.error || '服务器合流背景音乐失败！');
                             }

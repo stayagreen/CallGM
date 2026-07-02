@@ -1769,7 +1769,7 @@ async function startServer() {
       params.push(user.id);
     }
 
-    query += ' ORDER BY assets.created_at DESC';
+    query += ' ORDER BY assets.id DESC';
 
     try {
       const rows = db.prepare(query).all(...params) as any[];
@@ -2099,7 +2099,7 @@ async function startServer() {
       params.push(user.id);
     }
 
-    query += ' ORDER BY assets.created_at DESC';
+    query += ' ORDER BY assets.id DESC';
 
     try {
       const rows = db.prepare(query).all(...params) as any[];

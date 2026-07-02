@@ -382,7 +382,7 @@ export async function renderVideoClientSide(
       width: videoW,
       height: videoH,
     },
-    fastStart: 'fragmented'
+    fastStart: 'in-memory'
   });
 
   let encodeError: any = null;
