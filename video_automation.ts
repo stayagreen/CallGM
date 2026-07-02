@@ -264,12 +264,6 @@ function extractJSON(text: string): any {
 }
 
 async function generateXhsCopyBackground(taskData: any): Promise<any> {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-        console.warn("[AI-GEN-BACKGROUND] GEMINI_API_KEY not set, skipping background copy generation");
-        return null;
-    }
-
     const storyboards = taskData.storyboards || [];
     const videoName = taskData.videoName || '';
     
@@ -338,60 +332,238 @@ async function generateXhsCopyBackground(taskData: any): Promise<any> {
       prompt = prompt + `\n\n视频分镜详情：\n${storyboardTexts}`;
     }
 
-    console.log(`[AI-GEN-BACKGROUND] Initiating Gemini model to generate copy...`);
-    const ai = new GoogleGenAI({
-      apiKey: key,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
-    });
+    const openCodeApiKey = config.openCodeApiKey || '';
+    const openCodeApiUrl = config.openCodeApiUrl || '';
+    const openCodeModel = config.openCodeModel || '';
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              data: imgData.data,
-              mimeType: imgData.mimeType
+    if (!openCodeApiKey) {
+        console.log(`[AI-GEN-BACKGROUND] 未配置 OpenCode API Key，将尝试使用内置 Gemini 服务直接生成...`);
+        const key = process.env.GEMINI_API_KEY;
+        if (!key) {
+            console.warn("[AI-GEN-BACKGROUND] GEMINI_API_KEY 环境变量未设置且未配置 OpenCode API Key，跳过后台小红书文案生成");
+            return null;
+        }
+
+        const ai = new GoogleGenAI({
+          apiKey: key,
+          httpOptions: {
+            headers: {
+              'User-Agent': 'aistudio-build',
             }
-          },
-          {
-            text: prompt
           }
-        ]
-      },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            xhsTitle: {
-              type: Type.STRING,
-              description: "小红书爆款标题，不超过20个字"
-            },
-            xhsBody: {
-              type: Type.STRING,
-              description: "符合人设要求的小红书正文，不带广告、加微等引流用语"
-            },
-            xhsTags: {
-              type: Type.STRING,
-              description: "10个爆款话题标签，格式固定为：#话题1 #话题2 #话题3 #话题4 #话题5 #话题6 #话题7 #话题8 #话题9 #话题10，正好十个，空格隔开"
-            }
+        });
+
+        const response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: {
+            parts: [
+              {
+                inlineData: {
+                  data: imgData.data,
+                  mimeType: imgData.mimeType
+                }
+              },
+              {
+                text: prompt
+              }
+            ]
           },
-          required: ["xhsTitle", "xhsBody", "xhsTags"]
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                xhsTitle: {
+                  type: Type.STRING,
+                  description: "小红书爆款标题，不超过20个字"
+                },
+                xhsBody: {
+                  type: Type.STRING,
+                  description: "符合人设要求的小红书正文，不带广告、加微等引流用语"
+                },
+                xhsTags: {
+                  type: Type.STRING,
+                  description: "10个爆款话题标签，格式固定为：#话题1 #话题2 #话题3 #话题4 #话题5 #话题6 #话题7 #话题8 #话题9 #话题10，正好十个，空格隔开"
+                }
+              },
+              required: ["xhsTitle", "xhsBody", "xhsTags"]
+            }
+          }
+        });
+
+        const resultText = response.text;
+        if (!resultText) {
+          throw new Error("Gemini API 返回了空内容。");
         }
-      }
+        
+        const parsed = extractJSON(resultText);
+        if (parsed && parsed.xhsTitle && parsed.xhsTitle.length > 20) {
+          parsed.xhsTitle = parsed.xhsTitle.substring(0, 20);
+        }
+        return parsed;
+    }
+
+    // Use OpenCode / custom API Key
+    let baseUrl = (openCodeApiUrl || 'https://opencode.ai/zen/go/v1').trim();
+    if (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.substring(0, baseUrl.length - 1);
+    }
+
+    const actualModel = (openCodeModel || 'minimax-m3').trim();
+    let cleanModel = actualModel;
+    if (cleanModel.startsWith('opencode-go/')) {
+      cleanModel = cleanModel.substring(12);
+    }
+
+    const isAnthropicStyle = cleanModel.includes('minimax') || cleanModel.includes('qwen') || baseUrl.includes('/messages');
+
+    let formattedBase = baseUrl;
+    const completionsSuffix = '/chat/completions';
+    const messagesSuffix = '/messages';
+
+    if (formattedBase.endsWith(completionsSuffix)) {
+      formattedBase = formattedBase.substring(0, formattedBase.length - completionsSuffix.length);
+    } else if (formattedBase.endsWith(messagesSuffix)) {
+      formattedBase = formattedBase.substring(0, formattedBase.length - messagesSuffix.length);
+    }
+    if (formattedBase.endsWith('/')) {
+      formattedBase = formattedBase.substring(0, formattedBase.length - 1);
+    }
+
+    let apiEndpoint = '';
+    let requestBody: any = {};
+
+    if (isAnthropicStyle) {
+      apiEndpoint = `${formattedBase}/messages`;
+      requestBody = {
+        model: cleanModel,
+        system: "You are a professional social media marketing assistant for Xiaohongshu.",
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: imgData.mimeType,
+                  data: imgData.data
+                }
+              },
+              {
+                type: 'text',
+                text: prompt
+              }
+            ]
+          }
+        ],
+        max_tokens: 4096,
+        temperature: 0.7
+      };
+    } else {
+      apiEndpoint = `${formattedBase}/chat/completions`;
+      requestBody = {
+        model: cleanModel,
+        messages: [
+          { role: 'system', content: 'You are a professional social media marketing assistant for Xiaohongshu.' },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: prompt
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${imgData.mimeType};base64,${imgData.data}`
+                }
+              }
+            ]
+          }
+        ],
+        temperature: 0.7
+      };
+    }
+
+    console.log(`[AI-GEN-BACKGROUND] API generating content via OpenCode. Model: "${cleanModel}" via ${apiEndpoint}...`);
+    const apiResponse = await fetch(apiEndpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openCodeApiKey}`,
+          ...(isAnthropicStyle ? {
+            'x-api-key': openCodeApiKey,
+            'anthropic-version': '2023-06-01'
+          } : {})
+        },
+        body: JSON.stringify(requestBody)
     });
 
-    const resultText = response.text;
-    if (!resultText) {
-      throw new Error("Gemini API 返回了空内容。");
+    if (!apiResponse.ok) {
+        const errText = await apiResponse.text();
+        throw new Error(`OpenCode API 返回了非 200 状态码 (${apiResponse.status}): ${errText}`);
     }
+
+    const rawText = await apiResponse.text();
+    const data = JSON.parse(rawText);
     
-    const parsed = extractJSON(resultText);
+    let content = '';
+    if (data.content && Array.isArray(data.content)) {
+      const textParts = data.content
+        .filter((part: any) => part && (part.type === 'text' || part.text))
+        .map((part: any) => part.text || '');
+      content = textParts.join('\n').trim();
+    }
+
+    if (!content && data.choices && Array.isArray(data.choices) && data.choices.length > 0) {
+      const choice = data.choices[0];
+      if (choice) {
+        if (choice.message) {
+          if (typeof choice.message.content === 'string') {
+            content = choice.message.content.trim();
+          } else if (Array.isArray(choice.message.content)) {
+            const textParts = choice.message.content
+              .filter((part: any) => part && (part.type === 'text' || part.text))
+              .map((part: any) => part.text || '');
+            content = textParts.join('\n').trim();
+          }
+        } else if (typeof choice.text === 'string') {
+          content = choice.text.trim();
+        }
+      }
+    }
+
+    if (!content) {
+      const foundTexts: string[] = [];
+      const deepSearch = (obj: any) => {
+        if (!obj || typeof obj !== 'object') return;
+        if (obj.type === 'text' && typeof obj.text === 'string') {
+          foundTexts.push(obj.text);
+          return;
+        }
+        for (const key of Object.keys(obj)) {
+          const val = obj[key];
+          if (key === 'content' && typeof val === 'string') {
+            foundTexts.push(val);
+          } else if (key === 'text' && typeof val === 'string') {
+            foundTexts.push(val);
+          } else if (typeof val === 'object') {
+            deepSearch(val);
+          }
+        }
+      };
+      deepSearch(data);
+      if (foundTexts.length > 0) {
+        content = foundTexts.join('\n').trim();
+      }
+    }
+
+    if (!content) {
+      throw new Error(`OpenCode API 解析成功，但未能提取到对话回复正文。`);
+    }
+
+    const parsed = extractJSON(content);
     if (parsed && parsed.xhsTitle && parsed.xhsTitle.length > 20) {
       parsed.xhsTitle = parsed.xhsTitle.substring(0, 20);
     }
