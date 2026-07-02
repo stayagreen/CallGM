@@ -309,16 +309,19 @@ export async function renderVideoClientSide(
     fastStart: 'fragmented'
   });
 
+  let encodeError: any = null;
   const encoder = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => {
       console.error('VideoEncoder error:', e);
+      encodeError = e;
     }
   });
 
   // Setup configuration for H.264 profiles with fallbacks
+  // For 1080x1440, H.264 Level 4.0 or 4.1+ is required due to macroblock limit (Level 3.1 maxes out at lower resolutions)
   const config = {
-    codec: 'avc1.4d401f', // Main profile is widely supported
+    codec: 'avc1.64002a', // High Profile Level 4.2 (highly optimized and standard for 1080P/60fps)
     width: videoW,
     height: videoH,
     bitrate: 6_000_000, // 6 Mbps
@@ -328,17 +331,23 @@ export async function renderVideoClientSide(
   try {
     encoder.configure(config);
   } catch (err) {
-    console.warn('Failed to configure VideoEncoder with Main Profile (avc1.4d401f), falling back to Baseline...', err);
+    console.warn('Failed to configure VideoEncoder with High Profile (avc1.64002a), trying Main Profile...', err);
     try {
-      config.codec = 'avc1.42e01f'; // Baseline profile is universally supported
+      config.codec = 'avc1.4d4029'; // Main Profile Level 4.1
       encoder.configure(config);
     } catch (err2) {
-      console.error('Failed to configure with Baseline Profile, trying VP9...', err2);
+      console.warn('Failed to configure with Main Profile, trying Baseline Profile...', err2);
       try {
-        config.codec = 'vp09.00.10.08'; // VP9 profile as a high-quality fallback
+        config.codec = 'avc1.42e029'; // Baseline Profile Level 4.1
         encoder.configure(config);
       } catch (err3) {
-        throw new Error('您的浏览器不支持 H.264 或 VP9 硬件编码，请确保启用了 GPU 硬件加速或使用最新的 Chrome/Edge 浏览器。');
+        console.error('Failed to configure with H.264 profiles, trying VP9...', err3);
+        try {
+          config.codec = 'vp09.00.10.08'; // VP9 profile as a fallback
+          encoder.configure(config);
+        } catch (err4) {
+          throw new Error('您的浏览器不支持 H.264 (Level 4.1+) 或 VP9 硬件编码，请确保启用了 GPU 硬件加速并使用最新 Chrome/Edge 浏览器。');
+        }
       }
     }
   }
@@ -413,6 +422,10 @@ export async function renderVideoClientSide(
     }
 
     // Submit frame to encoder
+    if (encodeError) {
+      throw new Error(`硬件编码器在第 ${f + 1}/${totalFrames} 帧发生错误: ${encodeError.message || encodeError}`);
+    }
+
     const videoFrame = new VideoFrame(canvas, { timestamp: timestampUs });
     encoder.encode(videoFrame, { keyFrame: f % 30 === 0 });
     videoFrame.close();
@@ -432,8 +445,17 @@ export async function renderVideoClientSide(
   }
 
   // 6. Complete and Mux
+  if (encodeError) {
+    throw new Error(`硬件编码器在渲染循环后发生错误: ${encodeError.message || encodeError}`);
+  }
+
   onProgress({ status: 'running', progress: 95, message: '正在完成视频轨道合流...' });
   await encoder.flush();
+
+  if (encodeError) {
+    throw new Error(`硬件编码器在最终合流(flush)阶段发生错误: ${encodeError.message || encodeError}`);
+  }
+
   encoder.close();
   muxer.finalize();
 

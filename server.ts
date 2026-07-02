@@ -746,6 +746,40 @@ async function startServer() {
     }
 
     try {
+      // 0. Clean up base64 images inside taskData and write them to disk as physical files
+      const userUploadsDir = path.join(uploadsDir, user.id.toString());
+      if (!fs.existsSync(userUploadsDir)) fs.mkdirSync(userUploadsDir, { recursive: true });
+
+      if (taskData.xhsCoverImage && taskData.xhsCoverImage.startsWith('data:image')) {
+        const matches = taskData.xhsCoverImage.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+        if (matches) {
+          const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+          const base64Data = matches[2];
+          const filename = `ref_xhs_cover_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
+          const relativePath = path.join(user.id.toString(), filename);
+          fs.writeFileSync(path.join(userUploadsDir, filename), base64Data, 'base64');
+          try { db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'upload', `uploads/${relativePath}`); } catch(e) {}
+          taskData.xhsCoverImage = `/uploads/${user.id}/${filename}`;
+        }
+      }
+
+      if (taskData.storyboards) {
+        taskData.storyboards.forEach((sb: any) => {
+          if (sb.image && sb.image.startsWith('data:image')) {
+            const matches = sb.image.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+            if (matches) {
+              const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+              const base64Data = matches[2];
+              const filename = `ref_vid_${Date.now()}_${Math.floor(Math.random()*10000)}.${ext}`;
+              const relativePath = path.join(user.id.toString(), filename);
+              fs.writeFileSync(path.join(userUploadsDir, filename), base64Data, 'base64');
+              try { db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path) VALUES (?, ?, ?)').run(user.id, 'upload', `uploads/${relativePath}`); } catch(e) {}
+              sb.image = `/uploads/${user.id}/${filename}`;
+            }
+          }
+        });
+      }
+
       // 1. Prepare user video output directory and thumbnail directory
       const userVideoDownloadDir = path.join(videoDownloadDir, user.id.toString());
       if (!fs.existsSync(userVideoDownloadDir)) {

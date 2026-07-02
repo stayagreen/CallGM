@@ -3793,7 +3793,7 @@ function MainApp() {
                                 {job.status === 'error' && (
                                   <div className="text-red-500 text-xs mb-3 bg-red-50 p-2.5 rounded-lg border border-red-100 flex items-center gap-1.5">
                                     <X size={14} />
-                                    <span>视频渲染失败</span>
+                                    <span>视频渲染失败</span>{job.statusMessage && <span className="block text-[10px] text-red-600 font-mono mt-1 break-all whitespace-pre-wrap">{job.statusMessage}</span>}
                                   </div>
                                 )}
                               </div>
@@ -3956,7 +3956,7 @@ function MainApp() {
                         {job.status === 'error' && (
                           <div className="text-red-500 text-xs mb-3 bg-red-50 p-2.5 rounded-lg border border-red-100 flex items-center gap-1.5">
                             <X size={14} />
-                            <span>视频渲染失败</span>
+                            <span>视频渲染失败</span>{job.statusMessage && <span className="block text-[10px] text-red-600 font-mono mt-1 break-all whitespace-pre-wrap">{job.statusMessage}</span>}
                           </div>
                         )}
                       </div>
