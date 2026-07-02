@@ -1,4 +1,4 @@
-import * as Mp4Muxer from 'mp4-muxer';
+import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 
 export interface ClientRenderProgress {
   progress: number; // 0 to 100
@@ -293,8 +293,8 @@ export async function renderVideoClientSide(
   const frameDurationUs = 1000000 / fps;
 
   // 4. Setup Mp4Muxer & VideoEncoder
-  const muxer = new Mp4Muxer.Muxer({
-    target: new Mp4Muxer.ArrayBufferTarget(),
+  const muxer = new Muxer({
+    target: new ArrayBufferTarget(),
     video: {
       codec: 'avc',
       width: videoW,
@@ -413,7 +413,7 @@ export async function renderVideoClientSide(
   encoder.close();
   muxer.finalize();
 
-  const { buffer } = muxer.target as Mp4Muxer.ArrayBufferTarget;
+  const { buffer } = muxer.target as ArrayBufferTarget;
   onProgress({ status: 'completed', progress: 100, message: '本地硬件视频渲染完毕！' });
 
   return new Blob([buffer], { type: 'video/mp4' });

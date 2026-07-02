@@ -1482,19 +1482,19 @@ function MainApp() {
       const res = await fetch('/api/video/jobs');
       const data = await res.json();
       if (Array.isArray(data)) {
-        // Keep any active client_rendering jobs from the current local state so they are not wiped out by server poll
+        // Keep any client-side jobs from the current local state so they are not wiped out by server poll until the server has them
         setVideoJobs(prev => {
-          const clientRenderingJobs = prev.filter(j => j.status === 'client_rendering');
-          const filteredData = data.filter((serverJob: any) => !clientRenderingJobs.some(cj => cj.id === serverJob.id));
-          return [...clientRenderingJobs, ...filteredData];
+          const clientSideJobs = prev.filter(j => j.id.startsWith('task_video_') && !data.some((sj: any) => sj.id === j.id));
+          const filteredData = data.filter((serverJob: any) => !clientSideJobs.some(cj => cj.id === serverJob.id));
+          return [...clientSideJobs, ...filteredData];
         });
       } else {
         console.error('Invalid video jobs data:', data);
-        setVideoJobs([]);
+        setVideoJobs(prev => prev.filter(j => j.id.startsWith('task_video_')));
       }
     } catch (error) {
       console.error('Failed to fetch video jobs:', error);
-      setVideoJobs([]);
+      setVideoJobs(prev => prev.filter(j => j.id.startsWith('task_video_')));
     }
   };
 
@@ -1521,12 +1521,10 @@ function MainApp() {
     let interval: any;
     if (activeTab === 'records') {
       fetchJobs();
-      const hasActiveJobs = jobs.some(j => j.status === 'pending' || j.status === 'running');
-      interval = setInterval(fetchJobs, hasActiveJobs ? 2000 : 5000);
+      interval = setInterval(fetchJobs, 3000);
     } else if (activeTab === 'video_records') {
       fetchVideoJobs();
-      const hasActiveJobs = videoJobs.some(j => j.status === 'pending' || j.status === 'running');
-      interval = setInterval(fetchVideoJobs, hasActiveJobs ? 2000 : 5000);
+      interval = setInterval(fetchVideoJobs, 3000);
     } else if (activeTab === 'gallery') {
       fetchGallery();
       fetchProcessingStatus();
@@ -1536,7 +1534,7 @@ function MainApp() {
       }, 3000);
     }
     return () => clearInterval(interval);
-  }, [activeTab, jobs, videoJobs]);
+  }, [activeTab]);
 
   const fetchAssetGroups = async () => {
     try {
