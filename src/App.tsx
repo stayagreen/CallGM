@@ -2645,12 +2645,20 @@ function MainApp() {
                           status: 'client_rendering' as any, // Visual status for client rendering
                           progress: 0,
                           statusMessage: '等待中...',
-                          data: { ...task, id: jobId }
+                          data: { ...task, id: jobId },
+                          username: user?.username || 'admin'
                         };
                       });
 
                       // Prepended to videoJobs list so they show up immediately
                       setVideoJobs(prev => [...jobsToRender, ...prev]);
+
+                      // Auto-expand the current user's video records accordion so that it is visible immediately
+                      setExpandedUsers(prev => {
+                        const next = new Set(prev);
+                        next.add((user?.username || 'admin') + '_video');
+                        return next;
+                      });
 
                       // 2. Sequential execution loop (One finishes, then next begins, never concurrent!)
                       (async () => {

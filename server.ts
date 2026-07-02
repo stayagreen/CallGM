@@ -644,10 +644,20 @@ async function startServer() {
 
   syncFilesToDb();
 
-  // Serve static files
-  app.use("/downloads", express.static(downloadDir));
-  app.use("/uploads", express.static(uploadsDir));
-  app.use("/bgm", express.static(bgmDir));
+  // Serve static files with explicit CORS headers to avoid canvas taint errors during client-side WebCodecs rendering
+  const serveStaticWithCors = (dir: string) => {
+    return express.static(dir, {
+      setHeaders: (res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', '*');
+      }
+    });
+  };
+
+  app.use("/downloads", serveStaticWithCors(downloadDir));
+  app.use("/uploads", serveStaticWithCors(uploadsDir));
+  app.use("/bgm", serveStaticWithCors(bgmDir));
 
   // BGM List API
   app.get("/api/bgm", (req, res) => {

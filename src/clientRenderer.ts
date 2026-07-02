@@ -24,7 +24,13 @@ async function preloadImages(storyboards: any[]): Promise<Map<string, HTMLImageE
         console.error(`Failed to load image at index ${idx}: ${sb.image}`, e);
         resolve(); // Continue anyway
       };
-      img.src = sb.image;
+      
+      // Ensure relative paths start with a leading slash to be robust against browser routing
+      let src = sb.image;
+      if (src && !src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('/')) {
+        src = '/' + src;
+      }
+      img.src = src;
     });
   });
   await Promise.all(promises);
@@ -310,14 +316,32 @@ export async function renderVideoClientSide(
     }
   });
 
-  // H.264 High Profile or Baseline Profile. avc1.42e01f is highly compatible Baseline
-  encoder.configure({
-    codec: 'avc1.42e01f',
+  // Setup configuration for H.264 profiles with fallbacks
+  const config = {
+    codec: 'avc1.4d401f', // Main profile is widely supported
     width: videoW,
     height: videoH,
     bitrate: 6_000_000, // 6 Mbps
     framerate: fps
-  });
+  };
+
+  try {
+    encoder.configure(config);
+  } catch (err) {
+    console.warn('Failed to configure VideoEncoder with Main Profile (avc1.4d401f), falling back to Baseline...', err);
+    try {
+      config.codec = 'avc1.42e01f'; // Baseline profile is universally supported
+      encoder.configure(config);
+    } catch (err2) {
+      console.error('Failed to configure with Baseline Profile, trying VP9...', err2);
+      try {
+        config.codec = 'vp09.00.10.08'; // VP9 profile as a high-quality fallback
+        encoder.configure(config);
+      } catch (err3) {
+        throw new Error('您的浏览器不支持 H.264 或 VP9 硬件编码，请确保启用了 GPU 硬件加速或使用最新的 Chrome/Edge 浏览器。');
+      }
+    }
+  }
 
   // 5. Offline Render and Encode loop
   for (let f = 0; f < totalFrames; f++) {
