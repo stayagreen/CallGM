@@ -259,7 +259,10 @@ function drawSingleStoryboard(
 export async function renderVideoClientSide(
   task: any,
   fps: number = 60,
-  onProgress: (p: ClientRenderProgress) => void
+  onProgress: (p: ClientRenderProgress) => void,
+  options?: {
+    videoQualityMode?: 'highSharpen' | 'standard';
+  }
 ): Promise<Blob> {
   if (typeof VideoEncoder === 'undefined') {
     throw new Error('Your browser does not support the WebCodecs API (VideoEncoder). Please use Chrome, Edge, or update your browser.');
@@ -273,9 +276,80 @@ export async function renderVideoClientSide(
   onProgress({ status: 'running', progress: 15, message: '正在初始化渲染画布和硬编码器...' });
 
   // 2. Setup canvas
-  // Standard XHS layout is 3:4 or similar. Let's make it 1080x1440.
-  const videoW = 1080;
-  const videoH = 1440;
+  // Determine target resolution based on first image (same image clarity/dimension detection logic as backend)
+  const storyboards = task.storyboards || [];
+  let firstImgWidth = 1080;
+  let firstImgHeight = 1440;
+  if (storyboards.length > 0) {
+    const firstImg = imagesMap.get(storyboards[0].image || '');
+    if (firstImg && firstImg.naturalWidth && firstImg.naturalHeight) {
+      firstImgWidth = firstImg.naturalWidth;
+      firstImgHeight = firstImg.naturalHeight;
+    }
+  }
+
+  const aspect = firstImgWidth / firstImgHeight;
+  const maxDim = Math.max(firstImgWidth, firstImgHeight);
+  const minDim = Math.min(firstImgWidth, firstImgHeight);
+  const videoQualityMode = options?.videoQualityMode || 'highSharpen';
+
+  let videoW = 1080;
+  let videoH = 1440;
+  let bitrateBps = 15_000_000; // 15 Mbps default
+  let initialCodec = 'avc1.64002a'; // High Profile Level 4.2 default
+
+  if (maxDim >= 3200 || minDim >= 2160) {
+    // 4K Target
+    if (firstImgWidth >= firstImgHeight) {
+      videoW = 3840;
+      videoH = Math.round((3840 / aspect) / 2) * 2;
+    } else {
+      videoH = 3840;
+      videoW = Math.round((3840 * aspect) / 2) * 2;
+    }
+
+    if (videoQualityMode === 'highSharpen') {
+      bitrateBps = 50_000_000; // 50 Mbps
+    } else {
+      bitrateBps = 40_000_000; // 40 Mbps
+    }
+    initialCodec = 'avc1.640034'; // High Profile Level 5.2 (Required for 4K)
+    console.log(`[ClientRender] 🚀 检测到 4K 级别原图 (${firstImgWidth}x${firstImgHeight}), 适配 4K 输出: ${videoW}x${videoH}, 码率: ${bitrateBps / 1_000_000}M`);
+  } else if (maxDim >= 2000 || minDim >= 1400) {
+    // 2K Target
+    if (firstImgWidth >= firstImgHeight) {
+      videoW = 2560;
+      videoH = Math.round((2560 / aspect) / 2) * 2;
+    } else {
+      videoH = 2560;
+      videoW = Math.round((2560 * aspect) / 2) * 2;
+    }
+
+    if (videoQualityMode === 'highSharpen') {
+      bitrateBps = 25_000_000; // 25 Mbps
+    } else {
+      bitrateBps = 18_000_000; // 18 Mbps
+    }
+    initialCodec = 'avc1.640032'; // High Profile Level 5.0 (Required for 2K)
+    console.log(`[ClientRender] 🚀 检测到 2K 级别原图 (${firstImgWidth}x${firstImgHeight}), 适配 2K 输出: ${videoW}x${videoH}, 码率: ${bitrateBps / 1_000_000}M`);
+  } else {
+    // 1080P Target
+    if (firstImgWidth >= firstImgHeight) {
+      videoH = 1080;
+      videoW = Math.round((1080 * aspect) / 2) * 2;
+    } else {
+      videoW = 1080;
+      videoH = Math.round((1080 / aspect) / 2) * 2;
+    }
+
+    if (videoQualityMode === 'highSharpen') {
+      bitrateBps = 15_000_000; // 15 Mbps
+    } else {
+      bitrateBps = 8_000_000; // 8 Mbps
+    }
+    initialCodec = 'avc1.64002a'; // High Profile Level 4.2
+    console.log(`[ClientRender] 🚀 检测到 1080P/1K 级别原图 (${firstImgWidth}x${firstImgHeight}), 适配 1080P 输出: ${videoW}x${videoH}, 码率: ${bitrateBps / 1_000_000}M`);
+  }
 
   const canvas = document.createElement('canvas');
   canvas.width = videoW;
@@ -288,7 +362,6 @@ export async function renderVideoClientSide(
   // 3. Compute timeline
   const transitionDuration = 0.5; // seconds
   let totalDuration = 0;
-  const storyboards = task.storyboards;
   const startTime: number[] = [];
   const endTime: number[] = [];
 
@@ -322,34 +395,39 @@ export async function renderVideoClientSide(
   });
 
   // Setup configuration for H.264 profiles with fallbacks
-  // For 1080x1440, H.264 Level 4.0 or 4.1+ is required due to macroblock limit (Level 3.1 maxes out at lower resolutions)
   const config = {
-    codec: 'avc1.64002a', // High Profile Level 4.2 (highly optimized and standard for 1080P/60fps)
+    codec: initialCodec,
     width: videoW,
     height: videoH,
-    bitrate: 6_000_000, // 6 Mbps
+    bitrate: bitrateBps,
     framerate: fps
   };
 
   try {
     encoder.configure(config);
   } catch (err) {
-    console.warn('Failed to configure VideoEncoder with High Profile (avc1.64002a), trying Main Profile...', err);
+    console.warn(`Failed to configure VideoEncoder with profile ${initialCodec}, trying standard High Profile...`, err);
     try {
-      config.codec = 'avc1.4d4029'; // Main Profile Level 4.1
+      config.codec = 'avc1.64002a'; // Level 4.2
       encoder.configure(config);
-    } catch (err2) {
-      console.warn('Failed to configure with Main Profile, trying Baseline Profile...', err2);
+    } catch (err1) {
+      console.warn('Failed to configure with standard High Profile, trying Main Profile...', err1);
       try {
-        config.codec = 'avc1.42e029'; // Baseline Profile Level 4.1
+        config.codec = 'avc1.4d4029'; // Main Profile Level 4.1
         encoder.configure(config);
-      } catch (err3) {
-        console.error('Failed to configure with H.264 profiles, trying VP9...', err3);
+      } catch (err2) {
+        console.warn('Failed to configure with Main Profile, trying Baseline Profile...', err2);
         try {
-          config.codec = 'vp09.00.10.08'; // VP9 profile as a fallback
+          config.codec = 'avc1.42e029'; // Baseline Profile Level 4.1
           encoder.configure(config);
-        } catch (err4) {
-          throw new Error('您的浏览器不支持 H.264 (Level 4.1+) 或 VP9 硬件编码，请确保启用了 GPU 硬件加速并使用最新 Chrome/Edge 浏览器。');
+        } catch (err3) {
+          console.error('Failed to configure with H.264 profiles, trying VP9...', err3);
+          try {
+            config.codec = 'vp09.00.10.08'; // VP9 profile as a fallback
+            encoder.configure(config);
+          } catch (err4) {
+            throw new Error('您的浏览器不支持 H.264 或 VP9 硬件编码，请确保启用了 GPU 硬件加速并使用最新 Chrome/Edge 浏览器。');
+          }
         }
       }
     }

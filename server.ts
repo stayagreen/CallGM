@@ -635,6 +635,22 @@ async function startServer() {
         
         // Fix stuck running tasks on reboot
         db.prepare("UPDATE tasks SET status = 'error' WHERE status = 'running'").run();
+
+        // Fix legacy incorrect client-render video paths in assets table
+        try {
+            // Delete conflicting duplicates
+            db.prepare(`
+                DELETE FROM assets 
+                WHERE type = 'video' 
+                AND file_path LIKE 'downloads/videos/%' 
+                AND REPLACE(file_path, 'downloads/videos/', '') IN (SELECT file_path FROM assets WHERE type = 'video')
+            `).run();
+
+            // Normalize remaining records
+            db.prepare("UPDATE assets SET file_path = REPLACE(file_path, 'downloads/videos/', '') WHERE type = 'video' AND file_path LIKE 'downloads/videos/%'").run();
+        } catch (dbErr: any) {
+            console.error("Failed to run video path migration on database assets table:", dbErr.message);
+        }
     } catch(e) {
         console.error("Failed to migrate asset types or fix stuck tasks", e);
     }
@@ -911,7 +927,7 @@ async function startServer() {
       }
 
       // 7.5. Register completed video in the assets table for video library/gallery
-      const relativeAssetPath = `downloads/videos/${user.id}/${finalFilename}`;
+      const relativeAssetPath = `${user.id}/${finalFilename}`;
       try {
         db.prepare('INSERT OR IGNORE INTO assets (user_id, job_id, type, file_path) VALUES (?, ?, ?, ?)').run(
           user.id,
@@ -2128,8 +2144,13 @@ async function startServer() {
           }
         }
         
+        let finalPath = row.file_path.replace(/\\/g, '/');
+        if (finalPath.startsWith('downloads/videos/')) {
+          finalPath = finalPath.replace('downloads/videos/', '');
+        }
+
         return {
-          path: row.file_path.replace(/\\/g, '/'),
+          path: finalPath,
           userId: row.user_id,
           username: row.username,
           createdAt: row.created_at,

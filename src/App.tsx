@@ -2679,13 +2679,20 @@ function MainApp() {
                             } : j));
 
                             // Start rendering
-                            const silentBlob = await renderVideoClientSide(job.data, 60, (progressUpdate) => {
-                              setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
-                                ...j, 
-                                progress: progressUpdate.progress, 
-                                statusMessage: progressUpdate.message 
-                              } : j));
-                            });
+                            const silentBlob = await renderVideoClientSide(
+                              job.data,
+                              systemConfig.videoFps || 60,
+                              (progressUpdate) => {
+                                setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
+                                  ...j, 
+                                  progress: progressUpdate.progress, 
+                                  statusMessage: progressUpdate.message 
+                                } : j));
+                              },
+                              {
+                                videoQualityMode: systemConfig.videoQualityMode || 'highSharpen'
+                              }
+                            );
 
                             // Upload silent MP4 video as Base64 to server to finalize audio merge
                             setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
