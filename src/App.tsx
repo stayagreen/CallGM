@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Minus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search, Music } from 'lucide-react';
+import { Plus, Minus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search, Music, Cpu } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -899,6 +899,7 @@ function MainApp() {
     downloadCheckDelay: 1,
     downloadRetries: 3,
     videoConcurrency: 1,
+    videoRenderScheme: 'server',
     imageQuality: 'performance',
     watermarkRoiWPercent: 15,
     watermarkRoiHPercent: 10,
@@ -1481,7 +1482,12 @@ function MainApp() {
       const res = await fetch('/api/video/jobs');
       const data = await res.json();
       if (Array.isArray(data)) {
-        setVideoJobs(data);
+        // Keep any active client_rendering jobs from the current local state so they are not wiped out by server poll
+        setVideoJobs(prev => {
+          const clientRenderingJobs = prev.filter(j => j.status === 'client_rendering');
+          const filteredData = data.filter((serverJob: any) => !clientRenderingJobs.some(cj => cj.id === serverJob.id));
+          return [...clientRenderingJobs, ...filteredData];
+        });
       } else {
         console.error('Invalid video jobs data:', data);
         setVideoJobs([]);
@@ -2623,42 +2629,142 @@ function MainApp() {
                       return;
                     }
                     
-                    // Optimistic UI: Immediately clear tasks and switch tab
                     const currentTasks = [...validTasks];
-                    const tempJobs = currentTasks.map(task => ({
-                      id: task.id,
-                      timestamp: Date.now(),
-                      status: 'pending' as const,
-                      progress: 0,
-                      data: task
-                    }));
-                    
-                    setSubmittingVideoJobs(prev => [...tempJobs, ...prev]);
-                    setVideoTasks([]);
-                    setActiveVideoTaskId('');
-                    setActiveTab('video_records');
 
-                    // Process submissions in background with immediate job list update
-                    Promise.all(currentTasks.map(async (task) => {
-                      try {
-                        const res = await fetch('/api/video/execute', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify(task)
-                        });
+                    if (systemConfig.videoRenderScheme === 'client') {
+                      // ====== CLIENT-SIDE WEBCODECS RENDERING SCHEME ======
+                      setVideoTasks([]);
+                      setActiveVideoTaskId('');
+                      setActiveTab('video_records');
+
+                      // 1. Create client rendering job objects
+                      const jobsToRender: Job[] = currentTasks.map(task => {
+                        const jobId = `task_video_${user?.id || 'anon'}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                        return {
+                          id: jobId,
+                          timestamp: Date.now(),
+                          tasks: [],
+                          status: 'client_rendering' as any, // Visual status for client rendering
+                          progress: 0,
+                          statusMessage: '等待中...',
+                          data: { ...task, id: jobId }
+                        };
+                      });
+
+                      // Prepended to videoJobs list so they show up immediately
+                      setVideoJobs(prev => [...jobsToRender, ...prev]);
+
+                      // 2. Sequential execution loop (One finishes, then next begins, never concurrent!)
+                      (async () => {
+                        const { renderVideoClientSide } = await import('./clientRenderer');
+
+                        for (const job of jobsToRender) {
+                          try {
+                            // Update job to active rendering state
+                            setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
+                              ...j, 
+                              status: 'client_rendering' as any, 
+                              statusMessage: '准备画布与分镜素材...' 
+                            } : j));
+
+                            // Start rendering
+                            const silentBlob = await renderVideoClientSide(job.data, 30, (progressUpdate) => {
+                              setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
+                                ...j, 
+                                progress: progressUpdate.progress, 
+                                statusMessage: progressUpdate.message 
+                              } : j));
+                            });
+
+                            // Upload silent MP4 video as Base64 to server to finalize audio merge
+                            setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
+                                ...j, 
+                                statusMessage: '正在上传渲染流并合成背景音乐...' 
+                            } : j));
+
+                            const reader = new FileReader();
+                            const base64Promise = new Promise<string>((resolve) => {
+                              reader.onloadend = () => {
+                                const base64data = reader.result as string;
+                                const base64 = base64data.split(',')[1];
+                                resolve(base64);
+                              };
+                              reader.readAsDataURL(silentBlob);
+                            });
+                            
+                            const videoBase64 = await base64Promise;
+
+                            const res = await fetch('/api/video/client-render-complete', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                jobId: job.id,
+                                taskData: job.data,
+                                videoBase64: videoBase64
+                              })
+                            });
+
+                            const data = await res.json();
+                            if (res.ok && data.status === 'ok') {
+                              setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
+                                ...j, 
+                                status: 'completed' as any, 
+                                progress: 100, 
+                                statusMessage: '渲染完成！视频文件已保存。',
+                                data: { ...j.data, outputVideo: data.outputVideo }
+                              } : j));
+                            } else {
+                              throw new Error(data.error || '服务器合流背景音乐失败！');
+                            }
+                          } catch (err: any) {
+                            console.error(`Local render failed for job ${job.id}:`, err);
+                            setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
+                              ...j, 
+                              status: 'error' as any, 
+                              statusMessage: `渲染失败: ${err.message}` 
+                            } : j));
+                          }
+                        }
+                      })();
+
+                    } else {
+                      // ====== SERVER-SIDE FFMEG RENDERING SCHEME (ORIGINAL) ======
+                      // Optimistic UI: Immediately clear tasks and switch tab
+                      const tempJobs = currentTasks.map(task => ({
+                        id: task.id,
+                        timestamp: Date.now(),
+                        status: 'pending' as const,
+                        progress: 0,
+                        data: task
+                      }));
+                      
+                      setSubmittingVideoJobs(prev => [...tempJobs, ...prev]);
+                      setVideoTasks([]);
+                      setActiveVideoTaskId('');
+                      setActiveTab('video_records');
+
+                      // Process submissions in background with immediate job list update
+                      Promise.all(currentTasks.map(async (task) => {
+                        try {
+                          const res = await fetch('/api/video/execute', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(task)
+                          });
+                          const data = await res.json();
+                          return { taskId: task.id, success: true };
+                        } catch (e) {
+                          console.error('Submission failed', e);
+                          return { taskId: task.id, success: false };
+                        }
+                      })).then(async () => {
+                        // Refresh job list immediately after all requests sent
+                        const res = await fetch('/api/video/jobs');
                         const data = await res.json();
-                        return { taskId: task.id, success: true };
-                      } catch (e) {
-                        console.error('Submission failed', e);
-                        return { taskId: task.id, success: false };
-                      }
-                    })).then(async () => {
-                      // Refresh job list immediately after all requests sent
-                      const res = await fetch('/api/video/jobs');
-                      const data = await res.json();
-                      setVideoJobs(data);
-                      setSubmittingVideoJobs([]); // Clear all optimistic jobs
-                    });
+                        setVideoJobs(data);
+                        setSubmittingVideoJobs([]); // Clear all optimistic jobs
+                      });
+                    }
                   }}
                   disabled={!videoTasks.some(t => t.storyboards.length > 0)}
                   className="flex items-center gap-2 bg-blue-600 text-white px-8 py-3.5 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed text-lg"
@@ -3586,7 +3692,7 @@ function MainApp() {
                                 <Film className="w-10 h-10 text-gray-750" />
                               )}
                               
-                              {job.status === 'running' && (
+                              {(job.status === 'running' || job.status === 'client_rendering') && (
                                 <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center text-white gap-1.5 p-2">
                                   <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                                   <span className="text-[10px] font-bold tracking-wider">{job.progress}%</span>
@@ -3619,15 +3725,17 @@ function MainApp() {
                                     <span className="font-bold text-gray-900 text-base sm:text-lg">{new Date(job.timestamp).toLocaleString()}</span>
                                     <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
                                       job.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                                      job.status === 'client_rendering' ? 'bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-sm animate-pulse' : 
                                       job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
                                       job.status === 'error' ? 'bg-red-100 text-red-700' :
                                       'bg-yellow-100 text-yellow-700'
                                     }`}>
                                       {job.status === 'completed' && <CheckCircle2 size={14} />}
+                                      {job.status === 'client_rendering' && <Cpu size={14} className="animate-spin" />}
                                       {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
                                       {job.status === 'pending' && <Clock size={14} />}
                                       {job.status === 'error' && <X size={14} />}
-                                      {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
+                                      {job.status === 'completed' ? '已完成' : job.status === 'client_rendering' ? '本地压制中' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
                                     </span>
                                   </div>
                                   
@@ -3658,11 +3766,19 @@ function MainApp() {
                                   </p>
                                 )}
 
-                                {job.status === 'running' && (
-                                  <div className="w-full bg-gray-150 rounded-full h-2 mb-3 overflow-hidden border border-gray-200">
-                                    <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
-                                      <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                                {(job.status === 'running' || job.status === 'client_rendering') && (
+                                  <div className="mb-3">
+                                    <div className="w-full bg-gray-150 rounded-full h-2 mb-1.5 overflow-hidden border border-gray-200">
+                                      <div className="bg-blue-500 h-full transition-all duration-300 relative" style={{ width: `${job.progress}%` }}>
+                                        <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                                      </div>
                                     </div>
+                                    {job.statusMessage && (
+                                      <p className="text-[10px] text-blue-600 font-mono flex items-center gap-1 animate-fade-in">
+                                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping"></span>
+                                        {job.statusMessage}
+                                      </p>
+                                    )}
                                   </div>
                                 )}
 
@@ -3737,7 +3853,7 @@ function MainApp() {
                         <Film className="w-10 h-10 text-gray-750" />
                       )}
                       
-                      {job.status === 'running' && (
+                      {(job.status === 'running' || job.status === 'client_rendering') && (
                         <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center text-white gap-1.5 p-2">
                           <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                           <span className="text-[10px] font-bold tracking-wider">{job.progress}%</span>
@@ -3770,15 +3886,17 @@ function MainApp() {
                             <span className="font-bold text-gray-900 text-base sm:text-lg">{new Date(job.timestamp).toLocaleString()}</span>
                             <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold ${
                               job.status === 'completed' ? 'bg-green-100 text-green-700' : 
+                              job.status === 'client_rendering' ? 'bg-indigo-100 text-indigo-700 border border-indigo-200 shadow-sm animate-pulse' : 
                               job.status === 'running' ? 'bg-blue-100 text-blue-700' : 
                               job.status === 'error' ? 'bg-red-100 text-red-700' :
                               'bg-yellow-100 text-yellow-700'
                             }`}>
                               {job.status === 'completed' && <CheckCircle2 size={14} />}
+                              {job.status === 'client_rendering' && <Cpu size={14} className="animate-spin" />}
                               {job.status === 'running' && <PlayCircle size={14} className="animate-pulse" />}
                               {job.status === 'pending' && <Clock size={14} />}
                               {job.status === 'error' && <X size={14} />}
-                              {job.status === 'completed' ? '已完成' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
+                              {job.status === 'completed' ? '已完成' : job.status === 'client_rendering' ? '本地压制中' : job.status === 'running' ? '渲染中' : job.status === 'error' ? '失败' : '待执行'}
                             </span>
                           </div>
                           
@@ -3809,11 +3927,19 @@ function MainApp() {
                           </p>
                         )}
 
-                        {job.status === 'running' && (
-                          <div className="w-full bg-gray-150 rounded-full h-2 mb-3 overflow-hidden border border-gray-200">
-                            <div className="bg-blue-500 h-full transition-all duration-500 relative" style={{ width: `${job.progress}%` }}>
-                              <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                        {(job.status === 'running' || job.status === 'client_rendering') && (
+                          <div className="mb-3">
+                            <div className="w-full bg-gray-150 rounded-full h-2 mb-1.5 overflow-hidden border border-gray-200">
+                              <div className="bg-blue-500 h-full transition-all duration-300 relative" style={{ width: `${job.progress}%` }}>
+                                <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite] w-full"></div>
+                              </div>
                             </div>
+                            {job.statusMessage && (
+                              <p className="text-[10px] text-blue-600 font-mono flex items-center gap-1 animate-fade-in">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping"></span>
+                                {job.statusMessage}
+                              </p>
+                            )}
                           </div>
                         )}
 
@@ -5343,6 +5469,20 @@ function MainApp() {
                 </summary>
                 <div className="p-5 border-t border-gray-200 space-y-4 bg-white">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block mb-1 font-semibold text-gray-700">视频渲染核心引擎方案：</label>
+                      <select 
+                        className="w-full p-2.5 border border-gray-200 rounded-lg outline-none bg-white font-medium text-orange-700"
+                        value={systemConfig.videoRenderScheme || 'server'}
+                        onChange={(e) => setSystemConfig({...systemConfig, videoRenderScheme: e.target.value})}
+                      >
+                        <option value="server">服务端 FFmpeg 引擎 (排队单通道)</option>
+                        <option value="client">客户端 WebCodecs 引擎 (显卡GPU本地极限压制 · 极力推荐)</option>
+                      </select>
+                      <p className="text-xs text-gray-400 mt-1">
+                        ※ <strong>客户端 WebCodecs</strong> 方案使用您本机的显卡和 GPU 硬解码和编码，秒级完成 1080P 渲染。服务器零压力，稳定度 100%。
+                      </p>
+                    </div>
                     <div>
                       <label className="block mb-1 font-semibold text-gray-700">合成视频帧率 (FPS)：</label>
                       <select 

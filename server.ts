@@ -726,6 +726,138 @@ async function startServer() {
     res.json({ status: "ok", message: "Video task queued", filename, jobId });
   });
 
+  // Client-side Video Rendering Completion and Audio Merge API
+  app.post("/api/video/client-render-complete", requireAuth, checkAccess, express.json({ limit: "500mb" }), async (req: any, res) => {
+    const user = req.session.user;
+    const { jobId, taskData, videoBase64 } = req.body;
+
+    if (!jobId || !taskData || !videoBase64) {
+      return res.status(400).json({ error: "缺少必要参数！" });
+    }
+
+    try {
+      // 1. Prepare user video output directory and thumbnail directory
+      const userVideoDownloadDir = path.join(videoDownloadDir, user.id.toString());
+      if (!fs.existsSync(userVideoDownloadDir)) {
+        fs.mkdirSync(userVideoDownloadDir, { recursive: true });
+      }
+
+      const userVideoThumbDir = path.join(videoThumbDir, user.id.toString());
+      if (!fs.existsSync(userVideoThumbDir)) {
+        fs.mkdirSync(userVideoThumbDir, { recursive: true });
+      }
+
+      // 2. Write the silent MP4 file from client
+      const silentFilename = `silent_${jobId}.mp4`;
+      const silentPath = path.join(userVideoDownloadDir, silentFilename);
+      const silentBuffer = Buffer.from(videoBase64, 'base64');
+      fs.writeFileSync(silentPath, silentBuffer);
+
+      // 3. Setup final file path
+      const finalFilename = `${jobId}.mp4`;
+      const finalPath = path.join(userVideoDownloadDir, finalFilename);
+      const thumbPath = path.join(userVideoThumbDir, `${jobId}.jpg`);
+
+      // 4. Merge audio if BGM is present
+      const bgmName = taskData.bgm;
+      let hasBgm = false;
+      let bgmPath = "";
+      if (bgmName && bgmName !== 'none') {
+        bgmPath = path.join(bgmDir, bgmName);
+        if (fs.existsSync(bgmPath)) {
+          hasBgm = true;
+        }
+      }
+
+      const { execa } = await import('execa');
+
+      if (hasBgm) {
+        console.log(`[ClientRender] Combining client video with BGM: ${bgmPath}`);
+        try {
+          // Fast stream copy: -c:v copy allows copying the compressed video frames instantly without decoding/encoding
+          await execa('ffmpeg', [
+            '-y',
+            '-i', silentPath,
+            '-i', bgmPath,
+            '-map', '0:v:0',
+            '-map', '1:a:0',
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            '-shortest',
+            finalPath
+          ]);
+          // Clean up silent temporary file
+          if (fs.existsSync(silentPath)) fs.unlinkSync(silentPath);
+        } catch (e: any) {
+          console.error('[ClientRender] FFmpeg merge failed, falling back to silent copy:', e.message);
+          if (fs.existsSync(silentPath)) {
+            fs.renameSync(silentPath, finalPath);
+          }
+        }
+      } else {
+        // No BGM, just rename silent file
+        fs.renameSync(silentPath, finalPath);
+      }
+
+      // 5. Generate Thumbnail via FFmpeg
+      try {
+        await execa('ffmpeg', [
+          '-ss', '00:00:01.000',
+          '-i', finalPath,
+          '-vframes', '1',
+          '-q:v', '2',
+          '-y',
+          thumbPath
+        ]);
+      } catch (thumbErr: any) {
+        console.error('[ClientRender] Thumbnail generation error:', thumbErr.message);
+      }
+
+      // 6. Write final task history and JSON definition to disk
+      const finalTaskData = { 
+        ...taskData, 
+        outputVideo: `${user.id}/${finalFilename}`, 
+        userId: user.id, 
+        id: jobId 
+      };
+
+      const historyUserDir = path.join(videoHistoryDir, user.id.toString());
+      if (!fs.existsSync(historyUserDir)) {
+        fs.mkdirSync(historyUserDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(historyUserDir, `${jobId}.json`), JSON.stringify(finalTaskData, null, 2));
+
+      // 7. Update SQLite Tasks DB
+      const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(jobId) as any;
+      if (existing) {
+        db.prepare('UPDATE tasks SET status = ?, progress = ?, data = ?, result_files = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+          'completed',
+          100,
+          JSON.stringify(finalTaskData),
+          JSON.stringify([`${user.id}/${finalFilename}`]),
+          jobId
+        );
+      } else {
+        db.prepare('INSERT INTO tasks (id, user_id, type, data, status, progress, result_files) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+          jobId,
+          user.id,
+          'video',
+          JSON.stringify(finalTaskData),
+          'completed',
+          100,
+          JSON.stringify([`${user.id}/${finalFilename}`])
+        );
+      }
+
+      console.log(`[ClientRender] Job ${jobId} successfully completed and registered in database.`);
+      res.json({ status: "ok", message: "Client video saved successfully", outputVideo: `${user.id}/${finalFilename}` });
+
+    } catch (err: any) {
+      console.error('[ClientRender] Error finalizing client-rendered video:', err);
+      res.status(500).json({ error: "服务器保存和合成视频失败: " + err.message });
+    }
+  });
+
   // Video Jobs API
   app.get("/api/video/jobs", requireAuth, checkAccess, (req: any, res) => {
     const user = req.session.user;
