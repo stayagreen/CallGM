@@ -934,6 +934,11 @@ function MainApp() {
   });
   const [jobs, setJobs] = useState<Job[]>([]);
   const [videoJobs, setVideoJobs] = useState<Job[]>([]);
+  const sortedVideoJobs = [...videoJobs].sort((a, b) => {
+    const aTime = typeof a.timestamp === 'number' ? a.timestamp : new Date(a.timestamp).getTime();
+    const bTime = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
+    return bTime - aTime;
+  });
   const [videoThumbErrors, setVideoThumbErrors] = useState<Record<string, boolean>>({});
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [showBatchDropdown, setShowBatchDropdown] = useState(false);
@@ -2724,6 +2729,21 @@ function MainApp() {
                             }
                           } catch (err: any) {
                             console.error(`Local render failed for job ${job.id}:`, err);
+                            
+                            // Send error report to the server to display in command line logs and save to DB
+                            try {
+                              await fetch('/api/video/client-render-failed', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  jobId: job.id,
+                                  error: err.message || String(err)
+                                })
+                              });
+                            } catch (reportErr) {
+                              console.error('Failed to report render failure to server:', reportErr);
+                            }
+
                             setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
                               ...j, 
                               status: 'error' as any, 
@@ -3643,7 +3663,7 @@ function MainApp() {
             </div>
           </div>
           
-          {videoJobs.length === 0 && submittingVideoJobs.length === 0 ? (
+          {sortedVideoJobs.length === 0 && submittingVideoJobs.length === 0 ? (
             <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
               <History className="w-16 h-16 mx-auto mb-4 text-gray-300" />
               <p className="text-lg font-medium text-gray-600">暂无视频渲染记录</p>
@@ -3665,7 +3685,7 @@ function MainApp() {
                   </div>
                 </div>
               ))}
-              {user?.role === 'admin' ? Object.entries(groupByUser(videoJobs)).map(([uname, jobs]: [string, any[]]) => (
+              {user?.role === 'admin' ? Object.entries(groupByUser(sortedVideoJobs)).map(([uname, jobs]: [string, any[]]) => (
                 <div key={uname} className="mb-6 bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
                   <div 
                     onClick={() => toggleUserExpand(uname + '_video')}
@@ -3842,7 +3862,7 @@ function MainApp() {
                     </div>
                   )}
                 </div>
-              )) : videoJobs.map(job => (
+              )) : sortedVideoJobs.map(job => (
                 <div key={job.id} className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-all">
                   <div className="flex flex-col sm:flex-row gap-5">
                     {/* Cover Thumbnail */}

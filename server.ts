@@ -30,7 +30,7 @@ declare module 'express-session' {
 }
 
 import { startAutomationWatcher, jobProgress, handleBrowserDebug, processingImages, cancelledJobs, ensureBrowserLaunched } from "./automation.js";
-import { videoJobProgress, cancelledVideoJobs, startVideoAutomationWatcher } from "./video_automation.js";
+import { videoJobProgress, cancelledVideoJobs, startVideoAutomationWatcher, generateXhsCopyBackground } from "./video_automation.js";
 import { executeXhsPublish, startXhsAutomationWatcher, xhsProgressMap } from "./xhs_automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -865,6 +865,23 @@ async function startServer() {
         id: jobId 
       };
 
+      // 6.5. Auto-generate XHS copy if not present
+      const hasCopy = finalTaskData.xhsTitle || finalTaskData.xhsBody;
+      if (!hasCopy) {
+        console.log(`[ClientRender] [AI-GEN-BACKGROUND] 检测到当前客户端渲染视频没有小红书文案，启动后台 AI 自动生成...`);
+        try {
+          const result = await generateXhsCopyBackground(finalTaskData);
+          if (result) {
+            finalTaskData.xhsTitle = result.xhsTitle;
+            finalTaskData.xhsBody = result.xhsBody;
+            finalTaskData.xhsTags = result.xhsTags;
+            console.log(`[ClientRender] [AI-GEN-BACKGROUND] 客户端渲染后台 AI 小红书文案生成成功：标题="${result.xhsTitle}"`);
+          }
+        } catch (xhsErr) {
+          console.error('[ClientRender] [AI-GEN-BACKGROUND] 客户端渲染后台 AI 小红书文案生成失败:', xhsErr);
+        }
+      }
+
       const historyUserDir = path.join(videoHistoryDir, user.id.toString());
       if (!fs.existsSync(historyUserDir)) {
         fs.mkdirSync(historyUserDir, { recursive: true });
@@ -893,12 +910,81 @@ async function startServer() {
         );
       }
 
+      // 7.5. Register completed video in the assets table for video library/gallery
+      const relativeAssetPath = `downloads/videos/${user.id}/${finalFilename}`;
+      try {
+        db.prepare('INSERT OR IGNORE INTO assets (user_id, job_id, type, file_path) VALUES (?, ?, ?, ?)').run(
+          user.id,
+          jobId,
+          'video',
+          relativeAssetPath
+        );
+        console.log(`[ClientRender] Registered completed video in assets table: ${relativeAssetPath}`);
+      } catch (assetErr) {
+        console.error('[ClientRender] Failed to register video in assets table:', assetErr);
+      }
+
       console.log(`[ClientRender] Job ${jobId} successfully completed and registered in database.`);
       res.json({ status: "ok", message: "Client video saved successfully", outputVideo: `${user.id}/${finalFilename}` });
 
     } catch (err: any) {
       console.error('[ClientRender] Error finalizing client-rendered video:', err);
       res.status(500).json({ error: "服务器保存和合成视频失败: " + err.message });
+    }
+  });
+
+  // Client Render Failed API - log rendering failures to server console/logs and update DB
+  app.post("/api/video/client-render-failed", requireAuth, checkAccess, express.json(), (req: any, res) => {
+    const { jobId, error } = req.body;
+    const user = req.session.user;
+
+    console.error(`\n[ClientRender] ❌ VIDEO RENDERING FAILED for jobId: ${jobId} (User: ${user?.username || 'unknown'})\nReason: ${error}\n`);
+
+    try {
+      if (videoJobProgress && typeof videoJobProgress.set === 'function') {
+        videoJobProgress.set(jobId, { progress: 0, status: 'error', error: error });
+      }
+
+      const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(jobId) as any;
+      if (existing) {
+        let taskData = {};
+        try {
+          taskData = JSON.parse(existing.data);
+        } catch (e) {}
+
+        const finalTaskData = {
+          ...taskData,
+          error: error,
+          statusMessage: `渲染失败: ${error}`
+        };
+
+        db.prepare('UPDATE tasks SET status = ?, progress = ?, data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+          'error',
+          0,
+          JSON.stringify(finalTaskData),
+          jobId
+        );
+      } else {
+        const finalTaskData = {
+          id: jobId,
+          userId: user.id,
+          error: error,
+          statusMessage: `渲染失败: ${error}`
+        };
+        db.prepare('INSERT INTO tasks (id, user_id, type, data, status, progress) VALUES (?, ?, ?, ?, ?, ?)').run(
+          jobId,
+          user.id,
+          'video',
+          JSON.stringify(finalTaskData),
+          'error',
+          0
+        );
+      }
+
+      res.json({ status: "ok", message: "Error logged and updated in database successfully." });
+    } catch (dbErr: any) {
+      console.error('[ClientRender] Error updating task status to error in DB:', dbErr);
+      res.status(500).json({ error: "Failed to update error state in DB: " + dbErr.message });
     }
   });
 

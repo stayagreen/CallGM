@@ -267,7 +267,7 @@ function extractJSON(text: string): any {
     throw new Error("无法从回复中解析出具有标准结构的 JSON 文档。原始内容为: " + text);
 }
 
-async function generateXhsCopyBackground(taskData: any): Promise<any> {
+export async function generateXhsCopyBackground(taskData: any): Promise<any> {
     const storyboards = taskData.storyboards || [];
     const videoName = taskData.videoName || '';
     
