@@ -90,8 +90,8 @@ function drawSingleStoryboard(
     let offsetRefY = 0;
 
     // Use a gentler interpolation range centered in the middle of the zoom buffer to slow down movement and ensure consistency
-    const halfRange = Math.min(0.5, 0.25 * speed);
-    const pSlow = 0.5 + (p - 0.5) * (halfRange * 2);
+    const pScaled = Math.min(1.0, p * speed);
+    const pSlow = 0.25 + pScaled * 0.5;
 
     switch (sb.animation) {
       case 'zoom_in':
