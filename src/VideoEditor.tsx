@@ -8,6 +8,7 @@ export interface Storyboard {
   id: string;
   image: string;
   animation: string;
+  animationSpeed?: number;
   transition: string;
   text: string;
   textSize: number;
@@ -174,6 +175,7 @@ export default function VideoEditor({
       id: Date.now().toString(),
       image: '',
       animation: 'none',
+      animationSpeed: 1.0,
       transition: 'none',
       text: '',
       textSize: 20,
@@ -922,6 +924,36 @@ export default function VideoEditor({
                             </select>
                           </div>
 
+                          {sb.animation !== 'none' && (
+                            <div className="bg-gray-50 p-2.5 rounded-lg border border-gray-100 space-y-1.5 animate-fadeIn">
+                              <div className="flex justify-between items-center">
+                                <label className="text-xs font-bold text-gray-500">
+                                  运镜速率 ({sb.animationSpeed !== undefined ? sb.animationSpeed.toFixed(1) : '1.0'}x)
+                                </label>
+                                <button 
+                                  onClick={() => applyToAll('animationSpeed', sb.animationSpeed !== undefined ? sb.animationSpeed : 1.0)} 
+                                  className="text-[10px] text-blue-600 hover:underline"
+                                >
+                                  应用到全部
+                                </button>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <input 
+                                  type="range" 
+                                  min="0.1" 
+                                  max="3.0" 
+                                  step="0.1" 
+                                  className="w-full accent-blue-600 h-1.5 rounded-lg bg-gray-200 cursor-pointer"
+                                  value={sb.animationSpeed !== undefined ? sb.animationSpeed : 1.0} 
+                                  onChange={e => updateStoryboard(sb.id, { animationSpeed: parseFloat(e.target.value) })}
+                                />
+                                <span className="text-xs font-mono text-gray-500 w-8 text-right">
+                                  {(sb.animationSpeed !== undefined ? sb.animationSpeed : 1.0).toFixed(1)}x
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
                           {index < task.storyboards.length - 1 && (
                             <div>
                               <div className="flex justify-between items-center mb-1">
@@ -1097,6 +1129,7 @@ export default function VideoEditor({
                             id: Date.now().toString() + Math.random().toString(36).substring(7),
                             image: finalImageUrl,
                             animation: 'none',
+                            animationSpeed: 1.0,
                             transition: 'none',
                             text: '',
                             textSize: 20,
@@ -1227,6 +1260,7 @@ export default function VideoEditor({
                     id: Date.now().toString() + Math.random().toString(36).substring(7),
                     image: splitImages[index],
                     animation: 'none',
+                    animationSpeed: 1.0,
                     transition: 'none',
                     text: '',
                     textSize: 20,

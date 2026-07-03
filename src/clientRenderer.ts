@@ -70,10 +70,11 @@ function drawSingleStoryboard(
 
     const duration = sb.duration || 3;
     const p = Math.min(1, Math.max(0, relTime / duration));
+    const speed = sb.animationSpeed !== undefined ? sb.animationSpeed : 1.0;
 
     let zoom = 1.0;
     if (sb.animation === 'zoom_in') {
-      zoom = 1.0 + p * 0.08;
+      zoom = 1.0 + p * 0.08 * speed;
     } else if (sb.animation && sb.animation.startsWith('pan_')) {
       zoom = 1.15;
     }
@@ -89,7 +90,8 @@ function drawSingleStoryboard(
     let offsetRefY = 0;
 
     // Use a gentler interpolation range centered in the middle of the zoom buffer to slow down movement and ensure consistency
-    const pSlow = 0.25 + p * 0.50;
+    const halfRange = Math.min(0.5, 0.25 * speed);
+    const pSlow = 0.5 + (p - 0.5) * (halfRange * 2);
 
     switch (sb.animation) {
       case 'zoom_in':
