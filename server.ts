@@ -1046,14 +1046,14 @@ async function startServer() {
     const ss = pad(creationDate.getSeconds());
     const appleFilename = `IMG_${yyyy}${mm}${dd}_${hh}${min}${ss}.MOV`;
 
-    // Timezone offset for creationdate metadata (e.g., +0800 or -0700)
+    // Timezone offset for creationdate metadata (e.g., +08:00 or -07:00)
     const offsetMinutes = -creationDate.getTimezoneOffset();
     const offsetSign = offsetMinutes >= 0 ? '+' : '-';
     const offsetHours = pad(Math.floor(Math.abs(offsetMinutes) / 60));
     const offsetMins = pad(Math.abs(offsetMinutes) % 60);
-    const tzOffsetStr = `${offsetSign}${offsetHours}${offsetMins}`;
+    const tzOffsetStr = `${offsetSign}${offsetHours}:${offsetMins}`;
 
-    // Format: 2026-07-04T10:28:54+0800
+    // Format: 2026-07-04T10:28:54+08:00
     const creationDateStr = `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}${tzOffsetStr}`;
 
     const tempMovPath = path.join(os.tmpdir(), `apple_${Date.now()}_${Math.floor(Math.random() * 10000)}.mov`);
@@ -1064,7 +1064,9 @@ async function startServer() {
         '-y',
         '-i', fullPath,
         '-c', 'copy',
-        '-movflags', 'use_metadata_tags',
+        '-map_metadata', '-1',
+        '-movflags', 'use_metadata_tags+faststart',
+        '-metadata', `creation_time=${creationDate.toISOString()}`,
         '-metadata:g', 'com.apple.quicktime.make=Apple',
         '-metadata:g', 'com.apple.quicktime.model=iPhone 17 Pro Max',
         '-metadata:g', 'com.apple.quicktime.software=19.5',
