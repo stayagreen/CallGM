@@ -2694,33 +2694,35 @@ function MainApp() {
                               }
                             );
 
-                            // Upload silent MP4 video as Base64 to server to finalize audio merge
-                            setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
-                                ...j, 
-                                statusMessage: '正在上传渲染流并合成背景音乐...' 
-                            } : j));
+                             // Upload silent MP4 video as Base64 to server to finalize audio merge
+                             const isAudioMerged = (silentBlob as any).isAudioMerged === true;
+                             setVideoJobs(prev => prev.map(j => j.id === job.id ? { 
+                                 ...j, 
+                                 statusMessage: isAudioMerged ? '正在保存视频并生成封面和数据...' : '正在上传渲染流并合成背景音乐...' 
+                             } : j));
 
-                            const reader = new FileReader();
-                            const base64Promise = new Promise<string>((resolve) => {
-                              reader.onloadend = () => {
-                                const base64data = reader.result as string;
-                                const base64 = base64data.split(',')[1];
-                                resolve(base64);
-                              };
-                              reader.readAsDataURL(silentBlob);
-                            });
-                            
-                            const videoBase64 = await base64Promise;
+                             const reader = new FileReader();
+                             const base64Promise = new Promise<string>((resolve) => {
+                               reader.onloadend = () => {
+                                 const base64data = reader.result as string;
+                                 const base64 = base64data.split(',')[1];
+                                 resolve(base64);
+                               };
+                               reader.readAsDataURL(silentBlob);
+                             });
+                             
+                             const videoBase64 = await base64Promise;
 
-                            const res = await fetch('/api/video/client-render-complete', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                jobId: job.id,
-                                taskData: job.data,
-                                videoBase64: videoBase64
-                              })
-                            });
+                             const res = await fetch('/api/video/client-render-complete', {
+                               method: 'POST',
+                               headers: { 'Content-Type': 'application/json' },
+                               body: JSON.stringify({
+                                 jobId: job.id,
+                                 taskData: job.data,
+                                 videoBase64: videoBase64,
+                                 isAudioMerged: isAudioMerged
+                               })
+                             });
 
                             const data = await res.json();
                             if (res.ok && data.status === 'ok') {

@@ -819,10 +819,11 @@ async function startServer() {
       const thumbPath = path.join(userVideoThumbDir, `${jobId}.jpg`);
 
       // 4. Merge audio if BGM is present
+      const isAudioMerged = req.body.isAudioMerged === true;
       const bgmName = taskData.bgm;
       let hasBgm = false;
       let bgmPath = "";
-      if (bgmName && bgmName !== 'none') {
+      if (bgmName && bgmName !== 'none' && !isAudioMerged) {
         bgmPath = path.join(bgmDir, bgmName);
         if (fs.existsSync(bgmPath)) {
           hasBgm = true;

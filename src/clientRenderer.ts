@@ -42,7 +42,7 @@ async function preloadImages(storyboards: any[]): Promise<Map<string, HTMLImageE
  */
 function drawSingleStoryboard(
   ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement | undefined,
+  img: HTMLImageElement | ImageBitmap | undefined,
   sb: any,
   relTime: number,
   w: number,
@@ -53,19 +53,23 @@ function drawSingleStoryboard(
   ctx.fillRect(0, 0, w, h);
 
   if (img) {
-    const canvasAspect = w / h;
-    const imgAspect = img.width / img.height;
     let fitW = img.width;
     let fitH = img.height;
     let fitX = 0;
     let fitY = 0;
 
-    if (imgAspect > canvasAspect) {
-      fitW = img.height * canvasAspect;
-      fitX = (img.width - fitW) / 2;
+    if (typeof ImageBitmap !== 'undefined' && img instanceof ImageBitmap) {
+      // ImageBitmap is already pre-scaled to exactly fit target aspect ratio
     } else {
-      fitH = img.width / canvasAspect;
-      fitY = (img.height - fitH) / 2;
+      const canvasAspect = w / h;
+      const imgAspect = (img as HTMLImageElement).width / (img as HTMLImageElement).height;
+      if (imgAspect > canvasAspect) {
+        fitW = (img as HTMLImageElement).height * canvasAspect;
+        fitX = ((img as HTMLImageElement).width - fitW) / 2;
+      } else {
+        fitH = (img as HTMLImageElement).width / canvasAspect;
+        fitY = ((img as HTMLImageElement).height - fitH) / 2;
+      }
     }
 
     const duration = sb.duration || 3;
@@ -270,16 +274,63 @@ export async function renderVideoClientSide(
     throw new Error('Your browser does not support the WebCodecs API (VideoEncoder). Please use Chrome, Edge, or update your browser.');
   }
 
-  onProgress({ status: 'running', progress: 5, message: '正在预加载分镜图片...' });
-
-  // 1. Preload images
-  const imagesMap = await preloadImages(task.storyboards);
-
-  onProgress({ status: 'running', progress: 15, message: '正在初始化渲染画布和硬编码器...' });
-
-  // 2. Setup canvas
-  // Determine target resolution based on first image (same image clarity/dimension detection logic as backend)
   const storyboards = task.storyboards || [];
+  const transitionDuration = 0.5; // seconds
+  let totalDuration = 0;
+  const startTime: number[] = [];
+  const endTime: number[] = [];
+
+  for (let i = 0; i < storyboards.length; i++) {
+    startTime[i] = totalDuration;
+    totalDuration += storyboards[i].duration || 3;
+    endTime[i] = totalDuration;
+  }
+
+  // 1. Load background music if present and decode it
+  let hasAudio = false;
+  let audioBuffer: AudioBuffer | null = null;
+  const targetSampleRate = 48000;
+  const targetChannels = 2;
+
+  if (task.bgm && task.bgm !== 'none' && typeof AudioEncoder !== 'undefined') {
+    try {
+      onProgress({ status: 'running', progress: 3, message: '正在加载并解码背景音乐...' });
+      const bgmUrl = `/bgm/${encodeURIComponent(task.bgm)}`;
+      const audioRes = await fetch(bgmUrl);
+      if (audioRes.ok) {
+        const audioArrayBuffer = await audioRes.arrayBuffer();
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const srcAudioBuffer = await audioCtx.decodeAudioData(audioArrayBuffer);
+
+        const offlineCtx = new OfflineAudioContext(targetChannels, targetSampleRate * totalDuration, targetSampleRate);
+        const sourceNode = offlineCtx.createBufferSource();
+        sourceNode.buffer = srcAudioBuffer;
+        if (srcAudioBuffer.duration < totalDuration) {
+          sourceNode.loop = true;
+        }
+        sourceNode.connect(offlineCtx.destination);
+        sourceNode.start(0);
+
+        audioBuffer = await offlineCtx.startRendering();
+        hasAudio = true;
+        console.log('[ClientRender] 背景音乐离线重采样成功:', targetSampleRate, 'Hz', targetChannels, '声道');
+      } else {
+        console.warn(`[ClientRender] 无法获取背景音乐: ${task.bgm}, status: ${audioRes.status}`);
+      }
+    } catch (err) {
+      console.warn('[ClientRender] 客户端背景音乐加载或解码失败，将降级至服务端合流:', err);
+      hasAudio = false;
+    }
+  }
+
+  onProgress({ status: 'running', progress: 7, message: '正在预加载分镜图片...' });
+
+  // 2. Preload images
+  const imagesMap = await preloadImages(storyboards);
+
+  onProgress({ status: 'running', progress: 11, message: '正在生成高清离屏纹理缓冲区...' });
+
+  // 3. Determine target resolution and set up canvas
   let firstImgWidth = 1080;
   let firstImgHeight = 1440;
   if (storyboards.length > 0) {
@@ -301,7 +352,6 @@ export async function renderVideoClientSide(
   let initialCodec = 'avc1.64002a'; // High Profile Level 4.2 default
 
   if (maxDim >= 3200 || minDim >= 2160) {
-    // 4K Target
     if (firstImgWidth >= firstImgHeight) {
       videoW = 3840;
       videoH = Math.round((3840 / aspect) / 2) * 2;
@@ -309,16 +359,13 @@ export async function renderVideoClientSide(
       videoH = 3840;
       videoW = Math.round((3840 * aspect) / 2) * 2;
     }
-
     if (videoQualityMode === 'highSharpen') {
-      bitrateBps = 50_000_000; // 50 Mbps
+      bitrateBps = 50_000_000;
     } else {
-      bitrateBps = 40_000_000; // 40 Mbps
+      bitrateBps = 40_000_000;
     }
-    initialCodec = 'avc1.640034'; // High Profile Level 5.2 (Required for 4K)
-    console.log(`[ClientRender] 🚀 检测到 4K 级别原图 (${firstImgWidth}x${firstImgHeight}), 适配 4K 输出: ${videoW}x${videoH}, 码率: ${bitrateBps / 1_000_000}M`);
+    initialCodec = 'avc1.640034';
   } else if (maxDim >= 2000 || minDim >= 1400) {
-    // 2K Target
     if (firstImgWidth >= firstImgHeight) {
       videoW = 2560;
       videoH = Math.round((2560 / aspect) / 2) * 2;
@@ -326,16 +373,13 @@ export async function renderVideoClientSide(
       videoH = 2560;
       videoW = Math.round((2560 * aspect) / 2) * 2;
     }
-
     if (videoQualityMode === 'highSharpen') {
-      bitrateBps = 25_000_000; // 25 Mbps
+      bitrateBps = 25_000_000;
     } else {
-      bitrateBps = 18_000_000; // 18 Mbps
+      bitrateBps = 18_000_000;
     }
-    initialCodec = 'avc1.640032'; // High Profile Level 5.0 (Required for 2K)
-    console.log(`[ClientRender] 🚀 检测到 2K 级别原图 (${firstImgWidth}x${firstImgHeight}), 适配 2K 输出: ${videoW}x${videoH}, 码率: ${bitrateBps / 1_000_000}M`);
+    initialCodec = 'avc1.640032';
   } else {
-    // 1080P Target
     if (firstImgWidth >= firstImgHeight) {
       videoH = 1080;
       videoW = Math.round((1080 * aspect) / 2) * 2;
@@ -343,15 +387,60 @@ export async function renderVideoClientSide(
       videoW = 1080;
       videoH = Math.round((1080 / aspect) / 2) * 2;
     }
-
     if (videoQualityMode === 'highSharpen') {
-      bitrateBps = 15_000_000; // 15 Mbps
+      bitrateBps = 15_000_000;
     } else {
-      bitrateBps = 8_000_000; // 8 Mbps
+      bitrateBps = 8_000_000;
     }
-    initialCodec = 'avc1.64002a'; // High Profile Level 4.2
-    console.log(`[ClientRender] 🚀 检测到 1080P/1K 级别原图 (${firstImgWidth}x${firstImgHeight}), 适配 1080P 输出: ${videoW}x${videoH}, 码率: ${bitrateBps / 1_000_000}M`);
+    initialCodec = 'avc1.64002a';
   }
+
+  // Pre-create high-quality texture buffers (ImageBitmaps with bufferScale = 1.2)
+  const texturesMap = new Map<string, ImageBitmap>();
+  const bufferScale = 1.2;
+  const bufferW = Math.round(videoW * bufferScale);
+  const bufferH = Math.round(videoH * bufferScale);
+
+  for (const sb of storyboards) {
+    if (!sb.image) continue;
+    const img = imagesMap.get(sb.image);
+    if (!img) continue;
+
+    const offscreen = document.createElement('canvas');
+    offscreen.width = bufferW;
+    offscreen.height = bufferH;
+    const offCtx = offscreen.getContext('2d');
+    if (offCtx) {
+      offCtx.imageSmoothingEnabled = true;
+      offCtx.imageSmoothingQuality = 'high';
+      
+      const canvasAspect = bufferW / bufferH;
+      const imgAspect = img.width / img.height;
+      let fitW = img.width;
+      let fitH = img.height;
+      let fitX = 0;
+      let fitY = 0;
+
+      if (imgAspect > canvasAspect) {
+        fitW = img.height * canvasAspect;
+        fitX = (img.width - fitW) / 2;
+      } else {
+        fitH = img.width / canvasAspect;
+        fitY = (img.height - fitH) / 2;
+      }
+      
+      offCtx.drawImage(img, fitX, fitY, fitW, fitH, 0, 0, bufferW, bufferH);
+      
+      try {
+        const bitmap = await createImageBitmap(offscreen);
+        texturesMap.set(sb.image, bitmap);
+      } catch (bitmapErr) {
+        console.error('[ClientRender] Failed to create ImageBitmap, fallback to original image:', bitmapErr);
+      }
+    }
+  }
+
+  onProgress({ status: 'running', progress: 15, message: '正在初始化渲染画布和硬编码器...' });
 
   const canvas = document.createElement('canvas');
   canvas.width = videoW;
@@ -361,23 +450,34 @@ export async function renderVideoClientSide(
     throw new Error('Failed to get 2D context from canvas');
   }
 
-  // 3. Compute timeline
-  const transitionDuration = 0.5; // seconds
-  let totalDuration = 0;
-  const startTime: number[] = [];
-  const endTime: number[] = [];
-
-  for (let i = 0; i < storyboards.length; i++) {
-    startTime[i] = totalDuration;
-    totalDuration += storyboards[i].duration || 3;
-    endTime[i] = totalDuration;
-  }
-
   const totalFrames = Math.ceil(totalDuration * fps);
   const frameDurationUs = 1000000 / fps;
 
-  // 4. Setup Mp4Muxer & VideoEncoder
-  const muxer = new Muxer({
+  // 4. Setup Mp4Muxer & VideoEncoder/AudioEncoder
+  let muxerInstance: any = null;
+  let audioEncoder: AudioEncoder | null = null;
+
+  if (hasAudio) {
+    try {
+      audioEncoder = new AudioEncoder({
+        output: (chunk, meta) => muxerInstance && muxerInstance.addAudioChunk(chunk, meta),
+        error: (e) => {
+          console.error('[ClientRender] AudioEncoder error:', e);
+        }
+      });
+      audioEncoder.configure({
+        codec: 'mp4a.40.2', // AAC-LC
+        numberOfChannels: targetChannels,
+        sampleRate: targetSampleRate,
+        bitrate: 128_000
+      });
+    } catch (err) {
+      console.warn('[ClientRender] 无法初始化 AudioEncoder, 降级至无声渲染并服务端合流:', err);
+      hasAudio = false;
+    }
+  }
+
+  const muxerConfig: any = {
     target: new ArrayBufferTarget(),
     video: {
       codec: 'avc',
@@ -385,7 +485,18 @@ export async function renderVideoClientSide(
       height: videoH,
     },
     fastStart: 'in-memory'
-  });
+  };
+
+  if (hasAudio) {
+    muxerConfig.audio = {
+      codec: 'aac',
+      numberOfChannels: targetChannels,
+      sampleRate: targetSampleRate
+    };
+  }
+
+  const muxer = new Muxer(muxerConfig);
+  muxerInstance = muxer;
 
   let encodeError: any = null;
   const encoder = new VideoEncoder({
@@ -396,7 +507,6 @@ export async function renderVideoClientSide(
     }
   });
 
-  // Setup configuration for H.264 profiles with fallbacks
   const config = {
     codec: initialCodec,
     width: videoW,
@@ -410,22 +520,22 @@ export async function renderVideoClientSide(
   } catch (err) {
     console.warn(`Failed to configure VideoEncoder with profile ${initialCodec}, trying standard High Profile...`, err);
     try {
-      config.codec = 'avc1.64002a'; // Level 4.2
+      config.codec = 'avc1.64002a';
       encoder.configure(config);
     } catch (err1) {
       console.warn('Failed to configure with standard High Profile, trying Main Profile...', err1);
       try {
-        config.codec = 'avc1.4d4029'; // Main Profile Level 4.1
+        config.codec = 'avc1.4d4029';
         encoder.configure(config);
       } catch (err2) {
         console.warn('Failed to configure with Main Profile, trying Baseline Profile...', err2);
         try {
-          config.codec = 'avc1.42e029'; // Baseline Profile Level 4.1
+          config.codec = 'avc1.42e029';
           encoder.configure(config);
         } catch (err3) {
           console.error('Failed to configure with H.264 profiles, trying VP9...', err3);
           try {
-            config.codec = 'vp09.00.10.08'; // VP9 profile as a fallback
+            config.codec = 'vp09.00.10.08';
             encoder.configure(config);
           } catch (err4) {
             throw new Error('您的浏览器不支持 H.264 或 VP9 硬件编码，请确保启用了 GPU 硬件加速并使用最新 Chrome/Edge 浏览器。');
@@ -453,7 +563,7 @@ export async function renderVideoClientSide(
     }
 
     const sbCurrent = storyboards[activeIdx];
-    const imgCurrent = imagesMap.get(sbCurrent.image || '');
+    const imgCurrent = texturesMap.get(sbCurrent.image || '') || imagesMap.get(sbCurrent.image || '');
     const relTimeCurrent = currentTime - startTime[activeIdx];
 
     // Clear and draw background
@@ -479,7 +589,7 @@ export async function renderVideoClientSide(
       // Draw secondary storyboard with fade in
       ctx.save();
       const sbNext = storyboards[activeIdx + 1];
-      const imgNext = imagesMap.get(sbNext.image || '');
+      const imgNext = texturesMap.get(sbNext.image || '') || imagesMap.get(sbNext.image || '');
       const relTimeNext = Math.max(0, currentTime - startTime[activeIdx + 1]);
       drawSingleStoryboard(ctx, imgNext, sbNext, relTimeNext, videoW, videoH);
       const nextData = ctx.getImageData(0, 0, videoW, videoH);
@@ -519,7 +629,7 @@ export async function renderVideoClientSide(
     }
 
     // Update progress
-    const pct = 15 + Math.floor((f / totalFrames) * 80);
+    const pct = 15 + Math.floor((f / totalFrames) * 75);
     onProgress({
       status: 'running',
       progress: pct,
@@ -532,7 +642,7 @@ export async function renderVideoClientSide(
     throw new Error(`硬件编码器在渲染循环后发生错误: ${encodeError.message || encodeError}`);
   }
 
-  onProgress({ status: 'running', progress: 95, message: '正在完成视频轨道合流...' });
+  onProgress({ status: 'running', progress: 92, message: '正在完成视频轨道合流...' });
   await encoder.flush();
 
   if (encodeError) {
@@ -540,10 +650,63 @@ export async function renderVideoClientSide(
   }
 
   encoder.close();
+
+  // If we have client-side audio, encode and flush audio chunks now
+  if (hasAudio && audioBuffer && audioEncoder) {
+    try {
+      onProgress({ status: 'running', progress: 95, message: '正在进行音频合轨硬编码...' });
+      const ch0 = audioBuffer.getChannelData(0);
+      const ch1 = audioBuffer.getChannelData(1);
+      const totalSamples = audioBuffer.length;
+      const chunkSize = 1024;
+      
+      let offset = 0;
+      while (offset < totalSamples) {
+        const currentChunkSize = Math.min(chunkSize, totalSamples - offset);
+        const planarBuffer = new Float32Array(currentChunkSize * targetChannels);
+        
+        planarBuffer.set(ch0.subarray(offset, offset + currentChunkSize), 0);
+        planarBuffer.set(ch1.subarray(offset, offset + currentChunkSize), currentChunkSize);
+        
+        const timestampUs = Math.round((offset / targetSampleRate) * 1_000_000);
+        
+        const audioData = new AudioData({
+          format: 'f32-planar',
+          sampleRate: targetSampleRate,
+          numberOfFrames: currentChunkSize,
+          numberOfChannels: targetChannels,
+          timestamp: timestampUs,
+          data: planarBuffer
+        });
+        
+        audioEncoder.encode(audioData);
+        audioData.close();
+        
+        offset += currentChunkSize;
+      }
+      
+      await audioEncoder.flush();
+      audioEncoder.close();
+      console.log('[ClientRender] 背景音乐 AAC-LC 编码完成！');
+    } catch (audioEncErr) {
+      console.error('[ClientRender] 背景音乐编码过程中出错，可能导致无声视频:', audioEncErr);
+    }
+  }
+
+  onProgress({ status: 'running', progress: 98, message: '正在组织并封包最终 MP4 文件...' });
   muxer.finalize();
 
-  const { buffer } = muxer.target as ArrayBufferTarget;
-  onProgress({ status: 'completed', progress: 100, message: '本地硬件视频渲染完毕！' });
+  // Clean up ImageBitmaps to prevent memory leaks
+  for (const [_, bitmap] of texturesMap.entries()) {
+    try {
+      bitmap.close();
+    } catch (e) {}
+  }
 
-  return new Blob([buffer], { type: 'video/mp4' });
+  const { buffer } = muxer.target as ArrayBufferTarget;
+  onProgress({ status: 'completed', progress: 100, message: '本地硬件视频渲染与合流完毕！' });
+
+  const finalBlob = new Blob([buffer], { type: 'video/mp4' });
+  (finalBlob as any).isAudioMerged = hasAudio;
+  return finalBlob;
 }
