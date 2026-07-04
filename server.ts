@@ -1064,10 +1064,14 @@ async function startServer() {
         '-y',
         '-i', fullPath,
         '-c', 'copy',
+        '-movflags', 'use_metadata_tags',
         '-metadata:g', 'com.apple.quicktime.make=Apple',
         '-metadata:g', 'com.apple.quicktime.model=iPhone 17 Pro Max',
         '-metadata:g', 'com.apple.quicktime.software=19.5',
         '-metadata:g', `com.apple.quicktime.creationdate=${creationDateStr}`,
+        '-metadata:g', 'com.apple.quicktime.lens.make=Apple',
+        '-metadata:g', 'com.apple.quicktime.lens.model=iPhone 17 Pro Max back triple camera 6.86mm f/1.9',
+        '-metadata:g', 'com.apple.quicktime.lens.specification=13-120mm f/1.78-2.8',
         '-f', 'mov',
         tempMovPath
       ]);
