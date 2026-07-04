@@ -3853,9 +3853,11 @@ function MainApp() {
                                       </button>
                                       <a 
                                         href={(() => {
-                                          let videoPath = job.resultFiles?.[0] || job.data?.outputVideo;
-                                          if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
-                                          return videoPath;
+                                          const rawPath = job.resultFiles?.[0] || job.data?.outputVideo || '';
+                                          const cleanPath = rawPath.startsWith('/downloads/videos/') 
+                                            ? rawPath.substring('/downloads/videos/'.length) 
+                                            : rawPath;
+                                          return `/api/video/download-apple?videoPath=${encodeURIComponent(cleanPath)}`;
                                         })()} 
                                         download
                                         className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-100 transition border border-emerald-100"
@@ -4016,9 +4018,11 @@ function MainApp() {
                               </button>
                               <a 
                                 href={(() => {
-                                  let videoPath = job.resultFiles?.[0] || job.data?.outputVideo;
-                                  if (videoPath && !videoPath.startsWith('/')) videoPath = `/downloads/videos/${videoPath}`;
-                                  return videoPath;
+                                  const rawPath = job.resultFiles?.[0] || job.data?.outputVideo || '';
+                                  const cleanPath = rawPath.startsWith('/downloads/videos/') 
+                                    ? rawPath.substring('/downloads/videos/'.length) 
+                                    : rawPath;
+                                  return `/api/video/download-apple?videoPath=${encodeURIComponent(cleanPath)}`;
                                 })()} 
                                 download
                                 className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-100 transition border border-emerald-100"
@@ -5876,7 +5880,19 @@ function MainApp() {
             
             <div className="mt-6 flex flex-col items-center gap-4 w-full">
               <div className="flex justify-center gap-4 w-full">
-                <a href={viewingVideo} download className="flex-1 max-w-[160px] bg-white text-gray-900 px-6 py-3 rounded-full font-bold hover:bg-gray-100 transition shadow-lg text-center">下载视频</a>
+                <a 
+                  href={(() => {
+                    if (!viewingVideo) return '';
+                    const cleanPath = viewingVideo.startsWith('/downloads/videos/')
+                      ? viewingVideo.substring('/downloads/videos/'.length)
+                      : viewingVideo;
+                    return `/api/video/download-apple?videoPath=${encodeURIComponent(cleanPath)}`;
+                  })()} 
+                  download 
+                  className="flex-1 max-w-[160px] bg-white text-gray-900 px-6 py-3 rounded-full font-bold hover:bg-gray-100 transition shadow-lg text-center"
+                >
+                  下载视频
+                </a>
                 <button onClick={() => setViewingVideo(null)} className="flex-1 max-w-[160px] bg-gray-800 text-white px-6 py-3 rounded-full font-bold hover:bg-gray-700 transition shadow-lg">关闭预览</button>
               </div>
             </div>
