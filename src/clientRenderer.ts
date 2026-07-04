@@ -614,6 +614,26 @@ export async function renderVideoClientSide(
       drawSingleStoryboard(ctx, imgCurrent, sbCurrent, relTimeCurrent, videoW, videoH);
     }
 
+    // Apply Intro/Outro Fade Animations
+    if (task.introAnimation === 'fade_in' && currentTime < 1.0) {
+      const opacity = 1.0 - currentTime;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, videoW, videoH);
+      ctx.restore();
+    }
+
+    const outroStartTime = Math.max(0, totalDuration - 1.0);
+    if (task.outroAnimation === 'fade_out' && currentTime >= outroStartTime) {
+      const opacity = (currentTime - outroStartTime) / 1.0;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, videoW, videoH);
+      ctx.restore();
+    }
+
     // Submit frame to encoder
     if (encodeError) {
       throw new Error(`硬件编码器在第 ${f + 1}/${totalFrames} 帧发生错误: ${encodeError.message || encodeError}`);
