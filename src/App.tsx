@@ -42,6 +42,7 @@ interface GalleryAsset {
   jobId?: string;
   taskData?: VideoTask;
   resolutionTag?: string;
+  isPublished?: number;
 }
 
 interface Template {
@@ -4268,6 +4269,36 @@ function MainApp() {
                           {vidData.resolutionTag}
                         </div>
                       )}
+                      
+                      {/* Published Status Badge Toggle */}
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation();
+                          const nextPublished = vidData.isPublished ? 0 : 1;
+                          try {
+                            const res = await fetch('/api/videos/toggle-published', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ videoPath: vidData.path, isPublished: nextPublished === 1 })
+                            });
+                            if (res.ok) {
+                              fetchVideoGallery();
+                            }
+                          } catch (err) {
+                            console.error('Failed to toggle published status:', err);
+                          }
+                        }}
+                        className={`absolute bottom-2 left-2 z-20 px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer select-none border backdrop-blur-sm ${
+                          vidData.isPublished 
+                            ? 'bg-emerald-600 border-emerald-500 text-white hover:bg-emerald-700' 
+                            : 'bg-black/60 border-white/20 text-white/90 hover:bg-black/80 hover:text-white'
+                        }`}
+                        title={vidData.isPublished ? "已标记发布：点击标记为未发布" : "未标记发布：点击标记为已发布"}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${vidData.isPublished ? 'bg-white animate-pulse' : 'bg-gray-400'}`}></span>
+                        <span>{vidData.isPublished ? '已发布' : '未发布'}</span>
+                      </button>
+
                       <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center">
                         <PlayCircle className="w-12 h-12 text-white opacity-80 group-hover:opacity-100 transition-opacity drop-shadow-md" />
                       </div>

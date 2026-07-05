@@ -2260,13 +2260,39 @@ async function startServer() {
           createdAt: row.created_at,
           jobId: row.job_id,
           taskData: taskData,
-          resolutionTag
+          resolutionTag,
+          isPublished: row.is_published || 0
         };
       }));
       res.json(results);
     } catch (err) {
       console.error('Failed to read videos from DB:', err);
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Toggle is_published status for a video asset
+  app.post('/api/videos/toggle-published', requireAuth, checkAccess, (req: any, res) => {
+    const { videoPath, isPublished } = req.body;
+    if (!videoPath) return res.status(400).json({ error: 'Video path required' });
+
+    try {
+      const dbPath1 = videoPath;
+      const dbPath2 = videoPath.replace(/\//g, '\\');
+      const dbPath3 = 'downloads/videos/' + videoPath;
+      const dbPath4 = dbPath3.replace(/\//g, '\\');
+
+      // Update in SQLite
+      const result = db.prepare(`
+        UPDATE assets 
+        SET is_published = ? 
+        WHERE file_path = ? OR file_path = ? OR file_path = ? OR file_path = ?
+      `).run(isPublished ? 1 : 0, dbPath1, dbPath2, dbPath3, dbPath4);
+
+      res.json({ success: true, isPublished: isPublished ? 1 : 0 });
+    } catch (err: any) {
+      console.error('Failed to toggle published status:', err);
+      res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });
 

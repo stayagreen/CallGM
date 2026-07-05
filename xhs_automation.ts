@@ -1297,6 +1297,17 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
 
     db.prepare("UPDATE xhs_notes SET publish_status = 'success', publish_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('https://creator.xiaohongshu.com/creator/home', noteId);
     
+    // Automatically mark the video asset as published in the database
+    if (note.video_path) {
+      try {
+        const dbPath = note.video_path.replace(/\//g, '\\');
+        db.prepare("UPDATE assets SET is_published = 1 WHERE file_path = ? OR file_path = ?").run(note.video_path, dbPath);
+        console.log(`[XHS 发布] ✅ 自动标记视频资产 ${note.video_path} 为已发布`);
+      } catch (assetErr) {
+        console.error('[XHS 发布] 无法标记视频资产为已发布:', assetErr);
+      }
+    }
+    
     const finalSuccessMessage = isDraftTask 
       ? '🎉 小红书作品已成功保存为草稿存档！'
       : '🎉 小红书作品已全自动发表成功，并成功在创作者中心内记录存档！';

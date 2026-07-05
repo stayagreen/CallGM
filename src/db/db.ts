@@ -46,6 +46,7 @@ db.exec(`
     job_id TEXT,
     type TEXT NOT NULL DEFAULT 'image', -- 'image' or 'video'
     file_path TEXT UNIQUE NOT NULL, -- e.g. '1/saved_123.jpg'
+    is_published INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
@@ -121,6 +122,7 @@ try { db.exec('ALTER TABLE users ADD COLUMN xhs_homepage_url TEXT;'); } catch (e
 try { db.exec('ALTER TABLE users ADD COLUMN bound_worker_id TEXT;'); } catch (e) {}
 try { db.exec('ALTER TABLE xhs_notes ADD COLUMN is_draft INTEGER DEFAULT 0;'); } catch (e) {}
 try { db.exec('ALTER TABLE assets ADD COLUMN group_id INTEGER;'); } catch (e) {}
+try { db.exec('ALTER TABLE assets ADD COLUMN is_published INTEGER DEFAULT 0;'); } catch (e) {}
 try { db.exec('ALTER TABLE asset_groups ADD COLUMN type TEXT NOT NULL DEFAULT "image";'); } catch (e) {}
 try {
   db.exec(`
