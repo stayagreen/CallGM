@@ -671,17 +671,33 @@ export async function executeXhsPublish(noteId: number): Promise<{ success: bool
           const editor = document.querySelector('div[contenteditable="true"], x-editor, .post-content, textarea[placeholder*="正文"], #post-textarea');
           if (editor) {
             editor.focus();
-            if (editor.getAttribute('contenteditable') === 'true' || editor.id === 'post-textarea') {
-              editor.textContent = ${JSON.stringify(mainContent)};
-              editor.dispatchEvent(new Event('input', { bubbles: true }));
-              
-              // 自动将光标焦点移至页面编辑器最后，为后面的字符极速模拟打字做准备
-              const range = document.createRange();
-              const sel = window.getSelection();
-              range.selectNodeContents(editor);
-              range.collapse(false); // 折叠光标至末尾
-              sel.removeAllRanges();
-              sel.addRange(range);
+            if (editor.getAttribute('contenteditable') === 'true') {
+              try {
+                // 1. 全选内容
+                const sel = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(editor);
+                sel.removeAllRanges();
+                sel.addRange(range);
+                
+                // 2. 清空并用 insertText 填入，这能完美触发编辑器的 internal state 更新，并把换行转换为标准的段落块
+                document.execCommand('delete', false, null);
+                document.execCommand('insertText', false, ${JSON.stringify(mainContent)});
+                
+                // 3. 再次强制触发 input 事件，保证 React 框架等监听到
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+                
+                // 4. 将光标移至末尾，方便后续模拟键盘打字添加话题标签
+                const finalRange = document.createRange();
+                finalRange.selectNodeContents(editor);
+                finalRange.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(finalRange);
+              } catch (execErr) {
+                // 安全回退：若 execCommand 失败，则使用 textContent 写入
+                editor.textContent = ${JSON.stringify(mainContent)};
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+              }
             } else {
               editor.value = ${JSON.stringify(mainContent)};
               editor.dispatchEvent(new Event('input', { bubbles: true }));
