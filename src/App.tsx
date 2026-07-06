@@ -1047,6 +1047,7 @@ function MainApp() {
   const [viewingVideoJobDetails, setViewingVideoJobDetails] = useState<Job | null>(null);
   const [viewingXhsNotes, setViewingXhsNotes] = useState<{ videoId: string, jobId?: string, taskData: VideoTask } | null>(null);
   const [showXhsGalleryPicker, setShowXhsGalleryPicker] = useState(false);
+  const [showXhsStoryboardCoverPicker, setShowXhsStoryboardCoverPicker] = useState(false);
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
   const [processingGalleryImages, setProcessingGalleryImages] = useState<Set<string>>(new Set());
   const [upscalingAssetIds, setUpscalingAssetIds] = useState<Set<number>>(new Set());
@@ -6034,7 +6035,7 @@ function MainApp() {
                   </select>
                 </div>
                 <div className="relative w-[200px] sm:w-[240px] mx-auto bg-gray-200 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 flex items-center justify-center flex-col shadow-sm cursor-pointer hover:border-red-400 group transition-all"
-                     onClick={() => { fetchGallery(); setShowXhsGalleryPicker(true); }}
+                     onClick={() => { setShowXhsStoryboardCoverPicker(true); }}
                      style={{
                        aspectRatio: viewingXhsNotes.taskData?.xhsCoverAspectRatio === '16:9' ? '16/9' :
                                     viewingXhsNotes.taskData?.xhsCoverAspectRatio === '4:3' ? '4/3' :
@@ -6071,8 +6072,7 @@ function MainApp() {
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      fetchGallery();
-                      setShowXhsGalleryPicker(true);
+                      setShowXhsStoryboardCoverPicker(true);
                     }}
                     className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-gray-200 shadow-sm"
                   >
@@ -6283,6 +6283,95 @@ function MainApp() {
               >
                 {isSavingConfig ? <div className="animate-spin h-4 w-4 border-2 border-white rounded-full border-t-transparent"></div> : <CheckCircle2 size={18}/>}
                 保存配置
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showXhsStoryboardCoverPicker && viewingXhsNotes && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[1000]" id="xhs-storyboard-cover-picker-modal">
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col relative animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <ImageIcon className="text-red-500 w-5 h-5" /> 
+                从分镜中选择封面图
+              </h2>
+              <button 
+                onClick={() => setShowXhsStoryboardCoverPicker(false)} 
+                className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-50 rounded-full transition"
+              >
+                <X size={20}/>
+              </button>
+            </div>
+            
+            <div className="flex-grow overflow-y-auto mb-4 pr-2">
+              {(!viewingXhsNotes.taskData?.storyboards || viewingXhsNotes.taskData.storyboards.filter(sb => sb.image).length === 0) ? (
+                <div className="text-center py-16 text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                  <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p className="font-semibold text-gray-700">暂无可用的分镜图片</p>
+                  <p className="text-xs text-gray-400 mt-1">此任务分镜中还没有图片，无法直接选择</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  {viewingXhsNotes.taskData.storyboards
+                    .map((sb, idx) => {
+                      if (!sb.image) return null;
+                      const isCurrentCover = viewingXhsNotes.taskData.xhsCoverImage === sb.image;
+                      
+                      // Resolve image url
+                      const imgUrl = (() => {
+                        const url = sb.image;
+                        if (url.startsWith('data:')) return url;
+                        if (url.startsWith('/downloads/') || url.startsWith('/uploads/')) return url;
+                        if (!url.startsWith('http')) return url;
+                        return `/api/proxy?url=${encodeURIComponent(url)}`.replace('&', '%26');
+                      })();
+
+                      return (
+                        <div 
+                          key={sb.id || idx} 
+                          onClick={() => {
+                            setViewingXhsNotes({
+                              ...viewingXhsNotes,
+                              taskData: {
+                                ...viewingXhsNotes.taskData,
+                                xhsCoverImage: sb.image
+                              }
+                            });
+                            setCropperImageSrc(imgUrl);
+                            setShowXhsStoryboardCoverPicker(false);
+                          }}
+                          className={`group relative aspect-[3/4] rounded-xl overflow-hidden border-2 cursor-pointer transition-all ${
+                            isCurrentCover ? 'border-red-500 shadow-md ring-2 ring-red-500/25' : 'border-gray-150 hover:border-red-400'
+                          }`}
+                        >
+                          <img 
+                            src={imgUrl} 
+                            className="w-full h-full object-cover transition-transform duration-350 group-hover:scale-105" 
+                            loading="lazy" 
+                          />
+                          <div className="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur-sm text-white px-2 py-0.5 rounded text-[10px] font-bold">
+                            分镜 {idx + 1}
+                          </div>
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                            <span className="text-white text-xs font-bold bg-red-600 px-2.5 py-1.5 rounded-lg shadow flex items-center gap-1">
+                              <Crop size={12} /> 裁剪设为封面
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex justify-end pt-2 border-t border-gray-50">
+              <button 
+                onClick={() => setShowXhsStoryboardCoverPicker(false)} 
+                className="px-4 py-2 text-xs font-bold text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 rounded-lg transition"
+              >
+                关闭
               </button>
             </div>
           </div>

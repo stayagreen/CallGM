@@ -112,6 +112,7 @@ export default function VideoEditor({
 
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
+  const [showStoryboardCoverPicker, setShowStoryboardCoverPicker] = useState(false);
   const [galleryMode, setGalleryMode] = useState<'normal' | '4grid' | 'cover' | 'multi_raw'>('normal');
   const [selectedGalleryGrids, setSelectedGalleryGrids] = useState<string[]>([]);
   const [activeStoryboardId, setActiveStoryboardId] = useState<string | null>(null);
@@ -637,8 +638,7 @@ export default function VideoEditor({
               </div>
               <div className="relative w-[180px] sm:w-[240px] mx-auto bg-gray-200 rounded-lg overflow-hidden border-2 border-dashed border-gray-300 flex items-center justify-center flex-col shadow-sm cursor-pointer hover:border-red-400 group transition-all"
                    onClick={() => {
-                     setGalleryMode('cover');
-                     setShowGallery(true);
+                     setShowStoryboardCoverPicker(true);
                    }}
                    style={{
                      aspectRatio: task.xhsCoverAspectRatio === '16:9' ? '16/9' :
@@ -670,8 +670,7 @@ export default function VideoEditor({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setGalleryMode('cover');
-                    setShowGallery(true);
+                    setShowStoryboardCoverPicker(true);
                   }}
                   className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-gray-200 shadow-sm"
                 >
@@ -1289,6 +1288,78 @@ export default function VideoEditor({
                 className="px-6 py-2.5 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
               >
                 确认导入 ({selectedSplitIndices.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showStoryboardCoverPicker && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]" id="storyboard-cover-picker-modal">
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col relative animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <ImageIcon className="text-red-500 w-5 h-5" /> 
+                从分镜中选择封面图
+              </h2>
+              <button 
+                onClick={() => setShowStoryboardCoverPicker(false)} 
+                className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-50 rounded-full transition"
+              >
+                <X size={20}/>
+              </button>
+            </div>
+            
+            <div className="flex-grow overflow-y-auto mb-4 pr-2">
+              {task.storyboards.filter(sb => sb.image).length === 0 ? (
+                <div className="text-center py-16 text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                  <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p className="font-semibold text-gray-700">暂无可用的分镜图片</p>
+                  <p className="text-xs text-gray-400 mt-1">请先在下方分镜头列表中，为分镜上传或一键导入图片素材</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                  {task.storyboards
+                    .map((sb, idx) => {
+                      if (!sb.image) return null;
+                      const isCurrentCover = task.xhsCoverImage === sb.image;
+                      return (
+                        <div 
+                          key={sb.id} 
+                          onClick={() => {
+                            setCropperImageSrc(sb.image);
+                            setShowStoryboardCoverPicker(false);
+                          }}
+                          className={`group relative aspect-[3/4] rounded-xl overflow-hidden border-2 cursor-pointer transition-all ${
+                            isCurrentCover ? 'border-red-500 shadow-md ring-2 ring-red-500/25' : 'border-gray-150 hover:border-red-400'
+                          }`}
+                        >
+                          <img 
+                            src={getBustedUrl(sb.image)} 
+                            className="w-full h-full object-cover transition-transform duration-350 group-hover:scale-105" 
+                            loading="lazy" 
+                          />
+                          <div className="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur-sm text-white px-2 py-0.5 rounded text-[10px] font-bold">
+                            分镜 {idx + 1}
+                          </div>
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                            <span className="text-white text-xs font-bold bg-red-600 px-2.5 py-1.5 rounded-lg shadow flex items-center gap-1">
+                              <Crop size={12} /> 裁剪设为封面
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex justify-end pt-2 border-t border-gray-50">
+              <button 
+                onClick={() => setShowStoryboardCoverPicker(false)} 
+                className="px-4 py-2 text-xs font-bold text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 rounded-lg transition"
+              >
+                关闭
               </button>
             </div>
           </div>
