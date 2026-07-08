@@ -36,7 +36,8 @@ import { executeXhsPublish, startXhsAutomationWatcher, xhsProgressMap } from "./
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import AdmZip from "adm-zip";
-import * as archiver from "archiver";
+// @ts-ignore
+import archiver from "archiver";
 
 async function startServer() {
   const app = express();
@@ -2539,7 +2540,21 @@ ${content || ''}${formattedTags}
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', `attachment; filename=xhs_package_${Date.now()}.zip`);
 
-      const archiverFn = ((archiver as any).default || archiver) as any;
+      console.log('[XHS Pack] typeof archiver:', typeof archiver);
+      let archiverFn: any = archiver;
+      if (typeof archiverFn !== 'function') {
+        console.log('[XHS Pack] archiver is not a function. Keys:', Object.keys(archiver || {}));
+        if (archiver && typeof (archiver as any).default === 'function') {
+          archiverFn = (archiver as any).default;
+        } else if (archiver && typeof (archiver as any).default?.default === 'function') {
+          archiverFn = (archiver as any).default.default;
+        }
+      }
+
+      if (typeof archiverFn !== 'function') {
+        throw new Error(`archiver is not a function at runtime. Type: ${typeof archiverFn}`);
+      }
+
       const archive = archiverFn('zip', {
         zlib: { level: 0 } // Store only, no compression
       });
