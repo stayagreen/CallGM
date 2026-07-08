@@ -536,8 +536,22 @@ async function startServer() {
   const videoThumbDir = path.join(__dirname, "thumbnails", "videos");
   const bgmDir = path.join(__dirname, "bgm");
   
-  const dirs = [taskDir, historyDir, downloadDir, uploadsDir, thumbnailsDir, thumbDownloadsDir, thumbUploadsDir];
+  const tempZipsDir = path.join(uploadsDir, "temp_zips");
+  const dirs = [taskDir, historyDir, downloadDir, uploadsDir, thumbnailsDir, thumbDownloadsDir, thumbUploadsDir, tempZipsDir];
   dirs.forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }); });
+
+  // Clean up any remaining temp zips from previous runs on startup
+  try {
+    if (fs.existsSync(tempZipsDir)) {
+      const files = fs.readdirSync(tempZipsDir);
+      for (const f of files) {
+        fs.unlinkSync(path.join(tempZipsDir, f));
+      }
+      console.log('[XHS Pack] Cleaned up previous temporary zip files on startup');
+    }
+  } catch (cleanupErr) {
+    console.warn('Failed to clean previous temp zip files:', cleanupErr);
+  }
 
   // Sync function to populate DB from existing files
   const syncFilesToDb = () => {
@@ -2536,42 +2550,56 @@ ${content || ''}${formattedTags}
         return res.status(404).json({ error: '未找到任何可打包的文件资源' });
       }
 
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', `attachment; filename=xhs_package_${Date.now()}.zip`);
+      const tempFilename = `xhs_package_${Date.now()}_${Math.random().toString(36).substring(2, 10)}.zip`;
+      const tempFilePath = path.join(tempZipsDir, tempFilename);
 
-      console.log('[XHS Pack] Creating ZipArchive stream with zlib store only');
+      console.log(`[XHS Pack] Writing temporary zip package to: ${tempFilePath}`);
+      const output = fs.createWriteStream(tempFilePath);
       const archive = new ZipArchive({ zlib: { level: 0 } });
+      archive.pipe(output);
 
-      archive.on('error', (archiveErr) => {
-        console.error('Archive packing error:', archiveErr);
-        if (!res.headersSent) {
-          res.status(500).json({ error: `打包失败: ${archiveErr.message || archiveErr}` });
+      await new Promise<void>((resolve, reject) => {
+        output.on('close', () => {
+          console.log(`[XHS Pack] Archive closed successfully: ${tempFilePath} (${archive.pointer()} bytes)`);
+          resolve();
+        });
+
+        archive.on('error', (archiveErr) => {
+          console.error('[XHS Pack] Archive error:', archiveErr);
+          reject(archiveErr);
+        });
+
+        output.on('error', (writeErr) => {
+          console.error('[XHS Pack] WriteStream error:', writeErr);
+          reject(writeErr);
+        });
+
+        if (videoExists) {
+          const videoExt = path.extname(fullVideoPath) || '.mp4';
+          const videoFileName = `小红书视频_${Date.now()}${videoExt}`;
+          archive.file(fullVideoPath, { name: `${folderName}/${videoFileName}` });
         }
+
+        if (coverExists) {
+          if (coverBase64Buffer) {
+            archive.append(coverBase64Buffer, { name: `${folderName}/小红书封面_${Date.now()}.${coverBase64Ext}` });
+          } else {
+            const imgExt = path.extname(fullCoverPath) || '.jpg';
+            const coverFileName = `小红书封面_${Date.now()}${imgExt}`;
+            archive.file(fullCoverPath, { name: `${folderName}/${coverFileName}` });
+          }
+        }
+
+        archive.append(txtBuffer, { name: `${folderName}/小红书文案与标题.txt` });
+
+        console.log('[XHS Pack] Finalizing archive...');
+        archive.finalize();
       });
 
-      // Pipe archive data to the response
-      archive.pipe(res);
-
-      if (videoExists) {
-        const videoExt = path.extname(fullVideoPath) || '.mp4';
-        const videoFileName = `小红书视频_${Date.now()}${videoExt}`;
-        archive.file(fullVideoPath, { name: `${folderName}/${videoFileName}` });
-      }
-
-      if (coverExists) {
-        if (coverBase64Buffer) {
-          archive.append(coverBase64Buffer, { name: `${folderName}/小红书封面_${Date.now()}.${coverBase64Ext}` });
-        } else {
-          const imgExt = path.extname(fullCoverPath) || '.jpg';
-          const coverFileName = `小红书封面_${Date.now()}${imgExt}`;
-          archive.file(fullCoverPath, { name: `${folderName}/${coverFileName}` });
-        }
-      }
-
-      archive.append(txtBuffer, { name: `${folderName}/小红书文案与标题.txt` });
-
-      console.log('[XHS Pack] Finalizing archive...');
-      await archive.finalize();
+      res.json({
+        success: true,
+        downloadUrl: `/api/videos/xhs/download-zip?file=${tempFilename}&name=${encodeURIComponent(`xhs_package_${Date.now()}.zip`)}`
+      });
 
     } catch (err: any) {
       console.error('Failed to package xhs resources:', err);
@@ -2579,6 +2607,37 @@ ${content || ''}${formattedTags}
         res.status(500).json({ error: `打包失败: ${err.message || err}` });
       }
     }
+  });
+
+  // Download the pre-packaged zip and delete it after downloading
+  app.get('/api/videos/xhs/download-zip', requireAuth, checkAccess, (req: any, res) => {
+    const { file, name } = req.query;
+    if (!file) {
+      return res.status(400).json({ error: '缺少参数 file' });
+    }
+
+    const safeFilename = path.basename(file);
+    const filePath = path.join(tempZipsDir, safeFilename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send('该打包文件不存在或已被下载，请重新打包。');
+    }
+
+    const downloadName = name ? path.basename(name) : `xhs_package_${Date.now()}.zip`;
+
+    res.download(filePath, downloadName, (err) => {
+      if (err) {
+        console.error('[XHS Pack] Error sending file:', err);
+      }
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          console.log('[XHS Pack] Cleaned up temporary zip after send:', filePath);
+        }
+      } catch (unlinkErr) {
+        console.error('[XHS Pack] Error unlinking file:', unlinkErr);
+      }
+    });
   });
 
   // Schedule or Publish a Xiaohongshu Note

@@ -1388,15 +1388,17 @@ function MainApp() {
         throw new Error(errMsg);
       }
 
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const data = await response.json();
+      if (!data.downloadUrl) {
+        throw new Error('未返回下载链接');
+      }
+
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `xhs_package_${Date.now()}.zip`;
+      a.href = data.downloadUrl;
+      a.style.display = 'none';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      window.URL.revokeObjectURL(url);
     } catch (e: any) {
       console.error(e);
       alert(e.message || '打包下载失败，请重试');
