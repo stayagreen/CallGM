@@ -2064,7 +2064,7 @@ async function startServer() {
     }
 
     try {
-      const zip = new AdmZip();
+      const zip = new AdmZip(undefined, { method: 0 });
       const addedNames = new Set<string>();
 
       for (const filePath of filePaths) {
@@ -2138,9 +2138,15 @@ async function startServer() {
       }
 
       // Disable compression for all entries to prevent memory limit crashes and event loop blockages with large media files
-      zip.getEntries().forEach((entry: any) => {
-        entry.header.method = 0; // 0 is STORE (no compression)
-      });
+      try {
+        zip.getEntries().forEach((entry: any) => {
+          if (entry && entry.header) {
+            entry.header.method = 0; // 0 is STORE (no compression)
+          }
+        });
+      } catch (err) {
+        console.warn('Failed to set method on zip entries:', err);
+      }
 
       const zipBuffer = zip.toBuffer();
       
@@ -2358,7 +2364,7 @@ async function startServer() {
     }
 
     try {
-      const zip = new AdmZip();
+      const zip = new AdmZip(undefined, { method: 0 });
       let hasFile = false;
 
       // Helper function to recursively find a file within a directory tree
@@ -2536,9 +2542,15 @@ ${content || ''}${formattedTags}
       }
 
       // Disable compression for all entries to prevent memory limit crashes and event loop blockages with large video files
-      zip.getEntries().forEach((entry: any) => {
-        entry.header.method = 0; // 0 is STORE (no compression)
-      });
+      try {
+        zip.getEntries().forEach((entry: any) => {
+          if (entry && entry.header) {
+            entry.header.method = 0; // 0 is STORE (no compression)
+          }
+        });
+      } catch (err) {
+        console.warn('Failed to set method on zip entries:', err);
+      }
 
       const zipBuffer = zip.toBuffer();
       res.setHeader('Content-Type', 'application/zip');
