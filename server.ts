@@ -36,9 +36,7 @@ import { executeXhsPublish, startXhsAutomationWatcher, xhsProgressMap } from "./
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import AdmZip from "adm-zip";
-import { createRequire } from "module";
-const requireModule = createRequire(import.meta.url);
-const archiver = requireModule("archiver");
+import { ZipArchive } from "archiver";
 
 async function startServer() {
   const app = express();
@@ -2541,19 +2539,8 @@ ${content || ''}${formattedTags}
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', `attachment; filename=xhs_package_${Date.now()}.zip`);
 
-      console.log('[XHS Pack] typeof archiver:', typeof archiver);
-      let archive: any;
-      if (typeof archiver === 'function') {
-        archive = archiver('zip', { zlib: { level: 0 } });
-      } else if (archiver && typeof (archiver as any).create === 'function') {
-        archive = (archiver as any).create('zip', { zlib: { level: 0 } });
-      } else if (archiver && typeof (archiver as any).default === 'function') {
-        archive = (archiver as any).default('zip', { zlib: { level: 0 } });
-      } else if (archiver && (archiver as any).default && typeof (archiver as any).default.create === 'function') {
-        archive = (archiver as any).default.create('zip', { zlib: { level: 0 } });
-      } else {
-        throw new Error(`archiver is not callable and has no create method at runtime. Keys: ${Object.keys(archiver || {})}`);
-      }
+      console.log('[XHS Pack] Creating ZipArchive with zlib store only');
+      const archive = new ZipArchive({ zlib: { level: 0 } });
 
       archive.on('error', (archiveErr) => {
         console.error('Archive packing error:', archiveErr);
