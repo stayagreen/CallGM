@@ -2137,6 +2137,11 @@ async function startServer() {
         return res.status(404).json({ error: '选中的图片在服务器上未找到，无法打包' });
       }
 
+      // Disable compression for all entries to prevent memory limit crashes and event loop blockages with large media files
+      zip.getEntries().forEach((entry: any) => {
+        entry.header.method = 0; // 0 is STORE (no compression)
+      });
+
       const zipBuffer = zip.toBuffer();
       
       res.setHeader('Content-Type', 'application/zip');
@@ -2529,6 +2534,11 @@ ${content || ''}${formattedTags}
       if (!hasFile) {
         return res.status(404).json({ error: '未找到任何可打包的文件资源' });
       }
+
+      // Disable compression for all entries to prevent memory limit crashes and event loop blockages with large video files
+      zip.getEntries().forEach((entry: any) => {
+        entry.header.method = 0; // 0 is STORE (no compression)
+      });
 
       const zipBuffer = zip.toBuffer();
       res.setHeader('Content-Type', 'application/zip');
