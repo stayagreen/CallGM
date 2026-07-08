@@ -2542,23 +2542,18 @@ ${content || ''}${formattedTags}
       res.setHeader('Content-Disposition', `attachment; filename=xhs_package_${Date.now()}.zip`);
 
       console.log('[XHS Pack] typeof archiver:', typeof archiver);
-      let archiverFn: any = archiver;
-      if (typeof archiverFn !== 'function') {
-        console.log('[XHS Pack] archiver is not a function. Keys:', Object.keys(archiver || {}));
-        if (archiver && typeof (archiver as any).default === 'function') {
-          archiverFn = (archiver as any).default;
-        } else if (archiver && typeof (archiver as any).default?.default === 'function') {
-          archiverFn = (archiver as any).default.default;
-        }
+      let archive: any;
+      if (typeof archiver === 'function') {
+        archive = archiver('zip', { zlib: { level: 0 } });
+      } else if (archiver && typeof (archiver as any).create === 'function') {
+        archive = (archiver as any).create('zip', { zlib: { level: 0 } });
+      } else if (archiver && typeof (archiver as any).default === 'function') {
+        archive = (archiver as any).default('zip', { zlib: { level: 0 } });
+      } else if (archiver && (archiver as any).default && typeof (archiver as any).default.create === 'function') {
+        archive = (archiver as any).default.create('zip', { zlib: { level: 0 } });
+      } else {
+        throw new Error(`archiver is not callable and has no create method at runtime. Keys: ${Object.keys(archiver || {})}`);
       }
-
-      if (typeof archiverFn !== 'function') {
-        throw new Error(`archiver is not a function at runtime. Type: ${typeof archiverFn}`);
-      }
-
-      const archive = archiverFn('zip', {
-        zlib: { level: 0 } // Store only, no compression
-      });
 
       archive.on('error', (archiveErr) => {
         console.error('Archive packing error:', archiveErr);
