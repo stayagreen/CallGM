@@ -36,6 +36,7 @@ import { executeXhsPublish, startXhsAutomationWatcher, xhsProgressMap } from "./
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import AdmZip from "adm-zip";
+import * as archiver from "archiver";
 
 async function startServer() {
   const app = express();
@@ -2364,9 +2365,6 @@ async function startServer() {
     }
 
     try {
-      const zip = new AdmZip(undefined, { method: 0 });
-      let hasFile = false;
-
       // Helper function to recursively find a file within a directory tree
       const findFileRecursive = (base: string, targetName: string): string => {
         if (!fs.existsSync(base)) return '';
@@ -2439,30 +2437,31 @@ async function startServer() {
         }
       }
 
+      let videoExists = false;
       if (fullVideoPath && fs.existsSync(fullVideoPath)) {
         console.log(`✅ [XHS Pack] Video verified at: "${fullVideoPath}"`);
-        const videoExt = path.extname(fullVideoPath) || '.mp4';
-        zip.addLocalFile(fullVideoPath, folderName, `小红书视频_${Date.now()}${videoExt}`);
-        hasFile = true;
+        videoExists = true;
       } else {
         console.warn(`❌ [XHS Pack] Video NOT found anywhere: "${videoPath}"`);
       }
 
       // 2. Add cover image
+      let coverExists = false;
+      let fullCoverPath = '';
+      let coverBase64Buffer: Buffer | null = null;
+      let coverBase64Ext = '';
+
       if (coverPath) {
         console.log(`📸 [XHS Pack] Resolving coverPath: "${coverPath}"`);
         if (coverPath.startsWith('data:image')) {
           const matches = coverPath.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
           if (matches) {
-            const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
-            const base64Data = matches[2];
-            const buffer = Buffer.from(base64Data, 'base64');
-            zip.addFile(`${folderName}/小红书封面_${Date.now()}.${ext}`, buffer);
-            hasFile = true;
+            coverBase64Ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+            coverBase64Buffer = Buffer.from(matches[2], 'base64');
+            coverExists = true;
             console.log(`✅ [XHS Pack] Base64 Cover added successfully.`);
           }
         } else {
-          let fullCoverPath = '';
           const cleanCover = coverPath.split('?')[0];
           
           if (cleanCover.startsWith('/downloads/')) {
@@ -2504,9 +2503,7 @@ async function startServer() {
 
           if (fullCoverPath && fs.existsSync(fullCoverPath)) {
             console.log(`✅ [XHS Pack] Cover image verified at: "${fullCoverPath}"`);
-            const imgExt = path.extname(fullCoverPath) || '.jpg';
-            zip.addLocalFile(fullCoverPath, folderName, `小红书封面_${Date.now()}${imgExt}`);
-            hasFile = true;
+            coverExists = true;
           } else {
             console.warn(`❌ [XHS Pack] Cover image NOT found anywhere: "${coverPath}"`);
           }
@@ -2534,33 +2531,51 @@ ${title || ''}
 ${content || ''}${formattedTags}
 `;
       const txtBuffer = Buffer.from(txtContent, 'utf-8');
-      zip.addFile(`${folderName}/小红书文案与标题.txt`, txtBuffer);
-      hasFile = true;
 
-      if (!hasFile) {
+      if (!videoExists && !coverExists) {
         return res.status(404).json({ error: '未找到任何可打包的文件资源' });
       }
 
-      // Disable compression for all entries to prevent memory limit crashes and event loop blockages with large video files
-      try {
-        zip.getEntries().forEach((entry: any) => {
-          if (entry && entry.header) {
-            entry.header.method = 0; // 0 is STORE (no compression)
-          }
-        });
-      } catch (err) {
-        console.warn('Failed to set method on zip entries:', err);
-      }
-
-      const zipBuffer = zip.toBuffer();
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', `attachment; filename=xhs_package_${Date.now()}.zip`);
-      res.setHeader('Content-Length', zipBuffer.length);
-      res.send(zipBuffer);
+
+      const archiverFn = ((archiver as any).default || archiver) as any;
+      const archive = archiverFn('zip', {
+        zlib: { level: 0 } // Store only, no compression
+      });
+
+      archive.on('error', (archiveErr) => {
+        console.error('Archive packing error:', archiveErr);
+        if (!res.headersSent) {
+          res.status(500).json({ error: `打包失败: ${archiveErr.message}` });
+        }
+      });
+
+      archive.pipe(res);
+
+      if (videoExists) {
+        const videoExt = path.extname(fullVideoPath) || '.mp4';
+        archive.file(fullVideoPath, { name: `${folderName}/小红书视频_${Date.now()}${videoExt}` });
+      }
+
+      if (coverExists) {
+        if (coverBase64Buffer) {
+          archive.append(coverBase64Buffer, { name: `${folderName}/小红书封面_${Date.now()}.${coverBase64Ext}` });
+        } else {
+          const imgExt = path.extname(fullCoverPath) || '.jpg';
+          archive.file(fullCoverPath, { name: `${folderName}/小红书封面_${Date.now()}${imgExt}` });
+        }
+      }
+
+      archive.append(txtBuffer, { name: `${folderName}/小红书文案与标题.txt` });
+
+      await archive.finalize();
 
     } catch (err: any) {
       console.error('Failed to package xhs resources:', err);
-      res.status(500).json({ error: `打包失败: ${err.message || err}` });
+      if (!res.headersSent) {
+        res.status(500).json({ error: `打包失败: ${err.message || err}` });
+      }
     }
   });
 
