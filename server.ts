@@ -2553,7 +2553,12 @@ ${content || ''}${formattedTags}
 
       if (videoExists) {
         const videoExt = path.extname(fullVideoPath) || '.mp4';
-        archive.file(fullVideoPath, { name: `${folderName}/小红书视频_${Date.now()}${videoExt}` });
+        const videoStream = fs.createReadStream(fullVideoPath);
+        const videoStats = fs.statSync(fullVideoPath);
+        archive.append(videoStream, { 
+          name: `${folderName}/小红书视频_${Date.now()}${videoExt}`,
+          stats: videoStats
+        });
       }
 
       if (coverExists) {
@@ -2561,13 +2566,18 @@ ${content || ''}${formattedTags}
           archive.append(coverBase64Buffer, { name: `${folderName}/小红书封面_${Date.now()}.${coverBase64Ext}` });
         } else {
           const imgExt = path.extname(fullCoverPath) || '.jpg';
-          archive.file(fullCoverPath, { name: `${folderName}/小红书封面_${Date.now()}${imgExt}` });
+          const coverStream = fs.createReadStream(fullCoverPath);
+          const coverStats = fs.statSync(fullCoverPath);
+          archive.append(coverStream, { 
+            name: `${folderName}/小红书封面_${Date.now()}${imgExt}`,
+            stats: coverStats
+          });
         }
       }
 
       archive.append(txtBuffer, { name: `${folderName}/小红书文案与标题.txt` });
 
-      await archive.finalize();
+      archive.finalize();
 
     } catch (err: any) {
       console.error('Failed to package xhs resources:', err);
