@@ -36,8 +36,9 @@ import { executeXhsPublish, startXhsAutomationWatcher, xhsProgressMap } from "./
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import AdmZip from "adm-zip";
-// @ts-ignore
-import archiver from "archiver";
+import { createRequire } from "module";
+const requireModule = createRequire(import.meta.url);
+const archiver = requireModule("archiver");
 
 async function startServer() {
   const app = express();
