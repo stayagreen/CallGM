@@ -1377,8 +1377,15 @@ function MainApp() {
       });
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || '打包下载失败');
+        const text = await response.text();
+        let errMsg = '打包下载失败';
+        try {
+          const errData = JSON.parse(text);
+          errMsg = errData.error || errMsg;
+        } catch (_) {
+          errMsg = text || errMsg;
+        }
+        throw new Error(errMsg);
       }
 
       const blob = await response.blob();

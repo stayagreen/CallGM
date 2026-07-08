@@ -36,6 +36,7 @@ import { executeXhsPublish, startXhsAutomationWatcher, xhsProgressMap } from "./
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import AdmZip from "adm-zip";
+import { ZipArchive } from "archiver";
 
 async function startServer() {
   const app = express();
@@ -2535,44 +2536,42 @@ ${content || ''}${formattedTags}
         return res.status(404).json({ error: '未找到任何可打包的文件资源' });
       }
 
-      console.log('[XHS Pack] Creating AdmZip instance with STORE (0) compression');
-      const zip = new AdmZip(undefined, { method: 0 });
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename=xhs_package_${Date.now()}.zip`);
+
+      console.log('[XHS Pack] Creating ZipArchive stream with zlib store only');
+      const archive = new ZipArchive({ zlib: { level: 0 } });
+
+      archive.on('error', (archiveErr) => {
+        console.error('Archive packing error:', archiveErr);
+        if (!res.headersSent) {
+          res.status(500).json({ error: `打包失败: ${archiveErr.message || archiveErr}` });
+        }
+      });
+
+      // Pipe archive data to the response
+      archive.pipe(res);
 
       if (videoExists) {
         const videoExt = path.extname(fullVideoPath) || '.mp4';
         const videoFileName = `小红书视频_${Date.now()}${videoExt}`;
-        zip.addLocalFile(fullVideoPath, folderName, videoFileName);
+        archive.file(fullVideoPath, { name: `${folderName}/${videoFileName}` });
       }
 
       if (coverExists) {
         if (coverBase64Buffer) {
-          zip.addFile(`${folderName}/小红书封面_${Date.now()}.${coverBase64Ext}`, coverBase64Buffer);
+          archive.append(coverBase64Buffer, { name: `${folderName}/小红书封面_${Date.now()}.${coverBase64Ext}` });
         } else {
           const imgExt = path.extname(fullCoverPath) || '.jpg';
           const coverFileName = `小红书封面_${Date.now()}${imgExt}`;
-          zip.addLocalFile(fullCoverPath, folderName, coverFileName);
+          archive.file(fullCoverPath, { name: `${folderName}/${coverFileName}` });
         }
       }
 
-      zip.addFile(`${folderName}/小红书文案与标题.txt`, txtBuffer);
+      archive.append(txtBuffer, { name: `${folderName}/小红书文案与标题.txt` });
 
-      // Disable compression for all entries to keep it fast
-      try {
-        zip.getEntries().forEach((entry: any) => {
-          if (entry && entry.header) {
-            entry.header.method = 0; // 0 is STORE
-          }
-        });
-      } catch (err) {
-        console.warn('Failed to set method on zip entries:', err);
-      }
-
-      const zipBuffer = zip.toBuffer();
-
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', `attachment; filename=xhs_package_${Date.now()}.zip`);
-      res.setHeader('Content-Length', zipBuffer.length);
-      res.send(zipBuffer);
+      console.log('[XHS Pack] Finalizing archive...');
+      await archive.finalize();
 
     } catch (err: any) {
       console.error('Failed to package xhs resources:', err);
