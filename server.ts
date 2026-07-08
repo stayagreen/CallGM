@@ -2298,6 +2298,88 @@ async function startServer() {
   });
 
   // Toggle is_published status for a video asset
+  app.post('/api/videos/upload', requireAuth, checkAccess, express.json({ limit: '500mb' }), async (req: any, res) => {
+    const user = req.session.user;
+    const userId = user.id;
+    const { videoUrl, videoBase64, filename, groupId } = req.body;
+
+    if (!videoUrl && !videoBase64) {
+      return res.status(400).json({ error: '必须提供 videoUrl 或 videoBase64' });
+    }
+
+    try {
+      // Prepare user video download directory and thumbnail directory
+      const userVideoDownloadDir = path.join(videoDownloadDir, userId.toString());
+      const userVideoThumbDir = path.join(videoThumbDir, userId.toString());
+
+      if (!fs.existsSync(userVideoDownloadDir)) fs.mkdirSync(userVideoDownloadDir, { recursive: true });
+      if (!fs.existsSync(userVideoThumbDir)) fs.mkdirSync(userVideoThumbDir, { recursive: true });
+
+      let targetFilename = filename || `video_${Date.now()}_${Math.floor(Math.random() * 1000)}.mp4`;
+      // Ensure safe filename
+      targetFilename = path.basename(targetFilename).replace(/[^a-zA-Z0-9_.-]/g, '_');
+      if (!path.extname(targetFilename)) {
+        targetFilename += '.mp4';
+      }
+
+      const finalPath = path.join(userVideoDownloadDir, targetFilename);
+
+      if (videoUrl) {
+        console.log(`[Video Upload] Downloading video from URL: ${videoUrl}`);
+        const response = await fetch(videoUrl);
+        if (!response.ok) {
+          throw new Error(`无法从指定的 URL 下载视频, 状态码: ${response.status}`);
+        }
+        const buffer = Buffer.from(await response.arrayBuffer());
+        fs.writeFileSync(finalPath, buffer);
+      } else if (videoBase64) {
+        console.log(`[Video Upload] Saving video from base64`);
+        const matches = videoBase64.match(/^data:video\/([a-zA-Z0-9+]+);base64,(.+)$/);
+        let buffer;
+        if (matches) {
+          buffer = Buffer.from(matches[2], 'base64');
+        } else {
+          // Try direct base64
+          buffer = Buffer.from(videoBase64, 'base64');
+        }
+        fs.writeFileSync(finalPath, buffer);
+      }
+
+      // Generate Thumbnail via FFmpeg
+      const thumbFilename = targetFilename.replace(/\.[^/.]+$/, ".jpg");
+      const thumbPath = path.join(userVideoThumbDir, thumbFilename);
+
+      try {
+        const { execa } = await import('execa');
+        await execa('ffmpeg', [
+          '-ss', '00:00:01.000',
+          '-i', finalPath,
+          '-vframes', '1',
+          '-q:v', '2',
+          '-y',
+          thumbPath
+        ]);
+        console.log(`[Video Upload] Generated thumbnail at: ${thumbPath}`);
+      } catch (thumbErr: any) {
+        console.error('[Video Upload] Thumbnail generation error:', thumbErr.message);
+      }
+
+      // Log asset to db
+      const relativePath = `${userId}/${targetFilename}`;
+      const parsedGroupId = (groupId !== undefined && groupId !== null) ? parseInt(groupId, 10) : null;
+      const targetGroupId = isNaN(parsedGroupId as number) ? null : parsedGroupId;
+
+      db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path, group_id) VALUES (?, ?, ?, ?)')
+        .run(userId, 'video', relativePath, targetGroupId);
+
+      res.json({ success: true, filename: targetFilename, relativePath });
+    } catch (err: any) {
+      console.error('[Video Upload] Failed to save/process uploaded video:', err);
+      res.status(500).json({ error: err.message || '上传并处理视频失败' });
+    }
+  });
+
+  // Toggle is_published status for a video asset
   app.post('/api/videos/toggle-published', requireAuth, checkAccess, (req: any, res) => {
     const { videoPath, isPublished } = req.body;
     if (!videoPath) return res.status(400).json({ error: 'Video path required' });

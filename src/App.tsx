@@ -1005,6 +1005,14 @@ function MainApp() {
   const [selectedUploadGroupId, setSelectedUploadGroupId] = useState<number | null>(null);
   const [movingAssetPath, setMovingAssetPath] = useState<string | null>(null);
   const [videoGallery, setVideoGallery] = useState<GalleryAsset[]>([]);
+  const [selectedVideoUploadGroupId, setSelectedVideoUploadGroupId] = useState<number | null>(null);
+  const [showVideoUploadMenu, setShowVideoUploadMenu] = useState(false);
+  const [showVideoUrlModal, setShowVideoUrlModal] = useState(false);
+  const [videoUrlInput, setVideoUrlInput] = useState('');
+  const [videoUploading, setVideoUploading] = useState(false);
+  const [videoUploadProgress, setVideoUploadProgress] = useState('');
+  const [isDragOverVideo, setIsDragOverVideo] = useState(false);
+  const videoFileInputRef = useRef<HTMLInputElement | null>(null);
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [imgZoom, setImgZoom] = useState<number>(1);
   const [imgOffset, setImgOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -1422,10 +1430,16 @@ function MainApp() {
       if (isGroupDropdownOpen && !(event.target as HTMLElement).closest('.group-filter-container')) {
         setIsGroupDropdownOpen(false);
       }
+      if (showVideoUploadMenu && !(event.target as HTMLElement).closest('.video-upload-menu-container')) {
+        setShowVideoUploadMenu(false);
+      }
+      if (isVideoGroupDropdownOpen && !(event.target as HTMLElement).closest('.video-group-filter-container')) {
+        setIsVideoGroupDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showUploadMenu, showGalleryUploadMenu, isGroupDropdownOpen]);
+  }, [showUploadMenu, showGalleryUploadMenu, isGroupDropdownOpen, showVideoUploadMenu, isVideoGroupDropdownOpen]);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -1787,6 +1801,76 @@ function MainApp() {
     }
   }, [viewingXhsNotes]);
 
+  const uploadVideoFile = async (file: File, groupId: number | null) => {
+    setVideoUploading(true);
+    setVideoUploadProgress('正在读取视频文件...');
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => resolve(ev.target?.result as string);
+        reader.onerror = (err) => reject(err);
+        reader.readAsDataURL(file);
+      });
+
+      setVideoUploadProgress('正在上传并处理视频（生成封面）...');
+      const response = await fetch('/api/videos/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoBase64: base64,
+          filename: file.name,
+          groupId: groupId
+        })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        fetchVideoGallery();
+      } else {
+        alert(data.error || '视频上传失败');
+      }
+    } catch (error: any) {
+      console.error('Video upload failed:', error);
+      alert('视频上传失败：' + (error.message || error));
+    } finally {
+      setVideoUploading(false);
+      setVideoUploadProgress('');
+    }
+  };
+
+  const downloadVideoFromUrl = async (url: string, groupId: number | null) => {
+    setVideoUploading(true);
+    setVideoUploadProgress('正在从指定网址下载视频...');
+    try {
+      const response = await fetch('/api/videos/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl: url,
+          groupId: groupId
+        })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        fetchVideoGallery();
+      } else {
+        alert(data.error || '视频网址导入失败');
+      }
+    } catch (error: any) {
+      console.error('Video import failed:', error);
+      alert('视频网址导入失败：' + (error.message || error));
+    } finally {
+      setVideoUploading(false);
+      setVideoUploadProgress('');
+    }
+  };
+
+  const handleVideoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length === 0) return;
+    await uploadVideoFile(files[0], selectedVideoUploadGroupId);
+    if (videoFileInputRef.current) videoFileInputRef.current.value = '';
+  };
+
   // Global paste handler when on Gallery tab to target-upload to active group
   useEffect(() => {
     const handleGlobalPaste = (e: ClipboardEvent) => {
@@ -1824,6 +1908,58 @@ function MainApp() {
       window.removeEventListener('paste', handleGlobalPaste);
     };
   }, [activeTab, selectedUploadGroupId]);
+
+  // Global paste handler when on Video Gallery tab to target-upload to active video group
+  useEffect(() => {
+    const handleGlobalVideoPaste = async (e: ClipboardEvent) => {
+      if (activeTab !== 'video_gallery') return;
+      
+      const target = e.target as HTMLElement;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+         target.tagName === 'TEXTAREA' ||
+         target.isContentEditable)
+      ) {
+        return;
+      }
+      
+      const items = e.clipboardData?.items;
+      const text = e.clipboardData?.getData('text');
+
+      // 1. If paste contains a video file
+      if (items) {
+        let hasVideo = false;
+        let videoFile: File | null = null;
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf('video') !== -1) {
+            hasVideo = true;
+            videoFile = items[i].getAsFile();
+            break;
+          }
+        }
+        if (hasVideo && videoFile) {
+          e.preventDefault();
+          await uploadVideoFile(videoFile, selectedVideoUploadGroupId);
+          return;
+        }
+      }
+
+      // 2. If paste contains text (potential video URL)
+      if (text && (text.startsWith('http://') || text.startsWith('https://'))) {
+        e.preventDefault();
+        const confirmDownload = window.confirm(`检测到剪贴板中的视频网址:\n${text}\n\n是否立即导入到当前视频库/视频组？`);
+        if (confirmDownload) {
+          await downloadVideoFromUrl(text, selectedVideoUploadGroupId);
+        }
+      }
+    };
+    
+    window.addEventListener('paste', handleGlobalVideoPaste);
+    return () => {
+      window.removeEventListener('paste', handleGlobalVideoPaste);
+    };
+  }, [activeTab, selectedVideoUploadGroupId]);
 
   // Polling for Xiaohongshu Publishing progress
   useEffect(() => {
@@ -4054,13 +4190,84 @@ function MainApp() {
       )}
 
       {activeTab === 'video_gallery' && (
-        <div className="space-y-6">
+        <div 
+          className="space-y-6 relative"
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragOverVideo(true);
+          }}
+          onDragLeave={() => setIsDragOverVideo(false)}
+          onDrop={async (e) => {
+            e.preventDefault();
+            setIsDragOverVideo(false);
+            const files = Array.from(e.dataTransfer.files) as File[];
+            const videoFile = files.find(f => f.type.startsWith('video/'));
+            if (videoFile) {
+              await uploadVideoFile(videoFile, selectedVideoUploadGroupId);
+            } else {
+              alert('拖放的文件不是有效的视频文件');
+            }
+          }}
+        >
+          {isDragOverVideo && (
+            <div className="absolute inset-0 bg-blue-50/85 backdrop-blur-sm border-4 border-dashed border-blue-500 rounded-2xl flex flex-col items-center justify-center z-50 pointer-events-none animate-fade-in">
+              <Upload className="w-16 h-16 text-blue-600 animate-bounce mb-3" />
+              <p className="text-xl font-bold text-blue-800">松开鼠标即可上传视频</p>
+              <p className="text-sm text-blue-600 mt-1">
+                目标：{selectedVideoUploadGroupId === null ? '未分类视频' : assetGroups.find(g => g.id === selectedVideoUploadGroupId)?.name || '未分类视频'}
+              </p>
+            </div>
+          )}
+
+          <input 
+            type="file" 
+            onChange={handleVideoFileChange} 
+            className="hidden" 
+            ref={videoFileInputRef} 
+            accept="video/*" 
+          />
+
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
                 <Film className="text-blue-600"/> 本地视频库
               </h2>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 items-center">
+                <div className="relative video-upload-menu-container">
+                  <button 
+                    onClick={() => setShowVideoUploadMenu(!showVideoUploadMenu)}
+                    className="px-4 py-2 text-sm font-medium bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Upload size={16} /> 上传 / 粘贴视频
+                  </button>
+                  {showVideoUploadMenu && (
+                    <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-2xl border border-gray-150 z-[1100] overflow-hidden py-1 text-left">
+                      <div className="px-4 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider bg-gray-50 border-b border-gray-100 mb-1">视频库上传与粘贴</div>
+                      <button 
+                        onClick={() => {
+                          videoFileInputRef.current?.click();
+                          setShowVideoUploadMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3 cursor-pointer"
+                      >
+                        <Upload size={18} className="text-gray-400" /> 选择本地视频文件
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setShowVideoUrlModal(true);
+                          setShowVideoUploadMenu(false);
+                        }}
+                        className="w-full text-left px-4 py-3 text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-3 cursor-pointer"
+                      >
+                        <Link size={18} className="text-gray-400" /> 导入视频 URL 链接
+                      </button>
+                      <div className="px-4 py-2 text-[11px] text-gray-500 border-t border-gray-100 bg-gray-50/50 mt-1 leading-relaxed">
+                        💡 提示：也可以在视频库页面直接按 <b>Ctrl+V</b> 粘贴剪贴板中的视频文件或视频网址
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <button 
                   onClick={() => {
                     setCreateGroupType('video');
@@ -4258,6 +4465,32 @@ function MainApp() {
               </div>
             </div>
 
+            {/* Video Paste and Upload Help Banner */}
+            <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-5 flex items-start gap-3.5 mb-6">
+              <span className="p-2 bg-blue-100 rounded-xl text-blue-600 shrink-0">
+                <Sparkles className="w-5 h-5" />
+              </span>
+              <div>
+                <p className="font-bold text-sm text-blue-955">💡 智能视频组粘贴与外部导入</p>
+                <p className="text-xs text-blue-700/80 leading-relaxed mt-1">
+                  点击下方任何一个<strong>【视频组】或【未分类视频】头部</strong>，即可将其激活高亮并设定为 📌 粘贴/上传目标。随后你可以在<strong>网页任何地方直接按 Ctrl+V 粘贴视频文件或视频网址</strong>，或者直接拖拽本地视频到当前页面中，视频都会被自动存入到指定的视频分类中！
+                </p>
+              </div>
+            </div>
+
+            {/* Video Upload Processing Progress */}
+            {videoUploading && (
+              <div className="bg-blue-50 border border-blue-150 rounded-2xl p-5 mb-6 flex items-center justify-between shadow-md animate-pulse">
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin shrink-0"></div>
+                  <div>
+                    <p className="font-bold text-sm text-blue-950">正在处理并上传您的视频...</p>
+                    <p className="text-xs text-blue-600 font-mono mt-0.5">{videoUploadProgress}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {videoGallery.length === 0 ? (
               <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
                 <Film className="w-16 h-16 mx-auto mb-4 text-gray-300" />
@@ -4396,29 +4629,47 @@ function MainApp() {
 
               const unassignedVideos = videoGallery.filter(vid => !vid.groupId || !assetGroups.some(g => g.id === vid.groupId));
               const isUnassignedCollapsed = !expandedVideoGroups.has('unassigned');
+              const isUnassignedSelected = selectedVideoUploadGroupId === null;
 
               return (
                 <div className="flex flex-col gap-6 w-full">
                   {/* Unassigned videos */}
-                  <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                  <div className={`bg-white border rounded-2xl shadow-sm overflow-hidden transition-all duration-250 ${isUnassignedSelected ? 'ring-2 ring-blue-500 border-blue-500 shadow-md' : 'border-gray-200'}`}>
                     <div 
                       onClick={() => {
+                        setSelectedVideoUploadGroupId(null);
                         const newSet = new Set(expandedVideoGroups);
-                        if (newSet.has('unassigned')) {
-                          newSet.delete('unassigned');
-                        } else {
-                          newSet.add('unassigned');
-                        }
+                        newSet.add('unassigned');
                         setExpandedVideoGroups(newSet);
                       }}
-                      className="bg-gray-50 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-200 hover:bg-gray-100 transition"
+                      className={`px-6 py-4 cursor-pointer flex justify-between items-center border-b transition-all duration-250 ${isUnassignedSelected ? 'bg-blue-50/80 border-blue-100' : 'bg-gray-50 border-gray-200 hover:bg-gray-100'}`}
                     >
                       <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                        <Folder className="w-5 h-5 text-gray-400" />
+                        <Folder className={`w-5 h-5 ${isUnassignedSelected ? 'text-blue-600' : 'text-gray-400'}`} />
                         <span>未分类视频</span>
                         <span className="bg-blue-100 text-blue-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">{unassignedVideos.length} 个视频</span>
+                        {isUnassignedSelected && (
+                          <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded animate-pulse shadow-sm">
+                            📌 当前粘贴/上传目标
+                          </span>
+                        )}
                       </h3>
-                      {isUnassignedCollapsed ? <ChevronDown size={20} className="text-gray-500" /> : <ChevronUp size={20} className="text-gray-500" />}
+                      <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => {
+                            const newSet = new Set(expandedVideoGroups);
+                            if (newSet.has('unassigned')) {
+                              newSet.delete('unassigned');
+                            } else {
+                              newSet.add('unassigned');
+                            }
+                            setExpandedVideoGroups(newSet);
+                          }}
+                          className="p-1.5 rounded-md hover:bg-gray-200/50 text-gray-500 transition-colors cursor-pointer"
+                        >
+                          {isUnassignedCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
+                        </button>
+                      </div>
                     </div>
                     
                     {!isUnassignedCollapsed && (
@@ -4442,25 +4693,28 @@ function MainApp() {
                     .map(grp => {
                       const grpVideos = videoGallery.filter(vid => vid.groupId === grp.id);
                       const isCollapsed = !expandedVideoGroups.has(grp.id);
+                      const isSelected = selectedVideoUploadGroupId === grp.id;
                       
                       return (
-                        <div key={grp.id} className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+                        <div key={grp.id} className={`bg-white border rounded-2xl shadow-sm overflow-hidden transition-all duration-250 ${isSelected ? 'ring-2 ring-blue-500 border-blue-500 shadow-md' : 'border-gray-200'}`}>
                           <div 
                             onClick={() => {
+                              setSelectedVideoUploadGroupId(grp.id);
                               const newSet = new Set(expandedVideoGroups);
-                              if (newSet.has(grp.id)) {
-                                newSet.delete(grp.id);
-                              } else {
-                                newSet.add(grp.id);
-                              }
+                              newSet.add(grp.id);
                               setExpandedVideoGroups(newSet);
                             }}
-                            className="bg-blue-50/10 px-6 py-4 cursor-pointer flex justify-between items-center border-b border-gray-100 hover:bg-blue-50/20 transition"
+                            className={`px-6 py-4 cursor-pointer flex justify-between items-center border-b transition-all duration-250 ${isSelected ? 'bg-blue-50/80 border-blue-100' : 'bg-blue-50/10 border-gray-100 hover:bg-blue-50/20'}`}
                           >
                             <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                              <Folder className="w-5 h-5 text-blue-500" />
+                              <Folder className={`w-5 h-5 ${isSelected ? 'text-blue-600' : 'text-blue-500'}`} />
                               <span>{grp.name}</span>
                               <span className="bg-blue-100 text-blue-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">{grpVideos.length} 个视频</span>
+                              {isSelected && (
+                                <span className="text-[10px] bg-blue-600 text-white font-bold px-2 py-0.5 rounded animate-pulse shadow-sm">
+                                  📌 当前粘贴/上传目标
+                                </span>
+                              )}
                             </h3>
                             <div className="flex items-center gap-4" onClick={e => e.stopPropagation()}>
                               <button
@@ -4478,9 +4732,20 @@ function MainApp() {
                               >
                                 <Trash2 size={16} />
                               </button>
-                              <div className="text-gray-400">
+                              <button
+                                onClick={() => {
+                                  const newSet = new Set(expandedVideoGroups);
+                                  if (newSet.has(grp.id)) {
+                                    newSet.delete(grp.id);
+                                  } else {
+                                    newSet.add(grp.id);
+                                  }
+                                  setExpandedVideoGroups(newSet);
+                                }}
+                                className="p-1.5 rounded-md hover:bg-gray-200/50 text-gray-500 transition-colors cursor-pointer"
+                              >
                                 {isCollapsed ? <ChevronDown size={20} /> : <ChevronUp size={20} />}
-                              </div>
+                              </button>
                             </div>
                           </div>
                           
@@ -4512,6 +4777,90 @@ function MainApp() {
               );
             })()}
           </div>
+
+          {showVideoUrlModal && (
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[1150] animate-fade-in">
+              <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-gray-150 p-6 space-y-4 text-gray-800">
+                <div className="flex justify-between items-center pb-2 border-b border-gray-100">
+                  <h3 className="text-lg font-bold text-gray-900 flex items-center gap-1.5">
+                    <Link className="w-5 h-5 text-blue-600 animate-pulse" />
+                    导入视频 URL 网址
+                  </h3>
+                  <button 
+                    onClick={() => {
+                      setShowVideoUrlModal(false);
+                      setVideoUrlInput('');
+                    }}
+                    className="p-1 rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                    目标视频组
+                  </label>
+                  <div className="p-3 bg-gray-50 border border-gray-150 rounded-xl flex items-center gap-2 text-sm font-semibold text-gray-700">
+                    <Folder className="w-4 h-4 text-blue-600 animate-bounce" />
+                    <span>
+                      {selectedVideoUploadGroupId === null 
+                        ? '未分类视频 (默认)' 
+                        : assetGroups.find(g => g.id === selectedVideoUploadGroupId)?.name || '未分类视频'
+                      }
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider">
+                    视频链接地址 (MP4/WebM)
+                  </label>
+                  <input
+                    type="url"
+                    value={videoUrlInput}
+                    onChange={(e) => setVideoUrlInput(e.target.value)}
+                    placeholder="https://example.com/video.mp4"
+                    className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm font-medium transition"
+                  />
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    请输入可直接指向视频文件的完整下载 URL 地址（支持 mp4 或 webm 格式）。
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowVideoUrlModal(false);
+                      setVideoUrlInput('');
+                    }}
+                    className="px-4 py-2.5 text-sm font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition cursor-pointer"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!videoUrlInput.trim()}
+                    onClick={async () => {
+                      const url = videoUrlInput.trim();
+                      if (!url) return;
+                      setShowVideoUrlModal(false);
+                      setVideoUrlInput('');
+                      await downloadVideoFromUrl(url, selectedVideoUploadGroupId);
+                    }}
+                    className={`px-5 py-2.5 text-sm font-bold text-white rounded-xl transition cursor-pointer flex items-center gap-1.5 ${
+                      videoUrlInput.trim() 
+                        ? 'bg-blue-600 hover:bg-blue-700 shadow-md' 
+                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    开始导入
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
