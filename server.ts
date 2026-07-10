@@ -1021,7 +1021,7 @@ async function startServer() {
   });
 
 
-  // Normal Pristine Video Downloader (Untouched, High-Quality MP4)
+  // Apple Style Video Repackager & Downloader (On-The-Fly MOV + iPhone Metadata)
   app.get("/api/video/download-apple", requireAuth, checkAccess, async (req: any, res) => {
     const user = req.session.user;
     const { videoPath } = req.query;
@@ -1038,13 +1038,16 @@ async function startServer() {
       }
     }
 
+    const { execa } = await import('execa');
+    const os = await import('os');
+
     const fullPath = path.join(videoDownloadDir, videoPath);
 
     if (!fs.existsSync(fullPath)) {
       return res.status(404).json({ error: "视频文件不存在！" });
     }
 
-    // Generate mp4 filename based on the job ID or file creation time
+    // Generate Apple style filename based on the job ID or file creation time
     const baseName = path.basename(videoPath, '.mp4');
     const jobIdNum = Number(baseName);
     const creationDate = !isNaN(jobIdNum) ? new Date(jobIdNum) : new Date(fs.statSync(fullPath).birthtimeMs || Date.now());
@@ -1056,11 +1059,68 @@ async function startServer() {
     const hh = pad(creationDate.getHours());
     const min = pad(creationDate.getMinutes());
     const ss = pad(creationDate.getSeconds());
-    const mp4Filename = `IMG_${yyyy}${mm}${dd}_${hh}${min}${ss}.mp4`;
+    const appleFilename = `IMG_${yyyy}${mm}${dd}_${hh}${min}${ss}.MOV`;
 
-    res.setHeader('Content-Disposition', `attachment; filename="${mp4Filename}"`);
-    res.setHeader('Content-Type', 'video/mp4');
-    res.sendFile(fullPath);
+    // Timezone offset for creationdate metadata (e.g., +08:00 or -07:00)
+    const offsetMinutes = -creationDate.getTimezoneOffset();
+    const offsetSign = offsetMinutes >= 0 ? '+' : '-';
+    const offsetHours = pad(Math.floor(Math.abs(offsetMinutes) / 60));
+    const offsetMins = pad(Math.abs(offsetMinutes) % 60);
+    const tzOffsetStr = `${offsetSign}${offsetHours}:${offsetMins}`;
+
+    // Format: 2026-07-04T10:28:54+08:00
+    const creationDateStr = `${yyyy}-${mm}-${dd}T${hh}:${min}:${ss}${tzOffsetStr}`;
+
+    const tempMovPath = path.join(os.tmpdir(), `apple_${Date.now()}_${Math.floor(Math.random() * 10000)}.mov`);
+
+    try {
+      // Repackage to QuickTime MOV with stream copy and inject Apple camera metadata
+      await execa('ffmpeg', [
+        '-y',
+        '-i', fullPath,
+        '-c', 'copy',
+        '-map_metadata', '-1',
+        '-movflags', 'use_metadata_tags+faststart',
+        '-metadata', `creation_time=${creationDate.toISOString()}`,
+        '-metadata:g', 'com.apple.quicktime.make=Apple',
+        '-metadata:g', 'com.apple.quicktime.model=iPhone 17 Pro Max',
+        '-metadata:g', 'com.apple.quicktime.software=19.5',
+        '-metadata:g', `com.apple.quicktime.creationdate=${creationDateStr}`,
+        '-metadata:g', 'com.apple.quicktime.lens.make=Apple',
+        '-metadata:g', 'com.apple.quicktime.lens.model=iPhone 17 Pro Max back triple camera 6.86mm f/1.9',
+        '-metadata:g', 'com.apple.quicktime.lens.specification=13-120mm f/1.78-2.8',
+        '-f', 'mov',
+        tempMovPath
+      ]);
+
+      res.setHeader('Content-Disposition', `attachment; filename="${appleFilename}"`);
+      res.setHeader('Content-Type', 'video/quicktime');
+
+      res.sendFile(tempMovPath, (err) => {
+        try {
+          if (fs.existsSync(tempMovPath)) {
+            fs.unlinkSync(tempMovPath);
+          }
+        } catch (cleanupErr) {
+          console.error('[AppleDownload] Failed to clean up temp mov file:', cleanupErr);
+        }
+        if (err) {
+          console.error('[AppleDownload] File sending error:', err);
+        }
+      });
+
+    } catch (ffmpegErr: any) {
+      console.error('[AppleDownload] FFmpeg packaging failed, falling back to direct MP4 download:', ffmpegErr.message);
+      try {
+        if (fs.existsSync(tempMovPath)) {
+          fs.unlinkSync(tempMovPath);
+        }
+      } catch (e) {}
+
+      res.setHeader('Content-Disposition', `attachment; filename="${appleFilename.replace('.MOV', '.mp4')}"`);
+      res.setHeader('Content-Type', 'video/mp4');
+      res.sendFile(fullPath);
+    }
   });
 
   // Video Jobs API
