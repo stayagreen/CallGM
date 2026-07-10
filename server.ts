@@ -2970,6 +2970,247 @@ ${content || ''}${formattedTags}
     }
   });
 
+  // Batch pack and download Xiaohongshu notes for selected videos
+  app.post('/api/videos/xhs/download-batch', requireAuth, checkAccess, async (req: any, res) => {
+    const { videoPaths } = req.body;
+    if (!videoPaths || !Array.isArray(videoPaths) || videoPaths.length === 0) {
+      return res.status(400).json({ error: '必须选择至少一个视频进行打包下载' });
+    }
+
+    try {
+      const tempFilename = `xhs_batch_${Date.now()}_${Math.random().toString(36).substring(2, 10)}.zip`;
+      const tempFilePath = path.join(tempZipsDir, tempFilename);
+
+      console.log(`📦 [XHS Batch Pack] Writing batch zip package to: ${tempFilePath}`);
+      const output = fs.createWriteStream(tempFilePath);
+      const archive = new ZipArchive({ zlib: { level: 0 } });
+      archive.pipe(output);
+
+      let totalAdded = 0;
+
+      // Helper function to recursively find a file within a directory tree
+      const findFileRecursive = (base: string, targetName: string): string => {
+        if (!fs.existsSync(base)) return '';
+        const items = fs.readdirSync(base);
+        for (const item of items) {
+          const full = path.join(base, item);
+          try {
+            if (fs.statSync(full).isDirectory()) {
+              const found = findFileRecursive(full, targetName);
+              if (found) return found;
+            } else {
+              if (item === targetName) {
+                return full;
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+        return '';
+      };
+
+      const zipPromise = new Promise<void>((resolve, reject) => {
+        output.on('close', () => {
+          resolve();
+        });
+        archive.on('error', (err) => {
+          reject(err);
+        });
+        output.on('error', (err) => {
+          reject(err);
+        });
+      });
+
+      for (let i = 0; i < videoPaths.length; i++) {
+        const videoPath = videoPaths[i];
+        const dbPath1 = videoPath;
+        const dbPath2 = videoPath.replace(/\//g, '\\');
+        
+        // Look up in database
+        const asset = db.prepare('SELECT assets.*, tasks.data AS task_data FROM assets LEFT JOIN tasks ON assets.job_id = tasks.id WHERE assets.file_path = ? OR assets.file_path = ?').get(dbPath1, dbPath2) as any;
+        
+        let title = '';
+        let content = '';
+        let tags = '';
+        let coverPath = '';
+
+        if (asset && asset.task_data) {
+          try {
+            const taskData = JSON.parse(asset.task_data);
+            title = taskData.xhsTitle || '';
+            content = taskData.xhsContent || '';
+            tags = taskData.xhsTags || '';
+            coverPath = taskData.xhsCoverImage || '';
+          } catch (e) {}
+        }
+
+        // Resolve video path
+        let fullVideoPath = '';
+        const cleanVideo = videoPath.split('?')[0];
+        
+        if (cleanVideo.startsWith('/downloads/')) {
+          fullVideoPath = path.join(downloadDir, cleanVideo.substring('/downloads/'.length));
+        } else if (cleanVideo.startsWith('/uploads/')) {
+          fullVideoPath = path.join(uploadsDir, cleanVideo.substring('/uploads/'.length));
+        } else if (cleanVideo.startsWith('downloads/')) {
+          fullVideoPath = path.join(downloadDir, cleanVideo.substring('downloads/'.length));
+        } else if (cleanVideo.startsWith('uploads/')) {
+          fullVideoPath = path.join(uploadsDir, cleanVideo.substring('uploads/'.length));
+        } else {
+          const pathsToTry = [
+            path.join(videoDownloadDir, cleanVideo),
+            path.join(downloadDir, cleanVideo),
+            path.join(uploadsDir, cleanVideo),
+            path.join(videoDownloadDir, path.basename(cleanVideo)),
+            path.join(downloadDir, path.basename(cleanVideo)),
+            path.join(uploadsDir, path.basename(cleanVideo)),
+          ];
+
+          for (const p of pathsToTry) {
+            if (fs.existsSync(p)) {
+              fullVideoPath = p;
+              break;
+            }
+          }
+
+          if (!fullVideoPath || !fs.existsSync(fullVideoPath)) {
+            const baseName = path.basename(cleanVideo);
+            let foundPath = findFileRecursive(videoDownloadDir, baseName);
+            if (!foundPath) foundPath = findFileRecursive(downloadDir, baseName);
+            if (!foundPath) foundPath = findFileRecursive(uploadsDir, baseName);
+
+            if (foundPath) {
+              fullVideoPath = foundPath;
+            }
+          }
+        }
+
+        const videoExists = fullVideoPath && fs.existsSync(fullVideoPath);
+        
+        // Determine folder name for this note in the ZIP
+        const origBasename = path.basename(cleanVideo, path.extname(cleanVideo));
+        const sanitizedTitle = (title || origBasename).replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '_').substring(0, 30);
+        const subfolderName = `${i + 1}_${sanitizedTitle}`;
+
+        if (videoExists) {
+          const videoExt = path.extname(fullVideoPath) || '.mp4';
+          archive.file(fullVideoPath, { name: `${subfolderName}/视频_${origBasename}${videoExt}` });
+          totalAdded++;
+        }
+
+        // Resolve cover path
+        let coverExists = false;
+        let fullCoverPath = '';
+        let coverBase64Buffer: Buffer | null = null;
+        let coverBase64Ext = '';
+
+        if (coverPath) {
+          if (coverPath.startsWith('data:image')) {
+            const matches = coverPath.match(/^data:image\/([a-zA-Z0-9]+);base64,(.+)$/);
+            if (matches) {
+              coverBase64Ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+              coverBase64Buffer = Buffer.from(matches[2], 'base64');
+              coverExists = true;
+            }
+          } else {
+            const cleanCover = coverPath.split('?')[0];
+            
+            if (cleanCover.startsWith('/downloads/')) {
+              fullCoverPath = path.join(downloadDir, cleanCover.substring('/downloads/'.length));
+            } else if (cleanCover.startsWith('/uploads/')) {
+              fullCoverPath = path.join(uploadsDir, cleanCover.substring('/uploads/'.length));
+            } else if (cleanCover.startsWith('downloads/')) {
+              fullCoverPath = path.join(downloadDir, cleanCover.substring('downloads/'.length));
+            } else if (cleanCover.startsWith('uploads/')) {
+              fullCoverPath = path.join(uploadsDir, cleanCover.substring('uploads/'.length));
+            } else {
+              const pathsToTry = [
+                path.join(downloadDir, cleanCover),
+                path.join(uploadsDir, cleanCover),
+                path.join(downloadDir, path.basename(cleanCover)),
+                path.join(uploadsDir, path.basename(cleanCover)),
+              ];
+
+              for (const p of pathsToTry) {
+                if (fs.existsSync(p)) {
+                  fullCoverPath = p;
+                  break;
+                }
+              }
+
+              if (!fullCoverPath || !fs.existsSync(fullCoverPath)) {
+                const baseName = path.basename(cleanCover);
+                let foundPath = findFileRecursive(downloadDir, baseName);
+                if (!foundPath) foundPath = findFileRecursive(uploadsDir, baseName);
+                if (foundPath) {
+                  fullCoverPath = foundPath;
+                }
+              }
+            }
+
+            if (fullCoverPath && fs.existsSync(fullCoverPath)) {
+              coverExists = true;
+            }
+          }
+        }
+
+        if (coverExists) {
+          if (coverBase64Buffer) {
+            archive.append(coverBase64Buffer, { name: `${subfolderName}/小红书封面.${coverBase64Ext}` });
+          } else {
+            const imgExt = path.extname(fullCoverPath) || '.jpg';
+            archive.file(fullCoverPath, { name: `${subfolderName}/小红书封面${imgExt}` });
+          }
+          totalAdded++;
+        }
+
+        // Add TXT file
+        let formattedTags = '';
+        if (tags) {
+          const parsedTags = tags
+            .split(/[\s,#，]+/)
+            .map((t: string) => t.trim())
+            .filter((t: string) => t.length > 0)
+            .map((t: string) => t.startsWith('#') ? t : `#${t}`)
+            .join('  ');
+          if (parsedTags) {
+            formattedTags = '\n\n' + parsedTags;
+          }
+        }
+
+        const txtContent = `【小红书笔记标题】
+${title || '（暂无标题）'}
+
+【小红书笔记正文】
+${content || '（暂无正文）'}${formattedTags}
+`;
+        const txtBuffer = Buffer.from(txtContent, 'utf-8');
+        archive.append(txtBuffer, { name: `${subfolderName}/小红书文案与标题.txt` });
+        totalAdded++;
+      }
+
+      if (totalAdded === 0) {
+        archive.abort();
+        return res.status(404).json({ error: '没有找到任何视频或文件资源可以打包' });
+      }
+
+      archive.finalize();
+      await zipPromise;
+
+      res.json({
+        success: true,
+        downloadUrl: `/api/videos/xhs/download-zip?file=${tempFilename}&name=${encodeURIComponent(`xhs_batch_download_${Date.now()}.zip`)}`
+      });
+
+    } catch (err: any) {
+      console.error('Failed to package batch videos:', err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: `批量打包失败: ${err.message || err}` });
+      }
+    }
+  });
+
   // Download the pre-packaged zip and delete it after downloading
   app.get('/api/videos/xhs/download-zip', requireAuth, checkAccess, (req: any, res) => {
     const { file, name } = req.query;

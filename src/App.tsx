@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Minus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search, Music, Cpu } from 'lucide-react';
+import { Plus, Minus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search, Music, Cpu, CheckSquare, Square } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -1011,6 +1011,9 @@ function MainApp() {
   const [selectedUploadGroupId, setSelectedUploadGroupId] = useState<number | null>(null);
   const [movingAssetPath, setMovingAssetPath] = useState<string | null>(null);
   const [videoGallery, setVideoGallery] = useState<GalleryAsset[]>([]);
+  const [isBatchSelectMode, setIsBatchSelectMode] = useState(false);
+  const [selectedVideoPaths, setSelectedVideoPaths] = useState<string[]>([]);
+  const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [selectedVideoUploadGroupId, setSelectedVideoUploadGroupId] = useState<number | null>(null);
   const [showVideoUploadMenu, setShowVideoUploadMenu] = useState(false);
   const [showVideoUrlModal, setShowVideoUrlModal] = useState(false);
@@ -1418,6 +1421,55 @@ function MainApp() {
       alert(e.message || '打包下载失败，请重试');
     } finally {
       setIsPackagingZip(false);
+    }
+  };
+
+  const handleBatchDownloadXhsPackage = async () => {
+    if (selectedVideoPaths.length === 0) {
+      alert('请先选择至少一个视频进行打包下载');
+      return;
+    }
+    
+    setIsBatchDownloading(true);
+    try {
+      const response = await fetch('/api/videos/xhs/download-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoPaths: selectedVideoPaths })
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        let errMsg = '批量打包下载失败';
+        try {
+          const errData = JSON.parse(text);
+          errMsg = errData.error || errMsg;
+        } catch (_) {
+          errMsg = text || errMsg;
+        }
+        throw new Error(errMsg);
+      }
+
+      const data = await response.json();
+      if (!data.downloadUrl) {
+        throw new Error('未返回下载链接');
+      }
+
+      const a = document.createElement('a');
+      a.href = data.downloadUrl;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      // Successfully downloaded, clear selections and exit batch select mode
+      setSelectedVideoPaths([]);
+      setIsBatchSelectMode(false);
+    } catch (e: any) {
+      console.error(e);
+      alert(e.message || '批量打包下载失败，请重试');
+    } finally {
+      setIsBatchDownloading(false);
     }
   };
 
@@ -4352,8 +4404,73 @@ function MainApp() {
                 >
                   刷新视频库
                 </button>
+                <button 
+                  onClick={() => {
+                    setIsBatchSelectMode(!isBatchSelectMode);
+                    setSelectedVideoPaths([]);
+                  }}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg transition shadow-sm flex items-center gap-1.5 cursor-pointer ${
+                    isBatchSelectMode 
+                      ? 'bg-purple-600 text-white hover:bg-purple-700' 
+                      : 'bg-white border border-gray-200 text-purple-700 hover:bg-purple-50 hover:border-purple-200'
+                  }`}
+                  title="批量选择视频打包下载笔记、封面及文案"
+                >
+                  <CheckSquare size={16} />
+                  <span>{isBatchSelectMode ? '退出批量选择' : '批量打包笔记'}</span>
+                </button>
               </div>
             </div>
+
+            {isBatchSelectMode && (
+              <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-150 rounded-2xl p-5 mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 animate-fade-in shadow-inner">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-purple-100 rounded-xl text-purple-700">
+                    <CheckSquare className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-purple-950">批量打包下载模式</h4>
+                    <p className="text-xs text-purple-700 mt-0.5 font-medium">
+                      已选择 <span className="font-black text-base px-1 text-purple-900">{selectedVideoPaths.length}</span> 个视频笔记资源（包含视频、封面及文案）
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto justify-end">
+                  <button
+                    onClick={() => {
+                      const visiblePaths = videoGallery.map(v => v.path);
+                      setSelectedVideoPaths(visiblePaths);
+                    }}
+                    className="px-3.5 py-2 text-xs font-bold bg-white border border-purple-200 text-purple-800 rounded-xl hover:bg-purple-100 transition cursor-pointer shadow-sm"
+                  >
+                    全部选择 ({videoGallery.length})
+                  </button>
+                  <button
+                    onClick={() => setSelectedVideoPaths([])}
+                    className="px-3.5 py-2 text-xs font-bold bg-white border border-gray-200 text-gray-700 rounded-xl hover:bg-gray-100 transition cursor-pointer shadow-sm"
+                  >
+                    清除选择
+                  </button>
+                  <button
+                    onClick={handleBatchDownloadXhsPackage}
+                    disabled={selectedVideoPaths.length === 0 || isBatchDownloading}
+                    className="px-4 py-2 text-xs font-bold bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl transition shadow-md flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {isBatchDownloading ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <span>打包中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download size={14} />
+                        <span>打包下载笔记资源</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Searchable Multi-Select Dropdown for Video Groups */}
             <div className="bg-white border border-gray-150 rounded-2xl p-5 shadow-sm space-y-3 mb-6">
@@ -4541,157 +4658,243 @@ function MainApp() {
               </div>
             )}
 
-            {videoGallery.length === 0 ? (
-              <div className="text-center py-16 text-gray-500 bg-white rounded-2xl border border-gray-200 border-dashed">
-                <Film className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-                <p className="text-lg font-medium text-gray-600">暂无视频</p>
-              </div>
-            ) : (() => {
+            {(() => {
               const renderVideoItem = (vidData: GalleryAsset) => {
                 const vid = vidData.path;
+                const isSelected = selectedVideoPaths.includes(vid);
+                const toggleSelectVideo = (path: string) => {
+                  setSelectedVideoPaths(prev => {
+                    if (prev.includes(path)) {
+                      return prev.filter(p => p !== path);
+                    } else {
+                      return [...prev, path];
+                    }
+                  });
+                };
+
                 return (
-                  <div key={vid} className="group relative bg-white p-2 rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all">
-                    <div onClick={() => setViewingVideo(`/downloads/videos/${vid}`)} className="block aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer">
-                      <img src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} alt={vid} className="w-full h-full object-fill group-hover:scale-105 transition-transform duration-300 bg-gray-100" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                  <div 
+                    key={vid} 
+                    className={`group relative bg-white p-2.5 rounded-xl border transition-all duration-200 flex gap-3 ${
+                      isBatchSelectMode && isSelected
+                        ? 'border-purple-500 ring-2 ring-purple-500/30 shadow-md'
+                        : 'border-gray-200 shadow-sm hover:shadow-md'
+                    }`}
+                  >
+                    {/* Left: Cover Image Container */}
+                    <div 
+                      onClick={() => {
+                        if (isBatchSelectMode) {
+                          toggleSelectVideo(vid);
+                        } else {
+                          setViewingVideo(`/downloads/videos/${vid}`);
+                        }
+                      }} 
+                      className="w-24 sm:w-28 shrink-0 aspect-[9/16] overflow-hidden rounded-lg bg-gray-100 relative cursor-pointer shadow-inner"
+                    >
+                      <img 
+                        src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} 
+                        alt={vid} 
+                        className="w-full h-full object-fill group-hover:scale-105 transition-transform duration-300 bg-gray-100" 
+                        loading="lazy" 
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+                      />
+                      
                       {vidData.resolutionTag && (
-                        <div className={`absolute top-2 left-2 z-10 px-2 py-0.5 rounded text-[10px] font-bold text-white shadow-sm pointer-events-none uppercase tracking-wider ${
-                          vidData.resolutionTag === '4K' ? 'bg-red-600/90' :
-                          vidData.resolutionTag === '2K' ? 'bg-blue-600/90' :
-                          'bg-gray-700/80'
+                        <div className={`absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded text-[9px] font-bold text-white shadow-sm pointer-events-none uppercase tracking-wider ${
+                          vidData.resolutionTag.toUpperCase().includes('1080P') || vidData.resolutionTag.toUpperCase().includes('4K')
+                            ? 'bg-emerald-600/90' : 'bg-blue-600/90'
                         }`}>
                           {vidData.resolutionTag}
                         </div>
                       )}
+
+                      {/* Batch Selection Checkbox overlay */}
+                      {isBatchSelectMode && (
+                        <div className="absolute top-1.5 right-1.5 z-30">
+                          {isSelected ? (
+                            <div className="p-1 bg-purple-600 rounded-lg text-white shadow-md border border-purple-500">
+                              <CheckSquare className="w-4 h-4" />
+                            </div>
+                          ) : (
+                            <div className="p-1 bg-black/50 hover:bg-black/70 rounded-lg text-white/85 shadow-md border border-white/20">
+                              <Square className="w-4 h-4" />
+                            </div>
+                          )}
+                        </div>
+                      )}
                       
-                      {/* Published Status Badge Toggle */}
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          const nextPublished = vidData.isPublished ? 0 : 1;
-                          try {
-                            const res = await fetch('/api/videos/toggle-published', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ videoPath: vidData.path, isPublished: nextPublished === 1 })
-                            });
-                            if (res.ok) {
-                              fetchVideoGallery();
-                            }
-                          } catch (err) {
-                            console.error('Failed to toggle published status:', err);
-                          }
-                        }}
-                        className={`absolute bottom-2 left-2 z-20 px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer select-none border backdrop-blur-sm ${
-                          vidData.isPublished 
-                            ? 'bg-emerald-600 border-emerald-500 text-white hover:bg-emerald-700' 
-                            : 'bg-black/60 border-white/20 text-white/90 hover:bg-black/80 hover:text-white'
-                        }`}
-                        title={vidData.isPublished ? "已标记发布：点击标记为未发布" : "未标记发布：点击标记为已发布"}
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full ${vidData.isPublished ? 'bg-white animate-pulse' : 'bg-gray-400'}`}></span>
-                        <span>{vidData.isPublished ? '已发布' : '未发布'}</span>
-                      </button>
-
-                      <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-                        <PlayCircle className="w-12 h-12 text-white opacity-80 group-hover:opacity-100 transition-opacity drop-shadow-md" />
-                      </div>
+                      {/* Play Icon Overlay */}
+                      {!isBatchSelectMode && (
+                        <div className="absolute inset-0 bg-black/10 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                          <PlayCircle className="w-9 h-9 text-white opacity-85 group-hover:opacity-100 transition-opacity drop-shadow-md" />
+                        </div>
+                      )}
                     </div>
-                    <div className="mt-3 px-1">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-gray-500 truncate pr-2 font-medium" title={vid}>{vid.split('/').pop()}</span>
-                        <div className="flex items-center gap-1 relative">
-                          <button
-                            onClick={() => {
-                              fetchGallery();
-                              setViewingXhsNotes({ videoId: vidData.path, jobId: vidData.jobId, taskData: vidData.taskData || {} as VideoTask });
-                            }}
-                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors animate-pulse"
-                            title="小红书配置"
-                          >
-                            <Target className="w-4 h-4" />
-                          </button>
 
-                          <button
-                            onClick={() => {
-                              setCroppingVideo(vidData);
-                            }}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors animate-fade-in"
-                            title="裁剪视频"
-                          >
-                            <Crop className="w-4 h-4" />
-                          </button>
+                    {/* Right: Details & Operations Container */}
+                    <div className="flex-1 min-w-0 flex flex-col justify-between py-1">
+                      <div className="space-y-1.5">
+                        <div className="text-xs font-bold text-gray-850 line-clamp-2 break-all leading-snug" title={vid}>
+                          {vid.split('/').pop()}
+                        </div>
 
+                        {vidData.createdAt && (
+                          <div className="flex items-center gap-1 text-[10px] text-gray-400 font-medium">
+                            <Clock size={9} />
+                            {(() => {
+                              const d = new Date(vidData.createdAt.endsWith('Z') ? vidData.createdAt : vidData.createdAt.replace(' ', 'T') + 'Z');
+                              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                            })()}
+                          </div>
+                        )}
+
+                        {/* Published Status Badge */}
+                        {!isBatchSelectMode && (
                           <button
-                            onClick={() => {
-                              setChangingBgmVideo(vidData);
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const nextPublished = vidData.isPublished ? 0 : 1;
+                              try {
+                                const res = await fetch('/api/videos/toggle-published', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ videoPath: vidData.path, isPublished: nextPublished === 1 })
+                                });
+                                if (res.ok) {
+                                  fetchVideoGallery();
+                                }
+                              } catch (err) {
+                                console.error('Failed to toggle published status:', err);
+                              }
                             }}
-                            className="p-1.5 text-purple-650 hover:bg-purple-50 rounded-md transition-colors animate-fade-in"
-                            title="更换背景音乐"
+                            className={`inline-flex px-2 py-0.5 rounded text-[9px] font-bold items-center gap-1 transition cursor-pointer select-none border ${
+                              vidData.isPublished 
+                                ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100' 
+                                : 'bg-gray-50 border-gray-250 text-gray-500 hover:bg-gray-100'
+                            }`}
+                            title={vidData.isPublished ? "已标记发布：点击标记为未发布" : "未标记发布：点击标记为已发布"}
                           >
-                            <Music className="w-4 h-4" />
+                            <span className={`w-1 h-1 rounded-full ${vidData.isPublished ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`}></span>
+                            <span>{vidData.isPublished ? '已发布' : '未发布'}</span>
                           </button>
-                          
-                          {/* Move to video group */}
+                        )}
+                      </div>
+
+                      {/* Action buttons on the right of the cover image */}
+                      <div className="mt-2 pt-2 border-t border-gray-100">
+                        {isBatchSelectMode ? (
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setMovingAssetPath(movingAssetPath === vid ? null : vid);
+                              toggleSelectVideo(vid);
                             }}
-                            className={`p-1.5 rounded-md transition-colors relative ${movingAssetPath === vid ? 'text-blue-700 bg-blue-100' : 'text-amber-650 hover:bg-amber-50'}`}
-                            title="移动到视频组"
+                            className={`w-full py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition select-none flex items-center justify-center gap-1 border ${
+                              isSelected
+                                ? 'bg-purple-100 text-purple-700 border-purple-200'
+                                : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-purple-50 hover:text-purple-650 hover:border-purple-200'
+                            }`}
                           >
-                            <Folder className="w-4 h-4" />
-                            
-                            {movingAssetPath === vid && (
-                              <div 
-                                className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden py-1 text-left" 
-                                onClick={e => e.stopPropagation()}
-                              >
-                                <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 border-b border-gray-100 uppercase bg-gray-50 flex items-center gap-1">
-                                  <Folder size={10} /> 移动至视频组...
-                                </div>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); handleMoveToGroup(vid, null, 'video'); }}
-                                  className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 ${!vidData.groupId ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-600 hover:bg-blue-50'}`}
-                                >
-                                  <Folder size={12} className={!vidData.groupId ? "text-blue-600" : "text-gray-400"} /> 未分组 (默认)
-                                </button>
-                                {assetGroups.filter(g => g.type === 'video').map(grp => (
-                                  <button
-                                    key={grp.id}
-                                    onClick={(e) => { e.stopPropagation(); handleMoveToGroup(vid, grp.id, 'video'); }}
-                                    className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 truncate ${vidData.groupId === grp.id ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-600 hover:bg-blue-50'}`}
-                                    title={grp.name}
-                                  >
-                                    <Folder size={12} className={vidData.groupId === grp.id ? "text-blue-600" : "text-gray-400"} /> {grp.name}
-                                  </button>
-                                ))}
-                              </div>
+                            {isSelected ? (
+                              <>
+                                <CheckSquare size={12} />
+                                <span>已选定打包</span>
+                              </>
+                            ) : (
+                              <>
+                                <Square size={12} />
+                                <span>选择打包</span>
+                              </>
                             )}
                           </button>
+                        ) : (
+                          <div className="flex flex-wrap gap-1 items-center relative">
+                            <button
+                              onClick={() => {
+                                fetchGallery();
+                                setViewingXhsNotes({ videoId: vidData.path, jobId: vidData.jobId, taskData: vidData.taskData || {} as VideoTask });
+                              }}
+                              className="p-1.5 text-red-500 hover:bg-red-50 hover:text-red-650 rounded-md transition-colors"
+                              title="小红书配置"
+                            >
+                              <Target className="w-4 h-4" />
+                            </button>
 
-                          <button
-                            onClick={async () => {
-                              if (!window.confirm('确定要删除这个视频吗？')) return;
-                              await fetch(`/api/videos/${vid}`, { method: 'DELETE' });
-                              fetchVideoGallery();
-                            }}
-                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                            title="彻底删除源文件"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+                            <button
+                              onClick={() => {
+                                setCroppingVideo(vidData);
+                              }}
+                              className="p-1.5 text-blue-600 hover:bg-blue-50 hover:text-blue-700 rounded-md transition-colors animate-fade-in"
+                              title="裁剪视频"
+                            >
+                              <Crop className="w-4 h-4" />
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setChangingBgmVideo(vidData);
+                              }}
+                              className="p-1.5 text-purple-600 hover:bg-purple-50 hover:text-purple-700 rounded-md transition-colors animate-fade-in"
+                              title="更换背景音乐"
+                            >
+                              <Music className="w-4 h-4" />
+                            </button>
+                            
+                            {/* Move to video group */}
+                            <div className="relative">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setMovingAssetPath(movingAssetPath === vid ? null : vid);
+                                }}
+                                className={`p-1.5 rounded-md transition-colors relative ${movingAssetPath === vid ? 'text-blue-700 bg-blue-100' : 'text-amber-650 hover:bg-amber-50'}`}
+                                title="移动到视频组"
+                              >
+                                <Folder className="w-4 h-4" />
+                              </button>
+
+                              {movingAssetPath === vid && (
+                                <div 
+                                  className="absolute right-0 bottom-full mb-2 w-48 bg-white rounded-xl shadow-2xl border border-gray-200 z-50 overflow-hidden py-1 text-left" 
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 border-b border-gray-100 uppercase bg-gray-50 flex items-center gap-1">
+                                    <Folder size={10} /> 移动至视频组...
+                                  </div>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleMoveToGroup(vid, null, 'video'); }}
+                                    className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 ${!vidData.groupId ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-600 hover:bg-blue-50'}`}
+                                  >
+                                    <Folder size={12} className={!vidData.groupId ? "text-blue-600" : "text-gray-400"} /> 未分组 (默认)
+                                  </button>
+                                  {assetGroups.filter(g => g.type === 'video').map(grp => (
+                                    <button
+                                      key={grp.id}
+                                      onClick={(e) => { e.stopPropagation(); handleMoveToGroup(vid, grp.id, 'video'); }}
+                                      className={`w-full text-left px-3 py-2 text-xs font-medium transition flex items-center gap-1.5 truncate ${vidData.groupId === grp.id ? 'text-blue-600 bg-blue-50 font-bold' : 'text-gray-600 hover:bg-blue-50'}`}
+                                      title={grp.name}
+                                    >
+                                      <Folder size={12} className={vidData.groupId === grp.id ? "text-blue-600" : "text-gray-400"} /> {grp.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            <button
+                              onClick={async () => {
+                                if (!window.confirm('确定要删除这个视频吗？')) return;
+                                await fetch(`/api/videos/${vid}`, { method: 'DELETE' });
+                                fetchVideoGallery();
+                              }}
+                              className="p-1.5 text-red-500 hover:bg-red-50 hover:text-red-600 rounded-md transition-colors"
+                              title="彻底删除源文件"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      {vidData.createdAt && (
-                        <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-400 font-medium">
-                          <Clock size={10} />
-                          {(() => {
-                            const d = new Date(vidData.createdAt.endsWith('Z') ? vidData.createdAt : vidData.createdAt.replace(' ', 'T') + 'Z');
-                            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                          })()}
-                        </div>
-                      )}
                     </div>
                   </div>
                 );
