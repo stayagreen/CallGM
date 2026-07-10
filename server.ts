@@ -1876,6 +1876,8 @@ async function startServer() {
     }
   });
 
+  const resolutionCache = new Map<string, string>();
+
   // Get all downloaded images
   app.get('/api/images', requireAuth, checkAccess, async (req: any, res) => {
     const user = req.session.user;
@@ -1895,8 +1897,21 @@ async function startServer() {
       const results = await Promise.all(rows.map(async (row) => {
         const filePath = row.file_path.replace(/\\/g, '/');
         const absPath = path.join(downloadDir, row.file_path);
-        let resolutionTag = '1K';
         
+        let resolutionTag = resolutionCache.get(absPath);
+        if (resolutionTag) {
+          return {
+            id: row.id,
+            path: filePath,
+            userId: row.user_id,
+            username: row.username,
+            createdAt: row.created_at,
+            groupId: row.group_id,
+            resolutionTag
+          };
+        }
+
+        resolutionTag = '1K';
         if (fs.existsSync(absPath)) {
           try {
             const meta = await sharp(absPath).metadata();
@@ -1913,6 +1928,8 @@ async function startServer() {
             // ignore
           }
         }
+        
+        resolutionCache.set(absPath, resolutionTag);
         
         return {
           id: row.id,
@@ -2255,21 +2272,28 @@ async function startServer() {
             }
             
             const absImgPath = path.join(process.cwd(), relativeImgPath);
-            if (fs.existsSync(absImgPath)) {
-              try {
-                const meta = await sharp(absImgPath).metadata();
-                if (meta.width && meta.height) {
-                  const maxDim = Math.max(meta.width, meta.height);
-                  const minDim = Math.min(meta.width, meta.height);
-                  if (maxDim >= 3200 || minDim >= 2160) {
-                    resolutionTag = '4K';
-                  } else if (maxDim >= 2000 || minDim >= 1400) {
-                    resolutionTag = '2K';
+            
+            const cachedRes = resolutionCache.get(absImgPath);
+            if (cachedRes) {
+              resolutionTag = cachedRes;
+            } else {
+              if (fs.existsSync(absImgPath)) {
+                try {
+                  const meta = await sharp(absImgPath).metadata();
+                  if (meta.width && meta.height) {
+                    const maxDim = Math.max(meta.width, meta.height);
+                    const minDim = Math.min(meta.width, meta.height);
+                    if (maxDim >= 3200 || minDim >= 2160) {
+                      resolutionTag = '4K';
+                    } else if (maxDim >= 2000 || minDim >= 1400) {
+                      resolutionTag = '2K';
+                    }
                   }
+                } catch (e) {
+                  // ignore
                 }
-              } catch (e) {
-                // ignore
               }
+              resolutionCache.set(absImgPath, resolutionTag);
             }
           }
         }
@@ -2401,6 +2425,109 @@ async function startServer() {
     } catch (err: any) {
       console.error('Failed to toggle published status:', err);
       res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
+  // Crop a downloaded video using ffmpeg
+  app.post('/api/videos/crop', requireAuth, checkAccess, async (req: any, res) => {
+    const user = req.session.user;
+    const { videoPath, x, y, width, height, groupId } = req.body;
+
+    if (!videoPath) return res.status(400).json({ error: 'Video path required' });
+    if (x === undefined || y === undefined || width === undefined || height === undefined) {
+      return res.status(400).json({ error: 'Crop parameters (x, y, width, height) are required' });
+    }
+
+    // Input path
+    const inputPath = path.join(videoDownloadDir, videoPath);
+    if (!fs.existsSync(inputPath)) {
+      return res.status(404).json({ error: '原视频文件不存在' });
+    }
+
+    try {
+      const userVideoDownloadDir = path.join(videoDownloadDir, user.id.toString());
+      const userVideoThumbDir = path.join(videoThumbDir, user.id.toString());
+
+      if (!fs.existsSync(userVideoDownloadDir)) fs.mkdirSync(userVideoDownloadDir, { recursive: true });
+      if (!fs.existsSync(userVideoThumbDir)) fs.mkdirSync(userVideoThumbDir, { recursive: true });
+
+      // Generate a new safe filename
+      const ext = path.extname(videoPath) || '.mp4';
+      const targetFilename = `crop_${Date.now()}_${Math.floor(Math.random() * 1000)}${ext}`;
+      const outputPath = path.join(userVideoDownloadDir, targetFilename);
+
+      // Align crop parameters to even numbers for H.264
+      let cropW = Math.round(width);
+      let cropH = Math.round(height);
+      let cropX = Math.round(x);
+      let cropY = Math.round(y);
+
+      if (cropW % 2 !== 0) cropW = Math.max(2, cropW - 1);
+      if (cropH % 2 !== 0) cropH = Math.max(2, cropH - 1);
+      if (cropX % 2 !== 0) cropX = Math.max(0, cropX - 1);
+      if (cropY % 2 !== 0) cropY = Math.max(0, cropY - 1);
+
+      console.log(`[Video Crop] Cropping ${inputPath} to ${outputPath} (crop=${cropW}:${cropH}:${cropX}:${cropY})`);
+
+      const { execa } = await import('execa');
+      // Run FFMPEG
+      await execa('ffmpeg', [
+        '-y',
+        '-i', inputPath,
+        '-vf', `crop=${cropW}:${cropH}:${cropX}:${cropY}`,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '20',
+        '-c:a', 'copy',
+        outputPath
+      ]);
+
+      // Generate Thumbnail
+      const targetThumbname = targetFilename.replace(/\.[^/.]+$/, ".jpg");
+      const thumbPath = path.join(userVideoThumbDir, targetThumbname);
+      try {
+        await execa('ffmpeg', [
+          '-ss', '00:00:01.000',
+          '-i', outputPath,
+          '-vframes', '1',
+          '-q:v', '2',
+          '-y',
+          thumbPath
+        ]);
+        console.log(`[Video Crop] Generated thumbnail at: ${thumbPath}`);
+      } catch (thumbErr: any) {
+        console.error('[Video Crop] Thumbnail generation error:', thumbErr.message);
+      }
+
+      // Log asset to db
+      const relativePath = `${user.id}/${targetFilename}`;
+      
+      // Determine groupId (use provided groupId, or fetch from original, or null)
+      let targetGroupId = null;
+      if (groupId !== undefined && groupId !== null) {
+        targetGroupId = parseInt(groupId, 10);
+      } else {
+        // Find from original asset
+        const origPath1 = videoPath;
+        const origPath2 = videoPath.replace(/\//g, '\\');
+        const origAsset = db.prepare('SELECT group_id FROM assets WHERE (file_path = ? OR file_path = ?) AND type = ?').get(origPath1, origPath2, 'video') as any;
+        if (origAsset && origAsset.group_id !== null) {
+          targetGroupId = origAsset.group_id;
+        }
+      }
+
+      db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path, group_id) VALUES (?, ?, ?, ?)')
+        .run(user.id, 'video', relativePath, targetGroupId);
+
+      res.json({
+        success: true,
+        message: '视频裁剪成功！',
+        filename: targetFilename,
+        relativePath
+      });
+    } catch (err: any) {
+      console.error('[Video Crop] Failed to crop video:', err);
+      res.status(500).json({ error: err.message || '裁剪视频失败，请重试' });
     }
   });
 

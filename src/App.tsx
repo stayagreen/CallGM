@@ -5,6 +5,7 @@ import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Login } from './components/Login';
 import { ImageCropper } from './components/ImageCropper';
+import { VideoCropper } from './components/VideoCropper';
 import { XhsPhonePreview } from './components/XhsPhonePreview';
 
 // Shared type interfaces
@@ -1000,6 +1001,9 @@ function MainApp() {
   }, [assetGroups]);
 
   const [expandedGroups, setExpandedGroups] = useState<Set<number | 'unassigned'>>(new Set());
+  const [imageGroupLimits, setImageGroupLimits] = useState<Record<string, number>>({});
+  const [videoGroupLimits, setVideoGroupLimits] = useState<Record<string, number>>({});
+  const [croppingVideo, setCroppingVideo] = useState<GalleryAsset | null>(null);
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedUploadGroupId, setSelectedUploadGroupId] = useState<number | null>(null);
@@ -3690,11 +3694,33 @@ function MainApp() {
                                 <div className="text-center py-12 text-gray-400 text-sm">
                                   各张图片均已划分至相对应的图组相册中，点击上方图组头部可随时切回各组或未分组
                                 </div>
-                              ) : (
-                                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                                  {unassignedImages.map(renderGalleryItem)}
-                                </div>
-                              )}
+                              ) : (() => {
+                                const limit = imageGroupLimits['unassigned'] || 20;
+                                const sliced = unassignedImages.slice(0, limit);
+                                return (
+                                  <>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                      {sliced.map(renderGalleryItem)}
+                                    </div>
+                                    {unassignedImages.length > limit && (
+                                      <div className="flex justify-center mt-6">
+                                        <button
+                                          onClick={() => {
+                                            setImageGroupLimits(prev => ({
+                                              ...prev,
+                                              unassigned: limit + 40
+                                            }));
+                                          }}
+                                          className="px-6 py-2 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-xs font-semibold rounded-xl transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <span>加载更多图片 (还有 {unassignedImages.length - limit} 张)</span>
+                                          <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>
@@ -3785,11 +3811,33 @@ function MainApp() {
                                     <Folder className="w-8 h-8 text-gray-200 animate-pulse" />
                                     <span>当前图组暂无图片，点击该组头部设为目标，即可直接 Ctrl+V 粘贴/上传新图至本组</span>
                                   </div>
-                                ) : (
-                                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                                    {grpImages.map(renderGalleryItem)}
-                                  </div>
-                                )}
+                                ) : (() => {
+                                  const limit = imageGroupLimits[String(grp.id)] || 20;
+                                  const sliced = grpImages.slice(0, limit);
+                                  return (
+                                    <>
+                                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                                        {sliced.map(renderGalleryItem)}
+                                      </div>
+                                      {grpImages.length > limit && (
+                                        <div className="flex justify-center mt-6">
+                                          <button
+                                            onClick={() => {
+                                              setImageGroupLimits(prev => ({
+                                                ...prev,
+                                                [String(grp.id)]: limit + 40
+                                              }));
+                                            }}
+                                            className="px-6 py-2 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-xs font-semibold rounded-xl transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
+                                          >
+                                            <span>加载更多图片 (还有 {grpImages.length - limit} 张)</span>
+                                            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                                          </button>
+                                        </div>
+                                      )}
+                                    </>
+                                  );
+                                })()}
                               </div>
                             )}
                           </div>
@@ -4560,6 +4608,16 @@ function MainApp() {
                           >
                             <Target className="w-4 h-4" />
                           </button>
+
+                          <button
+                            onClick={() => {
+                              setCroppingVideo(vidData);
+                            }}
+                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors animate-fade-in"
+                            title="裁剪视频"
+                          >
+                            <Crop className="w-4 h-4" />
+                          </button>
                           
                           {/* Move to video group */}
                           <button
@@ -4678,11 +4736,33 @@ function MainApp() {
                           <div className="text-center py-12 text-gray-400 text-sm">
                             各个视频均已划分至相对应的视频组中
                           </div>
-                        ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                            {unassignedVideos.map(renderVideoItem)}
-                          </div>
-                        )}
+                        ) : (() => {
+                          const limit = videoGroupLimits['unassigned'] || 12;
+                          const sliced = unassignedVideos.slice(0, limit);
+                          return (
+                            <>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                {sliced.map(renderVideoItem)}
+                              </div>
+                              {unassignedVideos.length > limit && (
+                                <div className="flex justify-center mt-6">
+                                  <button
+                                    onClick={() => {
+                                      setVideoGroupLimits(prev => ({
+                                        ...prev,
+                                        unassigned: limit + 24
+                                      }));
+                                    }}
+                                    className="px-6 py-2 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-xs font-semibold rounded-xl transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
+                                  >
+                                    <span>加载更多视频 (还有 {unassignedVideos.length - limit} 个)</span>
+                                    <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
@@ -4755,11 +4835,33 @@ function MainApp() {
                                 <div className="text-center py-8 text-gray-400 text-xs">
                                   <span>当前视频组暂无视频，请在视频卡片上点击移动按钮将其归纳至此组</span>
                                 </div>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                                  {grpVideos.map(renderVideoItem)}
-                                </div>
-                              )}
+                              ) : (() => {
+                                const limit = videoGroupLimits[String(grp.id)] || 12;
+                                const sliced = grpVideos.slice(0, limit);
+                                return (
+                                  <>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                                      {sliced.map(renderVideoItem)}
+                                    </div>
+                                    {grpVideos.length > limit && (
+                                      <div className="flex justify-center mt-6">
+                                        <button
+                                          onClick={() => {
+                                            setVideoGroupLimits(prev => ({
+                                              ...prev,
+                                              [String(grp.id)]: limit + 24
+                                            }));
+                                          }}
+                                          className="px-6 py-2 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-xs font-semibold rounded-xl transition shadow-sm hover:shadow flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <span>加载更多视频 (还有 {grpVideos.length - limit} 个)</span>
+                                          <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </div>
                           )}
                         </div>
@@ -6802,6 +6904,18 @@ function MainApp() {
               }
             });
             setCropperImageSrc(null);
+          }}
+        />
+      )}
+
+      {croppingVideo && (
+        <VideoCropper
+          videoUrl={`/downloads/videos/${croppingVideo.path}`}
+          videoPath={croppingVideo.path}
+          onClose={() => setCroppingVideo(null)}
+          onCropComplete={() => {
+            setCroppingVideo(null);
+            fetchVideoGallery();
           }}
         />
       )}
