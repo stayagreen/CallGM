@@ -2531,6 +2531,158 @@ async function startServer() {
     }
   });
 
+  // Change background music of a downloaded video using ffmpeg
+  app.post('/api/videos/change-bgm', requireAuth, checkAccess, async (req: any, res) => {
+    const user = req.session.user;
+    const { videoPath, bgmName, muteOriginal, groupId } = req.body;
+
+    if (!videoPath) return res.status(400).json({ error: 'Video path required' });
+
+    // Input path
+    const inputPath = path.join(videoDownloadDir, videoPath);
+    if (!fs.existsSync(inputPath)) {
+      return res.status(404).json({ error: '原视频文件不存在' });
+    }
+
+    try {
+      const userVideoDownloadDir = path.join(videoDownloadDir, user.id.toString());
+      const userVideoThumbDir = path.join(videoThumbDir, user.id.toString());
+
+      if (!fs.existsSync(userVideoDownloadDir)) fs.mkdirSync(userVideoDownloadDir, { recursive: true });
+      if (!fs.existsSync(userVideoThumbDir)) fs.mkdirSync(userVideoThumbDir, { recursive: true });
+
+      // Generate a new safe filename
+      const ext = path.extname(videoPath) || '.mp4';
+      const targetFilename = `bgm_${Date.now()}_${Math.floor(Math.random() * 1000)}${ext}`;
+      const outputPath = path.join(userVideoDownloadDir, targetFilename);
+
+      const { execa } = await import('execa');
+
+      let hasBgm = false;
+      let targetBgmPath = "";
+      if (bgmName && bgmName !== 'none' && bgmName !== '') {
+        targetBgmPath = path.join(bgmDir, bgmName);
+        if (fs.existsSync(targetBgmPath)) {
+          hasBgm = true;
+        }
+      }
+
+      console.log(`[Video BGM] Changing BGM of ${inputPath} to ${outputPath} (bgmName=${bgmName}, muteOriginal=${muteOriginal})`);
+
+      if (muteOriginal) {
+        if (hasBgm) {
+          // Case: Mute original + Add BGM
+          await execa('ffmpeg', [
+            '-y',
+            '-i', inputPath,
+            '-i', targetBgmPath,
+            '-map', '0:v:0',
+            '-map', '1:a:0',
+            '-c:v', 'copy',
+            '-c:a', 'aac',
+            '-shortest',
+            outputPath
+          ]);
+        } else {
+          // Case: Mute original + No BGM
+          await execa('ffmpeg', [
+            '-y',
+            '-i', inputPath,
+            '-an',
+            '-c:v', 'copy',
+            outputPath
+          ]);
+        }
+      } else {
+        if (hasBgm) {
+          // Case: Keep original + Add BGM (Mix)
+          try {
+            await execa('ffmpeg', [
+              '-y',
+              '-i', inputPath,
+              '-i', targetBgmPath,
+              '-filter_complex', '[0:a][1:a]amix=inputs=2:duration=first[a]',
+              '-map', '0:v:0',
+              '-map', '[a]',
+              '-c:v', 'copy',
+              '-c:a', 'aac',
+              '-shortest',
+              outputPath
+            ]);
+          } catch (mixErr: any) {
+            console.warn('[Video BGM] Failed to mix original audio, likely no audio track. Falling back to BGM-only replacement:', mixErr.message);
+            // Fallback: Replace original audio with BGM (same as muteOriginal=true)
+            await execa('ffmpeg', [
+              '-y',
+              '-i', inputPath,
+              '-i', targetBgmPath,
+              '-map', '0:v:0',
+              '-map', '1:a:0',
+              '-c:v', 'copy',
+              '-c:a', 'aac',
+              '-shortest',
+              outputPath
+            ]);
+          }
+        } else {
+          // Case: Keep original + No BGM (Just copy)
+          await execa('ffmpeg', [
+            '-y',
+            '-i', inputPath,
+            '-c', 'copy',
+            outputPath
+          ]);
+        }
+      }
+
+      // Generate Thumbnail
+      const targetThumbname = targetFilename.replace(/\.[^/.]+$/, ".jpg");
+      const thumbPath = path.join(userVideoThumbDir, targetThumbname);
+      try {
+        await execa('ffmpeg', [
+          '-ss', '00:00:01.000',
+          '-i', outputPath,
+          '-vframes', '1',
+          '-q:v', '2',
+          '-y',
+          thumbPath
+        ]);
+        console.log(`[Video BGM] Generated thumbnail at: ${thumbPath}`);
+      } catch (thumbErr: any) {
+        console.error('[Video BGM] Thumbnail generation error:', thumbErr.message);
+      }
+
+      // Log asset to db
+      const relativePath = `${user.id}/${targetFilename}`;
+      
+      // Determine groupId
+      let targetGroupId = null;
+      if (groupId !== undefined && groupId !== null) {
+        targetGroupId = parseInt(groupId, 10);
+      } else {
+        const origPath1 = videoPath;
+        const origPath2 = videoPath.replace(/\//g, '\\');
+        const origAsset = db.prepare('SELECT group_id FROM assets WHERE (file_path = ? OR file_path = ?) AND type = ?').get(origPath1, origPath2, 'video') as any;
+        if (origAsset && origAsset.group_id !== null) {
+          targetGroupId = origAsset.group_id;
+        }
+      }
+
+      db.prepare('INSERT OR IGNORE INTO assets (user_id, type, file_path, group_id) VALUES (?, ?, ?, ?)')
+        .run(user.id, 'video', relativePath, targetGroupId);
+
+      res.json({
+        success: true,
+        message: '更换背景音乐成功！',
+        filename: targetFilename,
+        relativePath
+      });
+    } catch (err: any) {
+      console.error('[Video BGM] Failed to change bgm:', err);
+      res.status(500).json({ error: err.message || '更换背景音乐失败，请重试' });
+    }
+  });
+
   // Save Xiaohongshu metadata for a video
   app.post('/api/videos/xhs', requireAuth, checkAccess, (req: any, res) => {
     const { videoPath, taskData } = req.body;

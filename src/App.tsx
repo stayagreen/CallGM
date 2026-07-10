@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { Login } from './components/Login';
 import { ImageCropper } from './components/ImageCropper';
 import { VideoCropper } from './components/VideoCropper';
+import { VideoBgmChanger } from './components/VideoBgmChanger';
 import { XhsPhonePreview } from './components/XhsPhonePreview';
 
 // Shared type interfaces
@@ -1004,6 +1005,7 @@ function MainApp() {
   const [imageGroupLimits, setImageGroupLimits] = useState<Record<string, number>>({});
   const [videoGroupLimits, setVideoGroupLimits] = useState<Record<string, number>>({});
   const [croppingVideo, setCroppingVideo] = useState<GalleryAsset | null>(null);
+  const [changingBgmVideo, setChangingBgmVideo] = useState<GalleryAsset | null>(null);
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [selectedUploadGroupId, setSelectedUploadGroupId] = useState<number | null>(null);
@@ -4618,6 +4620,16 @@ function MainApp() {
                           >
                             <Crop className="w-4 h-4" />
                           </button>
+
+                          <button
+                            onClick={() => {
+                              setChangingBgmVideo(vidData);
+                            }}
+                            className="p-1.5 text-purple-650 hover:bg-purple-50 rounded-md transition-colors animate-fade-in"
+                            title="更换背景音乐"
+                          >
+                            <Music className="w-4 h-4" />
+                          </button>
                           
                           {/* Move to video group */}
                           <button
@@ -6915,6 +6927,18 @@ function MainApp() {
           onClose={() => setCroppingVideo(null)}
           onCropComplete={() => {
             setCroppingVideo(null);
+            fetchVideoGallery();
+          }}
+        />
+      )}
+
+      {changingBgmVideo && (
+        <VideoBgmChanger
+          videoUrl={`/downloads/videos/${changingBgmVideo.path}`}
+          videoPath={changingBgmVideo.path}
+          onClose={() => setChangingBgmVideo(null)}
+          onComplete={() => {
+            setChangingBgmVideo(null);
             fetchVideoGallery();
           }}
         />
