@@ -1015,7 +1015,7 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
     const centerX = `(${rangeX}/2)`;
     const centerY = `(${rangeY}/2)`;
 
-    const speed = sb.animationSpeed !== undefined ? sb.animationSpeed : 1.0;
+    const speed = sb.animationSpeed !== undefined ? sb.animationSpeed : 1.5;
 
     // Scale the zoom increment visually according to the framerate so speed matches standard 30fps zoom speed perfectly
     const zoomStep = (0.0015 * (30 / fps) * speed).toFixed(6);

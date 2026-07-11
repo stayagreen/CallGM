@@ -176,7 +176,7 @@ export default function VideoEditor({
       id: Date.now().toString(),
       image: '',
       animation: 'none',
-      animationSpeed: 1.0,
+      animationSpeed: 1.5,
       transition: 'none',
       text: '',
       textSize: 20,
@@ -927,10 +927,10 @@ export default function VideoEditor({
                             <div className="bg-gray-50 p-2.5 rounded-lg border border-gray-100 space-y-1.5 animate-fadeIn">
                               <div className="flex justify-between items-center">
                                 <label className="text-xs font-bold text-gray-500">
-                                  运镜速率 ({sb.animationSpeed !== undefined ? sb.animationSpeed.toFixed(1) : '1.0'}x)
+                                  运镜速率 ({sb.animationSpeed !== undefined ? sb.animationSpeed.toFixed(1) : '1.5'}x)
                                 </label>
                                 <button 
-                                  onClick={() => applyToAll('animationSpeed', sb.animationSpeed !== undefined ? sb.animationSpeed : 1.0)} 
+                                  onClick={() => applyToAll('animationSpeed', sb.animationSpeed !== undefined ? sb.animationSpeed : 1.5)} 
                                   className="text-[10px] text-blue-600 hover:underline"
                                 >
                                   应用到全部
@@ -943,11 +943,11 @@ export default function VideoEditor({
                                   max="3.0" 
                                   step="0.1" 
                                   className="w-full accent-blue-600 h-1.5 rounded-lg bg-gray-200 cursor-pointer"
-                                  value={sb.animationSpeed !== undefined ? sb.animationSpeed : 1.0} 
+                                  value={sb.animationSpeed !== undefined ? sb.animationSpeed : 1.5} 
                                   onChange={e => updateStoryboard(sb.id, { animationSpeed: parseFloat(e.target.value) })}
                                 />
                                 <span className="text-xs font-mono text-gray-500 w-8 text-right">
-                                  {(sb.animationSpeed !== undefined ? sb.animationSpeed : 1.0).toFixed(1)}x
+                                  {(sb.animationSpeed !== undefined ? sb.animationSpeed : 1.5).toFixed(1)}x
                                 </span>
                               </div>
                             </div>
@@ -1128,7 +1128,7 @@ export default function VideoEditor({
                             id: Date.now().toString() + Math.random().toString(36).substring(7),
                             image: finalImageUrl,
                             animation: 'none',
-                            animationSpeed: 1.0,
+                            animationSpeed: 1.5,
                             transition: 'none',
                             text: '',
                             textSize: 20,
@@ -1259,7 +1259,7 @@ export default function VideoEditor({
                     id: Date.now().toString() + Math.random().toString(36).substring(7),
                     image: splitImages[index],
                     animation: 'none',
-                    animationSpeed: 1.0,
+                    animationSpeed: 1.5,
                     transition: 'none',
                     text: '',
                     textSize: 20,

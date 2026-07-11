@@ -74,7 +74,7 @@ function drawSingleStoryboard(
 
     const duration = sb.duration || 3;
     const p = Math.min(1, Math.max(0, relTime / duration));
-    const speed = sb.animationSpeed !== undefined ? sb.animationSpeed : 1.0;
+    const speed = sb.animationSpeed !== undefined ? sb.animationSpeed : 1.5;
 
     let zoom = 1.0;
     if (sb.animation === 'zoom_in') {
