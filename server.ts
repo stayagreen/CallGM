@@ -2706,8 +2706,21 @@ async function startServer() {
         }
       }
 
-      const dbPath = videoPath.replace(/\//g, '\\');
-      const asset = db.prepare('SELECT * FROM assets WHERE file_path = ? OR file_path = ?').get(videoPath, dbPath) as any;
+      const dbPath1 = videoPath;
+      const dbPath2 = videoPath.replace(/\//g, '\\');
+      const dbPath3 = 'downloads/videos/' + videoPath;
+      const dbPath4 = dbPath3.replace(/\//g, '\\');
+      
+      let asset = db.prepare('SELECT * FROM assets WHERE file_path = ? OR file_path = ? OR file_path = ? OR file_path = ?').get(dbPath1, dbPath2, dbPath3, dbPath4) as any;
+      
+      if (!asset) {
+        const cleanPath = videoPath.replace(/\\/g, '/');
+        const fileName = cleanPath.split('/').pop() || '';
+        if (fileName) {
+          asset = db.prepare("SELECT * FROM assets WHERE type = 'video' AND (file_path LIKE ? OR file_path LIKE ?)").get(`%/${fileName}`, `%\\${fileName}`) as any;
+        }
+      }
+      
       if (!asset) return res.status(404).json({ error: 'Video not found' });
       
       let jobId = asset.job_id;
@@ -3026,9 +3039,31 @@ ${content || ''}${formattedTags}
         const videoPath = videoPaths[i];
         const dbPath1 = videoPath;
         const dbPath2 = videoPath.replace(/\//g, '\\');
+        const dbPath3 = 'downloads/videos/' + videoPath;
+        const dbPath4 = dbPath3.replace(/\//g, '\\');
         
-        // Look up in database
-        const asset = db.prepare('SELECT assets.*, tasks.data AS task_data FROM assets LEFT JOIN tasks ON assets.job_id = tasks.id WHERE assets.file_path = ? OR assets.file_path = ?').get(dbPath1, dbPath2) as any;
+        // Look up in database using a highly robust search strategy that covers all path formats
+        let asset = db.prepare(`
+          SELECT assets.*, tasks.data AS task_data 
+          FROM assets 
+          LEFT JOIN tasks ON assets.job_id = tasks.id 
+          WHERE assets.file_path = ? OR assets.file_path = ? OR assets.file_path = ? OR assets.file_path = ?
+        `).get(dbPath1, dbPath2, dbPath3, dbPath4) as any;
+
+        // If not found by direct paths, try falling back to matching by the filename suffix
+        const cleanPath = videoPath.replace(/\\/g, '/');
+        const fileName = cleanPath.split('/').pop() || '';
+        if (!asset && fileName) {
+          asset = db.prepare(`
+            SELECT assets.*, tasks.data AS task_data 
+            FROM assets 
+            LEFT JOIN tasks ON assets.job_id = tasks.id 
+            WHERE assets.type = 'video' AND (
+              assets.file_path LIKE ? OR 
+              assets.file_path LIKE ?
+            )
+          `).get(`%/${fileName}`, `%\\${fileName}`) as any;
+        }
         
         let title = '';
         let content = '';
@@ -3039,7 +3074,8 @@ ${content || ''}${formattedTags}
           try {
             const taskData = JSON.parse(asset.task_data);
             title = taskData.xhsTitle || '';
-            content = taskData.xhsContent || '';
+            // Supports both xhsBody (standard) and xhsContent (legacy fallback)
+            content = taskData.xhsBody || taskData.xhsContent || '';
             tags = taskData.xhsTags || '';
             coverPath = taskData.xhsCoverImage || '';
           } catch (e) {}
@@ -3252,8 +3288,20 @@ ${content || '（暂无正文）'}${formattedTags}
       let finalCoverPath = coverPath;
       if (!finalCoverPath) {
         try {
-          const dbPath = videoPath.replace(/\//g, '\\');
-          const asset = db.prepare('SELECT * FROM assets WHERE file_path = ? OR file_path = ?').get(videoPath, dbPath) as any;
+          const dbPath1 = videoPath;
+          const dbPath2 = videoPath.replace(/\//g, '\\');
+          const dbPath3 = 'downloads/videos/' + videoPath;
+          const dbPath4 = dbPath3.replace(/\//g, '\\');
+          
+          let asset = db.prepare('SELECT * FROM assets WHERE file_path = ? OR file_path = ? OR file_path = ? OR file_path = ?').get(dbPath1, dbPath2, dbPath3, dbPath4) as any;
+          
+          if (!asset) {
+            const cleanPath = videoPath.replace(/\\/g, '/');
+            const fileName = cleanPath.split('/').pop() || '';
+            if (fileName) {
+              asset = db.prepare("SELECT * FROM assets WHERE type = 'video' AND (file_path LIKE ? OR file_path LIKE ?)").get(`%/${fileName}`, `%\\${fileName}`) as any;
+            }
+          }
           if (asset && asset.job_id) {
             const taskRow = db.prepare('SELECT data FROM tasks WHERE id = ?').get(asset.job_id) as any;
             if (taskRow && taskRow.data) {
