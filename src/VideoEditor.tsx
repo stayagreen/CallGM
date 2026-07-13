@@ -7,6 +7,9 @@ import { ImageAdjuster } from './components/ImageAdjuster';
 export interface Storyboard {
   id: string;
   image: string;
+  mediaType?: 'image' | 'video';
+  videoPath?: string;
+  startTime?: number;
   animation: string;
   animationSpeed?: number;
   transition: string;
@@ -109,14 +112,42 @@ export default function VideoEditor({
   const [bgmList, setBgmList] = useState<string[]>([]);
   const [playingBgm, setPlayingBgm] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const activeVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
 
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const [showVideoSelector, setShowVideoSelector] = useState(false);
+  const [localVideos, setLocalVideos] = useState<any[]>([]);
+  const [isUploadingVideo, setIsUploadingVideo] = useState(false);
+
+  const loadLocalVideos = async () => {
+    try {
+      const res = await fetch('/api/videos');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setLocalVideos(data);
+      }
+    } catch (e) {
+      console.error('Failed to load local videos:', e);
+    }
+  };
+
   const [showGallery, setShowGallery] = useState(false);
   const [showStoryboardCoverPicker, setShowStoryboardCoverPicker] = useState(false);
   const [galleryMode, setGalleryMode] = useState<'normal' | '4grid' | 'cover' | 'multi_raw'>('normal');
   const [selectedGalleryGrids, setSelectedGalleryGrids] = useState<string[]>([]);
   const [activeStoryboardId, setActiveStoryboardId] = useState<string | null>(null);
   const [activeStoryboardIndex, setActiveStoryboardIndex] = useState(0);
+
+  useEffect(() => {
+    const sb = task?.storyboards?.[activeStoryboardIndex];
+    if (sb && sb.mediaType === 'video' && activeVideoRef.current) {
+      const start = sb.startTime || 0;
+      activeVideoRef.current.currentTime = start;
+      setVideoCurrentTime(start);
+    }
+  }, [activeStoryboardIndex, task]);
+
   const [editingImage, setEditingImage] = useState<{ id: string, image: string } | null>(null);
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
   const [adjusterImageSrc, setAdjusterImageSrc] = useState<string | null>(null);
@@ -737,6 +768,16 @@ export default function VideoEditor({
                   <button onClick={addEmptyStoryboard} className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium border-b border-gray-50">
                     <ImageIcon size={16}/> 添加空分镜
                   </button>
+                  <button 
+                    onClick={() => {
+                      setShowVideoSelector(true);
+                      loadLocalVideos();
+                      setShowAddMenu(false);
+                    }}
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium border-b border-gray-50"
+                  >
+                    <Film size={16} className="text-purple-600" /> 添加视频分镜
+                  </button>
                   <label className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-2 text-sm font-medium cursor-pointer border-b border-gray-50">
                     <Grid size={16}/> 导入并4宫格分割
                     <input type="file" accept="image/*" multiple className="hidden" onChange={handle4GridSplit} />
@@ -822,26 +863,47 @@ export default function VideoEditor({
                         
                         <div className="relative aspect-video bg-gray-100 flex items-center justify-center group overflow-hidden">
                           <div className="absolute top-2 right-2 flex gap-2 z-10">
-                            {sb.image && (
+                            {sb.mediaType !== 'video' && sb.image && (
                               <button onClick={() => updateStoryboard(sb.id, { image: '' })} className="p-2 bg-white rounded-full text-red-600 hover:bg-red-50 transition shadow-sm" title="清空图片"><X size={16}/></button>
                             )}
-                            <button 
-                              onClick={() => {
-                                updateTask({
-                                  storyboards: task.storyboards.map(s => ({
-                                    ...s,
-                                    image: sb.image
-                                  }))
-                                });
-                                showToast('✅ 应用成功');
-                              }}
-                              className="p-2 bg-white rounded-full text-blue-600 hover:bg-blue-50 transition shadow-sm"
-                              title="应用到所有"
-                            >
-                              <ListIcon size={16}/>
-                            </button>
+                            {sb.mediaType !== 'video' && (
+                              <button 
+                                onClick={() => {
+                                  updateTask({
+                                    storyboards: task.storyboards.map(s => ({
+                                      ...s,
+                                      image: sb.image
+                                    }))
+                                  });
+                                  showToast('✅ 应用成功');
+                                }}
+                                className="p-2 bg-white rounded-full text-blue-600 hover:bg-blue-50 transition shadow-sm"
+                                title="应用到所有"
+                              >
+                                <ListIcon size={16}/>
+                              </button>
+                            )}
                           </div>
-                          {sb.image ? (
+                          {sb.mediaType === 'video' ? (
+                            <div className="w-full h-full relative bg-black">
+                              <video 
+                                ref={activeVideoRef}
+                                src={getBustedUrl(sb.videoPath || '')} 
+                                controls 
+                                onTimeUpdate={(e) => setVideoCurrentTime(e.currentTarget.currentTime)}
+                                onLoadedMetadata={(e) => {
+                                  if (sb) {
+                                    e.currentTarget.currentTime = sb.startTime || 0;
+                                    setVideoCurrentTime(sb.startTime || 0);
+                                  }
+                                }}
+                                className="w-full h-full object-contain" 
+                              />
+                              <div className="absolute top-2 left-2 bg-purple-600 text-white text-[10px] px-2 py-1 rounded-md font-bold flex items-center gap-1 shadow">
+                                <Film size={10} /> 视频分镜
+                              </div>
+                            </div>
+                          ) : sb.image ? (
                             <>
                               <img src={getBustedUrl(sb.image)} className="w-full h-full object-contain" />
                               <div className="absolute inset-0 bg-black/30 sm:bg-black/50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
@@ -912,7 +974,180 @@ export default function VideoEditor({
                           )}
                         </div>
 
-                        <div className="p-4 space-y-4 flex-grow bg-white rounded-b-2xl">
+                        {sb.mediaType === 'video' ? (
+                          <div className="p-4 space-y-4 flex-grow bg-white rounded-b-2xl">
+                            <div className="bg-purple-50 text-purple-800 p-3.5 rounded-xl border border-purple-100 flex items-start gap-2.5">
+                              <Sparkles className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
+                              <div>
+                                <h4 className="text-xs font-bold">视频分镜免处理模式</h4>
+                                <p className="text-[11px] text-purple-700/90 mt-0.5 leading-relaxed">
+                                  此分镜为视频类型，渲染时将不进行画幅裁剪、动画运镜或文字叠加，以原生格式和分辨率衔接前后分镜。
+                                </p>
+                              </div>
+                            </div>
+                            
+                            <div className="pt-2 border-t border-gray-100 space-y-4">
+                              {/* Current Playhead Info */}
+                              <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 flex justify-between items-center">
+                                <div className="flex items-center gap-1.5 text-xs font-bold text-gray-700">
+                                  <Clock size={14} className="text-purple-600" />
+                                  <span>当前播放位置:</span>
+                                  <span className="font-mono text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">{videoCurrentTime.toFixed(2)}s</span>
+                                </div>
+                                <button 
+                                  onClick={() => {
+                                    if (activeVideoRef.current) {
+                                      activeVideoRef.current.currentTime = sb.startTime || 0;
+                                    }
+                                  }}
+                                  className="text-[10px] text-purple-700 hover:underline font-bold"
+                                >
+                                  跳转到起点
+                                </button>
+                              </div>
+
+                              {/* Start Time & End Time Trimming */}
+                              <div className="space-y-3">
+                                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">分镜区间修剪 (Trimming)</h4>
+                                
+                                <div>
+                                  <div className="flex justify-between items-center mb-1">
+                                    <label className="text-xs font-bold text-gray-700">起始截取时间</label>
+                                    <button 
+                                      onClick={() => {
+                                        const newStart = parseFloat(videoCurrentTime.toFixed(2));
+                                        updateStoryboard(sb.id, { startTime: newStart });
+                                        showToast('📍 已设为当前播放位置');
+                                      }}
+                                      className="text-[10px] text-purple-600 hover:underline flex items-center gap-0.5 font-bold"
+                                    >
+                                      设为当前位置 ({videoCurrentTime.toFixed(1)}s)
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <input 
+                                      type="number" 
+                                      step="0.1"
+                                      min="0" 
+                                      value={sb.startTime || 0} 
+                                      onChange={e => {
+                                        const val = Math.max(0, parseFloat(e.target.value) || 0);
+                                        updateStoryboard(sb.id, { startTime: val });
+                                      }} 
+                                      className="w-28 text-sm p-1.5 rounded border border-gray-200" 
+                                    />
+                                    <span className="text-xs text-gray-400">秒 (从原视频此位置开始播放)</span>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <div className="flex justify-between items-center mb-1">
+                                    <label className="text-xs font-bold text-gray-700">播放时长</label>
+                                    <span className="text-[10px] text-gray-400">或设置结束时间</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <input 
+                                      type="number" 
+                                      step="0.1"
+                                      min="0.1" 
+                                      max="300" 
+                                      value={sb.duration} 
+                                      onChange={e => updateStoryboard(sb.id, { duration: parseFloat(e.target.value) || 5.0 })} 
+                                      className="w-28 text-sm p-1.5 rounded border border-gray-200" 
+                                    />
+                                    <span className="text-xs text-gray-400">秒 (此分镜截取的持续时长)</span>
+                                  </div>
+                                </div>
+
+                                <div className="p-2.5 bg-gray-50 rounded-lg border border-gray-100 flex justify-between items-center text-xs">
+                                  <span className="text-gray-500 font-medium">结束截取时间:</span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono font-bold text-gray-800">{((sb.startTime || 0) + sb.duration).toFixed(2)}s</span>
+                                    <button 
+                                      onClick={() => {
+                                        const start = sb.startTime || 0;
+                                        if (videoCurrentTime <= start) {
+                                          alert('结束时间必须大于起始时间！');
+                                          return;
+                                        }
+                                        const newDur = parseFloat((videoCurrentTime - start).toFixed(2));
+                                        updateStoryboard(sb.id, { duration: newDur });
+                                        showToast('📍 已设为当前播放位置');
+                                      }}
+                                      className="text-[10px] text-purple-600 hover:underline font-bold"
+                                    >
+                                      设为当前位置
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Video Splitting Tool */}
+                              <div className="pt-3 border-t border-gray-100 space-y-2">
+                                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider">视频一分为二 (Split)</h4>
+                                <p className="text-[10px] text-gray-400 leading-relaxed">
+                                  在当前播放进度处将视频一分为二，方便您删除不想要的内容（选中新分镜后点击卡片右上角垃圾桶即可删除）。
+                                </p>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const currentTime = videoCurrentTime;
+                                    const s = sb.startTime || 0;
+                                    const d = sb.duration || 5.0;
+
+                                    if (currentTime <= s) {
+                                      alert("分割位置必须大于当前分镜的起始截取时间！");
+                                      return;
+                                    }
+                                    if (currentTime >= s + d) {
+                                      alert("分割位置必须小于当前分镜的结束截取时间！");
+                                      return;
+                                    }
+
+                                    const segment1Duration = parseFloat((currentTime - s).toFixed(2));
+                                    const segment2Duration = parseFloat((d - segment1Duration).toFixed(2));
+
+                                    const segment1 = {
+                                      ...sb,
+                                      duration: segment1Duration
+                                    };
+
+                                    const segment2 = {
+                                      ...sb,
+                                      id: Date.now().toString() + Math.random().toString(36).substring(7),
+                                      startTime: parseFloat(currentTime.toFixed(2)),
+                                      duration: segment2Duration
+                                    };
+
+                                    const newStoryboards = [...task.storyboards];
+                                    newStoryboards[index] = segment1;
+                                    newStoryboards.splice(index + 1, 0, segment2);
+
+                                    updateTask({ storyboards: newStoryboards });
+                                    showToast(`✂️ 已在第 ${currentTime.toFixed(2)} 秒处将视频分割为两个分镜！`);
+                                  }}
+                                  className="w-full flex items-center justify-center gap-2 py-2.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-xl transition shadow-sm cursor-pointer"
+                                >
+                                  <Scissors size={14} />
+                                  <span>在当前播放位置一分为二 ({videoCurrentTime.toFixed(1)}s)</span>
+                                </button>
+                              </div>
+
+                              {index < task.storyboards.length - 1 && (
+                                <div className="pt-2 border-t border-gray-100">
+                                  <div className="flex justify-between items-center mb-1">
+                                    <label className="text-xs font-bold text-gray-500">下一镜转场</label>
+                                    <button onClick={() => applyToAll('transition', sb.transition)} className="text-[10px] text-blue-600 hover:underline">应用到全部</button>
+                                  </div>
+                                  <select className="w-full text-sm p-2 rounded border border-gray-200" value={sb.transition} onChange={e => updateStoryboard(sb.id, { transition: e.target.value })}>
+                                    {TRANSITIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="p-4 space-y-4 flex-grow bg-white rounded-b-2xl">
                           <div>
                             <div className="flex justify-between items-center mb-1">
                               <label className="text-xs font-bold text-gray-500">运镜动画</label>
@@ -1032,6 +1267,7 @@ export default function VideoEditor({
                             )}
                           </div>
                         </div>
+                      )}
                       </>
                     );
                   })()}
@@ -1050,6 +1286,11 @@ export default function VideoEditor({
                       ) : (
                         <div className="w-full h-full bg-gray-100 flex items-center justify-center text-gray-400">
                           <ImageIcon size={20}/>
+                        </div>
+                      )}
+                      {sb.mediaType === 'video' && (
+                        <div className="absolute top-1 left-1 bg-purple-600 text-white p-1 rounded shadow-sm z-10">
+                          <Film size={10} />
                         </div>
                       )}
                       <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-[10px] text-center py-0.5">
@@ -1387,6 +1628,156 @@ export default function VideoEditor({
             setAdjusterImageSrc(null);
           }}
         />
+      )}
+
+      {showVideoSelector && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[999]">
+          <div className="relative bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            {isUploadingVideo && (
+              <div className="absolute inset-0 bg-white/80 backdrop-blur-[2px] flex flex-col items-center justify-center z-50 rounded-2xl">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent mb-4"></div>
+                <p className="text-purple-600 font-medium text-lg shadow-sm">正在上传并处理视频，请稍候...</p>
+              </div>
+            )}
+            
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Film className="text-purple-600" /> 选择或上传视频分镜
+              </h2>
+              <button disabled={isUploadingVideo} onClick={() => setShowVideoSelector(false)} className="text-gray-400 hover:text-gray-600 disabled:opacity-50"><X size={24}/></button>
+            </div>
+
+            <div className="mb-4 bg-purple-50 border border-purple-100 rounded-xl p-4 flex flex-col sm:flex-row gap-4 items-center justify-between">
+              <div>
+                <p className="text-xs font-bold text-purple-950">本地视频上传</p>
+                <p className="text-[10px] text-purple-700/80 mt-0.5 font-sans">上传 MP4 视频，系统将自动读取首帧作为分镜封面</p>
+              </div>
+              <label className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition cursor-pointer flex items-center gap-1.5 shadow-sm">
+                <Upload size={14} />
+                <span>选择本地视频</span>
+                <input 
+                  type="file" 
+                  accept="video/*" 
+                  className="hidden" 
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setIsUploadingVideo(true);
+                    try {
+                      const base64 = await new Promise<string>((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => resolve(ev.target?.result as string);
+                        reader.onerror = (err) => reject(err);
+                        reader.readAsDataURL(file);
+                      });
+
+                      const res = await fetch('/api/videos/upload', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          videoBase64: base64,
+                          filename: file.name
+                        })
+                      });
+                      const data = await res.json();
+                      if (res.ok && data.success) {
+                        const targetUrl = `/downloads/videos/${data.relativePath}`;
+                        const thumbUrl = `/api/thumbnails/videos/${data.relativePath.replace(/\.[^/.]+$/, ".jpg")}`;
+                        const newSb = {
+                          id: Date.now().toString() + Math.random().toString(36).substring(7),
+                          mediaType: 'video' as const,
+                          image: thumbUrl,
+                          videoPath: targetUrl,
+                          animation: 'none',
+                          animationSpeed: 1.5,
+                          transition: 'none',
+                          text: '',
+                          textSize: 20,
+                          textColor: '#ffffff',
+                          textEffect: 'none',
+                          duration: 5.0
+                        };
+                        updateTask({ storyboards: [...task.storyboards, newSb] });
+                        setShowVideoSelector(false);
+                      } else {
+                        alert(data.error || '视频上传失败');
+                      }
+                    } catch (err: any) {
+                      console.error('Video upload error:', err);
+                      alert('视频上传失败: ' + (err.message || err));
+                    } finally {
+                      setIsUploadingVideo(false);
+                    }
+                  }} 
+                />
+              </label>
+            </div>
+
+            <div className="flex-grow overflow-y-auto mb-6 pr-2">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">从已有视频库中选择</h3>
+              {localVideos.length === 0 ? (
+                <div className="text-center py-12 text-gray-500 border border-dashed rounded-xl">
+                  <Film className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p className="text-sm">视频库中暂无已生成/上传的视频</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {localVideos.map(vid => {
+                    const thumbUrl = `/api/thumbnails/videos/${vid.path.replace(/\.[^/.]+$/, ".jpg")}`;
+                    const targetUrl = `/downloads/videos/${vid.path}`;
+                    return (
+                      <div 
+                        key={vid.id} 
+                        onClick={() => {
+                          const newSb = {
+                            id: Date.now().toString() + Math.random().toString(36).substring(7),
+                            mediaType: 'video' as const,
+                            image: thumbUrl,
+                            videoPath: targetUrl,
+                            animation: 'none',
+                            animationSpeed: 1.5,
+                            transition: 'none',
+                            text: '',
+                            textSize: 20,
+                            textColor: '#ffffff',
+                            textEffect: 'none',
+                            duration: 5.0
+                          };
+                          updateTask({ storyboards: [...task.storyboards, newSb] });
+                          setShowVideoSelector(false);
+                        }}
+                        className="relative aspect-video rounded-xl overflow-hidden border border-gray-200 hover:border-purple-500 cursor-pointer transition-all hover:shadow-md group bg-black"
+                      >
+                        <img 
+                          src={thumbUrl} 
+                          className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" 
+                          loading="lazy" 
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30">
+                          <div className="bg-purple-600 text-white p-2 rounded-full shadow-lg">
+                            <Plus size={16} />
+                          </div>
+                        </div>
+                        <div className="absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1.5 py-0.5 rounded font-mono truncate max-w-[80%]">
+                          {vid.path.split('/').pop()}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex justify-end border-t pt-4">
+              <button 
+                onClick={() => setShowVideoSelector(false)} 
+                className="px-4 py-2 text-xs font-semibold border rounded-xl hover:bg-gray-50 transition"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

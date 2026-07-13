@@ -978,6 +978,60 @@ async function runWithLimit<T>(tasks: (() => Promise<T>)[], limit: number): Prom
 }
 
 async function generateClip(sb: any, outputPath: string, targetWidth: number, targetHeight: number, crf: string = '23', bitrate: string = '8M', maxRate: string = '12M', bufSize: string = '16M', fps: number = 60, videoColorProtection: string = 'bt709', videoQualityMode: string = 'highSharpen'): Promise<void> {
+    if (sb.mediaType === 'video') {
+        let inputVideoPath = sb.videoPath || sb.image;
+        if (inputVideoPath.startsWith('/uploads/')) {
+            inputVideoPath = path.join(__dirname, 'uploads', inputVideoPath.replace('/uploads/', ''));
+        } else if (inputVideoPath.startsWith('/downloads/')) {
+            inputVideoPath = path.join(__dirname, 'download', inputVideoPath.replace('/downloads/', ''));
+        }
+
+        const startTime = sb.startTime || 0;
+        const duration = sb.duration || 3.5;
+        const w = Math.floor(targetWidth / 2) * 2;
+        const h = Math.floor(targetHeight / 2) * 2;
+
+        let filterComplex = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+        if (videoQualityMode === 'highSharpen') {
+            filterComplex += `,unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.5:chroma_msize_x=5:chroma_msize_y=5:chroma_amount=0.0`;
+        }
+        if (videoColorProtection === 'bt709') {
+            filterComplex += `,scale=w=iw:h=ih:out_color_matrix=bt709:flags=lanczos+accurate_rnd,format=yuv420p[outv]`;
+        } else {
+            filterComplex += `,format=yuv420p[outv]`;
+        }
+
+        const args = [
+            '-ss', startTime.toString(),
+            '-i', inputVideoPath,
+            '-filter_complex', filterComplex,
+            '-map', '[outv]',
+            '-an', // Discard audio to ensure easy concat with images
+            '-c:v', 'libx264',
+            '-preset', videoQualityMode === 'highSharpen' ? 'slow' : 'medium',
+            '-crf', crf,
+            '-b:v', bitrate,
+            '-maxrate', maxRate,
+            '-bufsize', bufSize,
+            '-t', duration.toString(),
+            '-r', fps.toString(),
+            '-pix_fmt', 'yuv420p',
+            '-threads', '0'
+        ];
+
+        if (videoColorProtection === 'bt709') {
+            args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
+        }
+        if (videoQualityMode === 'highSharpen') {
+            args.push('-profile:v', 'high');
+        }
+        args.push('-movflags', '+faststart', '-y', outputPath);
+
+        console.log(`[FFmpeg] Generating video storyboard clip: ${FFMPEG_PATH} ${args.join(' ')}`);
+        await execa(FFMPEG_PATH, args);
+        return;
+    }
+
     // Resolve image path
     let imgPath = sb.image;
     if (imgPath.startsWith('/uploads/')) {
