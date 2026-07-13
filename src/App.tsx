@@ -1046,6 +1046,7 @@ function MainApp() {
   const [videoGallery, setVideoGallery] = useState<GalleryAsset[]>([]);
   const [isBatchSelectMode, setIsBatchSelectMode] = useState(false);
   const [selectedVideoPaths, setSelectedVideoPaths] = useState<string[]>([]);
+  const [showVideoBatchMoveMenu, setShowVideoBatchMoveMenu] = useState(false);
   const [isBatchDownloading, setIsBatchDownloading] = useState(false);
   const [selectedVideoUploadGroupId, setSelectedVideoUploadGroupId] = useState<number | null>(null);
   const [showVideoUploadMenu, setShowVideoUploadMenu] = useState(false);
@@ -1874,6 +1875,29 @@ function MainApp() {
       }
     } catch (err) {
       console.error('Failed to batch move:', err);
+    }
+  };
+
+  const handleBatchMoveVideosToGroup = async (groupId: number | null) => {
+    if (selectedVideoPaths.length === 0) return;
+    try {
+      const res = await fetch('/api/groups/batch-move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePaths: selectedVideoPaths, groupId, type: 'video' }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSelectedVideoPaths([]);
+        setShowVideoBatchMoveMenu(false);
+        setIsBatchSelectMode(false);
+        fetchVideoGallery();
+        showToast('✅ 视频批量移动成功', 'success');
+      } else {
+        alert(data.error || '批量移动失败');
+      }
+    } catch (err) {
+      console.error('Failed to batch move videos:', err);
     }
   };
 
@@ -4528,9 +4552,9 @@ function MainApp() {
                     <CheckSquare className="w-6 h-6" />
                   </div>
                   <div>
-                    <h4 className="text-sm font-bold text-purple-950">批量打包下载模式</h4>
+                    <h4 className="text-sm font-bold text-purple-950">批量操作模式</h4>
                     <p className="text-xs text-purple-700 mt-0.5 font-medium">
-                      已选择 <span className="font-black text-base px-1 text-purple-900">{selectedVideoPaths.length}</span> 个视频笔记资源（包含视频、封面及文案）
+                      已选择 <span className="font-black text-base px-1 text-purple-900">{selectedVideoPaths.length}</span> 个视频笔记资源。您可以打包下载，或移动到分类文件夹。
                     </p>
                   </div>
                 </div>
@@ -4550,6 +4574,51 @@ function MainApp() {
                   >
                     清除选择
                   </button>
+
+                  {/* Batch Move Dropdown */}
+                  <div className="relative">
+                    <button
+                      onClick={() => {
+                        if (selectedVideoPaths.length === 0) {
+                          alert('请先选择需要移动的视频');
+                          return;
+                        }
+                        setShowVideoBatchMoveMenu(!showVideoBatchMoveMenu);
+                      }}
+                      className={`px-4 py-2 text-xs font-bold border rounded-xl transition shadow-sm flex items-center gap-1.5 cursor-pointer ${
+                        selectedVideoPaths.length === 0 
+                          ? 'bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'bg-white border-amber-200 text-amber-700 hover:bg-amber-50'
+                      }`}
+                    >
+                      <Folder size={14} />
+                      <span>批量移动到视频组</span>
+                    </button>
+                    {showVideoBatchMoveMenu && selectedVideoPaths.length > 0 && (
+                      <div className="absolute right-0 bottom-full mb-2 w-56 bg-white rounded-xl shadow-2xl border border-gray-200 z-[1200] py-1 text-left max-h-64 overflow-y-auto">
+                        <div className="px-3 py-1.5 text-[10px] font-bold text-gray-400 border-b border-gray-100 uppercase bg-gray-50">
+                          选择目标分类组 ({selectedVideoPaths.length} 个视频)
+                        </div>
+                        <button
+                          onClick={() => handleBatchMoveVideosToGroup(null)}
+                          className="w-full text-left px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Folder size={12} className="text-gray-400" /> 未分组 (默认)
+                        </button>
+                        {assetGroups.filter(g => g.type === 'video').map(grp => (
+                          <button
+                            key={grp.id}
+                            onClick={() => handleBatchMoveVideosToGroup(grp.id)}
+                            className="w-full text-left px-3 py-2 text-xs font-semibold text-gray-600 hover:bg-blue-50 hover:text-blue-600 transition flex items-center gap-1.5 cursor-pointer truncate"
+                            title={grp.name}
+                          >
+                            <Folder size={12} className="text-blue-500" /> {grp.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <button
                     onClick={handleBatchDownloadXhsPackage}
                     disabled={selectedVideoPaths.length === 0 || isBatchDownloading}
