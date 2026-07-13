@@ -858,6 +858,39 @@ function ProxyManagement() {
   );
 }
 
+const showToast = (message: string, type: 'success' | 'error' | 'loading' = 'success') => {
+  const existingToast = document.getElementById('global-toast');
+  if (existingToast) existingToast.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'global-toast';
+  
+  let bgClass = 'bg-black/80';
+  if (type === 'success') bgClass = 'bg-green-600';
+  if (type === 'error') bgClass = 'bg-red-600';
+  if (type === 'loading') bgClass = 'bg-blue-600';
+
+  toast.className = `fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 ${bgClass} text-white px-6 py-4 rounded-xl shadow-2xl z-[99999] font-bold flex items-center gap-3 text-lg pointer-events-none transition-all duration-300`;
+  
+  if (type === 'loading') {
+    toast.innerHTML = `<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>${message}`;
+  } else {
+    toast.innerText = message;
+  }
+  
+  document.body.appendChild(toast);
+  
+  if (type !== 'loading') {
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translate(-50%, -30%)';
+      setTimeout(() => toast.remove(), 300);
+    }, 2000);
+  }
+  
+  return toast;
+};
+
 // Rename original App to MainApp to keep existing functionality intact
 function MainApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -1073,6 +1106,72 @@ function MainApp() {
   const [editingGalleryImage, setEditingGalleryImage] = useState<{ filename: string, url: string } | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<any>(null);
+
+  const handleSaveCoverToGallery = async (url: string) => {
+    if (!url) return;
+    const toast = showToast('正在保存到图片库...', 'loading');
+    try {
+      const cleanUrl = url.includes('?t=') ? url.split('?t=')[0] : url;
+      const res = await fetch('/api/gallery/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: cleanUrl })
+      });
+      if (res.ok) {
+        showToast('✅ 已成功保存到图片库', 'success');
+        // Refresh gallery
+        setGalleryUpdateToken(Date.now());
+      } else {
+        const err = await res.json();
+        showToast(`❌ 保存失败: ${err.error || '未知错误'}`, 'error');
+      }
+    } catch (e: any) {
+      console.error('Save cover to gallery failed', e);
+      showToast(`❌ 网络错误，保存失败: ${e.message || String(e)}`, 'error');
+    }
+  };
+
+  const handleDownloadCoverImage = async (url: string) => {
+    if (!url) return;
+    const toast = showToast('正在准备下载...', 'loading');
+    try {
+      let fetchUrl = url;
+      if (url.startsWith('data:')) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `xhs_cover_${Date.now()}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast('✅ 封面图下载成功', 'success');
+        return;
+      }
+      
+      if (url.startsWith('http') && !url.startsWith(window.location.origin)) {
+        fetchUrl = `/api/proxy?url=${encodeURIComponent(url)}`.replace('&', '%26');
+      } else {
+        // Strip any timestamp cache-busting from local urls to fetch correctly
+        fetchUrl = url.includes('?t=') ? url.split('?t=')[0] : url;
+      }
+      
+      const response = await fetch(fetchUrl);
+      if (!response.ok) throw new Error('网络响应异常');
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const filename = url.split('/').pop()?.split('?')[0] || `xhs_cover_${Date.now()}.jpg`;
+      a.download = filename.endsWith('.png') || filename.endsWith('.jpg') || filename.endsWith('.jpeg') || filename.endsWith('.webp') ? filename : `${filename}.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(blobUrl);
+      showToast('✅ 封面图下载成功', 'success');
+    } catch (err: any) {
+      console.error('Failed to download cover image:', err);
+      showToast(`❌ 下载失败: ${err.message || '未知错误'}`, 'error');
+    }
+  };
 
   const { user, refreshUser } = useAuth();
   const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set([user?.username || 'admin']));
@@ -6750,31 +6849,63 @@ function MainApp() {
                     </div>
                   )}
                 </div>
-                <div className="flex justify-center gap-2 mt-3">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setShowXhsStoryboardCoverPicker(true);
-                    }}
-                    className="px-3 py-1.5 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-gray-200 shadow-sm"
-                  >
-                    <ImageIcon size={13} /> 更换封面
-                  </button>
-                  {(viewingXhsNotes.taskData?.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards.length > 0 && viewingXhsNotes.taskData.storyboards[0].image)) && (
+                <div className="flex flex-col gap-2 mt-3 w-full max-w-[240px] mx-auto">
+                  <div className="flex justify-center gap-2">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        const url = viewingXhsNotes.taskData.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards[0]?.image);
-                        if (url) {
-                          setCropperImageSrc(url);
-                        }
+                        setShowXhsStoryboardCoverPicker(true);
                       }}
-                      className="px-3 py-1.5 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-600 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 border border-red-200 shadow-sm animate-pulse-subtle"
+                      className="flex-1 px-2.5 py-1.5 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1 border border-gray-200 shadow-sm"
                     >
-                      <Crop size={13} /> 裁剪封面
+                      <ImageIcon size={13} /> 更换封面
                     </button>
+                    {(viewingXhsNotes.taskData?.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards.length > 0 && viewingXhsNotes.taskData.storyboards[0].image)) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const url = viewingXhsNotes.taskData.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards[0]?.image);
+                          if (url) {
+                            setCropperImageSrc(url);
+                          }
+                        }}
+                        className="flex-1 px-2.5 py-1.5 bg-red-50 hover:bg-red-100 active:bg-red-200 text-red-600 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1 border border-red-200 shadow-sm"
+                      >
+                        <Crop size={13} /> 裁剪封面
+                      </button>
+                    )}
+                  </div>
+                  {(viewingXhsNotes.taskData?.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards.length > 0 && viewingXhsNotes.taskData.storyboards[0].image)) && (
+                    <div className="flex justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const url = viewingXhsNotes.taskData.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards[0]?.image);
+                          if (url) {
+                            handleDownloadCoverImage(url);
+                          }
+                        }}
+                        className="flex-1 px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 active:bg-blue-200 text-blue-600 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1 border border-blue-200 shadow-sm"
+                      >
+                        <Download size={13} /> 下载本地
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const url = viewingXhsNotes.taskData.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards[0]?.image);
+                          if (url) {
+                            handleSaveCoverToGallery(url);
+                          }
+                        }}
+                        className="flex-1 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 active:bg-emerald-200 text-emerald-600 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1 border border-emerald-200 shadow-sm"
+                      >
+                        <FolderPlus size={13} /> 存至图库
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
