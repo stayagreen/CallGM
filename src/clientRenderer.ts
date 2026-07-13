@@ -38,11 +38,46 @@ async function preloadImages(storyboards: any[]): Promise<Map<string, HTMLImageE
 }
 
 /**
+ * Preloads all video elements into memory as HTMLVideoElement.
+ */
+async function preloadVideos(storyboards: any[]): Promise<Map<string, HTMLVideoElement>> {
+  const videosMap = new Map<string, HTMLVideoElement>();
+  const promises = storyboards.map((sb, idx) => {
+    if (sb.mediaType !== 'video' || !sb.videoPath) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'auto';
+      
+      let src = sb.videoPath;
+      if (src && !src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('/')) {
+        src = '/' + src;
+      }
+      video.src = src;
+
+      video.onloadedmetadata = () => {
+        videosMap.set(sb.id, video);
+        resolve();
+      };
+      
+      video.onerror = (e) => {
+        console.error(`Failed to load video at index ${idx}: ${sb.videoPath}`, e);
+        resolve(); // Continue anyway
+      };
+    });
+  });
+  await Promise.all(promises);
+  return videosMap;
+}
+
+/**
  * Draws a single storyboard frame onto a canvas context.
  */
 function drawSingleStoryboard(
   ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement | ImageBitmap | undefined,
+  img: HTMLImageElement | ImageBitmap | HTMLVideoElement | undefined,
   sb: any,
   relTime: number,
   w: number,
@@ -53,22 +88,39 @@ function drawSingleStoryboard(
   ctx.fillRect(0, 0, w, h);
 
   if (img) {
-    let fitW = img.width;
-    let fitH = img.height;
+    let fitW = 0;
+    let fitH = 0;
     let fitX = 0;
     let fitY = 0;
+
+    if (typeof ImageBitmap !== 'undefined' && img instanceof ImageBitmap) {
+      fitW = img.width;
+      fitH = img.height;
+    } else if (img instanceof HTMLVideoElement) {
+      fitW = img.videoWidth;
+      fitH = img.videoHeight;
+    } else {
+      fitW = img.width;
+      fitH = img.height;
+    }
 
     if (typeof ImageBitmap !== 'undefined' && img instanceof ImageBitmap) {
       // ImageBitmap is already pre-scaled to exactly fit target aspect ratio
     } else {
       const canvasAspect = w / h;
-      const imgAspect = (img as HTMLImageElement).width / (img as HTMLImageElement).height;
+      const imgAspect = (img instanceof HTMLVideoElement)
+        ? img.videoWidth / img.videoHeight
+        : (img as HTMLImageElement).width / (img as HTMLImageElement).height;
       if (imgAspect > canvasAspect) {
-        fitW = (img as HTMLImageElement).height * canvasAspect;
-        fitX = ((img as HTMLImageElement).width - fitW) / 2;
+        fitW = (img instanceof HTMLVideoElement)
+          ? img.videoHeight * canvasAspect
+          : (img as HTMLImageElement).height * canvasAspect;
+        fitX = (((img instanceof HTMLVideoElement) ? img.videoWidth : (img as HTMLImageElement).width) - fitW) / 2;
       } else {
-        fitH = (img as HTMLImageElement).width / canvasAspect;
-        fitY = ((img as HTMLImageElement).height - fitH) / 2;
+        fitH = (img instanceof HTMLVideoElement)
+          ? img.videoWidth / canvasAspect
+          : (img as HTMLImageElement).width / canvasAspect;
+        fitY = (((img instanceof HTMLVideoElement) ? img.videoHeight : (img as HTMLImageElement).height) - fitH) / 2;
       }
     }
 
@@ -323,10 +375,11 @@ export async function renderVideoClientSide(
     }
   }
 
-  onProgress({ status: 'running', progress: 7, message: '正在预加载分镜图片...' });
+  onProgress({ status: 'running', progress: 7, message: '正在预加载分镜图片与视频...' });
 
-  // 2. Preload images
+  // 2. Preload images and videos
   const imagesMap = await preloadImages(storyboards);
+  const videosMap = await preloadVideos(storyboards);
 
   onProgress({ status: 'running', progress: 11, message: '正在生成高清离屏纹理缓冲区...' });
 
@@ -563,7 +616,6 @@ export async function renderVideoClientSide(
     }
 
     const sbCurrent = storyboards[activeIdx];
-    const imgCurrent = texturesMap.get(sbCurrent.image || '') || imagesMap.get(sbCurrent.image || '');
     const relTimeCurrent = currentTime - startTime[activeIdx];
 
     // Clear and draw background
@@ -575,6 +627,61 @@ export async function renderVideoClientSide(
       activeIdx < storyboards.length - 1 &&
       sbCurrent.transition && sbCurrent.transition !== 'none' &&
       currentTime >= endTime[activeIdx] - transitionDuration;
+
+    // Wait for video elements to seek if they are active
+    if (sbCurrent.mediaType === 'video') {
+      const videoEl = videosMap.get(sbCurrent.id);
+      if (videoEl) {
+        const targetVideoTime = (sbCurrent.startTime || 0) + relTimeCurrent;
+        videoEl.currentTime = targetVideoTime;
+        await new Promise<void>((resolve) => {
+          const onSeeked = () => {
+            videoEl.removeEventListener('seeked', onSeeked);
+            videoEl.removeEventListener('error', onError);
+            resolve();
+          };
+          const onError = () => {
+            videoEl.removeEventListener('seeked', onSeeked);
+            videoEl.removeEventListener('error', onError);
+            resolve();
+          };
+          videoEl.addEventListener('seeked', onSeeked);
+          videoEl.addEventListener('error', onError);
+          setTimeout(resolve, 100);
+        });
+      }
+    }
+
+    if (transitionActive) {
+      const sbNext = storyboards[activeIdx + 1];
+      if (sbNext.mediaType === 'video') {
+        const videoElNext = videosMap.get(sbNext.id);
+        if (videoElNext) {
+          const relTimeNext = Math.max(0, currentTime - startTime[activeIdx + 1]);
+          const targetVideoTimeNext = (sbNext.startTime || 0) + relTimeNext;
+          videoElNext.currentTime = targetVideoTimeNext;
+          await new Promise<void>((resolve) => {
+            const onSeeked = () => {
+              videoElNext.removeEventListener('seeked', onSeeked);
+              videoElNext.removeEventListener('error', onError);
+              resolve();
+            };
+            const onError = () => {
+              videoElNext.removeEventListener('seeked', onSeeked);
+              videoElNext.removeEventListener('error', onError);
+              resolve();
+            };
+            videoElNext.addEventListener('seeked', onSeeked);
+            videoElNext.addEventListener('error', onError);
+            setTimeout(resolve, 100);
+          });
+        }
+      }
+    }
+
+    const imgCurrent = sbCurrent.mediaType === 'video'
+      ? videosMap.get(sbCurrent.id)
+      : (texturesMap.get(sbCurrent.image || '') || imagesMap.get(sbCurrent.image || ''));
 
     if (transitionActive) {
       const transT = endTime[activeIdx] - transitionDuration;
@@ -589,7 +696,9 @@ export async function renderVideoClientSide(
       // Draw secondary storyboard with fade in
       ctx.save();
       const sbNext = storyboards[activeIdx + 1];
-      const imgNext = texturesMap.get(sbNext.image || '') || imagesMap.get(sbNext.image || '');
+      const imgNext = sbNext.mediaType === 'video'
+        ? videosMap.get(sbNext.id)
+        : (texturesMap.get(sbNext.image || '') || imagesMap.get(sbNext.image || ''));
       const relTimeNext = Math.max(0, currentTime - startTime[activeIdx + 1]);
       drawSingleStoryboard(ctx, imgNext, sbNext, relTimeNext, videoW, videoH);
       const nextData = ctx.getImageData(0, 0, videoW, videoH);

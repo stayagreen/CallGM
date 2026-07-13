@@ -996,39 +996,94 @@ async function generateClip(sb: any, outputPath: string, targetWidth: number, ta
             filterComplex += `,unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.5:chroma_msize_x=5:chroma_msize_y=5:chroma_amount=0.0`;
         }
         if (videoColorProtection === 'bt709') {
-            filterComplex += `,scale=w=iw:h=ih:out_color_matrix=bt709:flags=lanczos+accurate_rnd,format=yuv420p[outv]`;
+            filterComplex += `,scale=w=iw:h=ih:out_color_matrix=bt709:flags=lanczos+accurate_rnd,format=yuv420p`;
         } else {
-            filterComplex += `,format=yuv420p[outv]`;
+            filterComplex += `,format=yuv420p`;
         }
 
-        const args = [
-            '-ss', startTime.toString(),
-            '-i', inputVideoPath,
-            '-filter_complex', filterComplex,
-            '-map', '[outv]',
-            '-an', // Discard audio to ensure easy concat with images
-            '-c:v', 'libx264',
-            '-preset', videoQualityMode === 'highSharpen' ? 'slow' : 'medium',
-            '-crf', crf,
-            '-b:v', bitrate,
-            '-maxrate', maxRate,
-            '-bufsize', bufSize,
-            '-t', duration.toString(),
-            '-r', fps.toString(),
-            '-pix_fmt', 'yuv420p',
-            '-threads', '0'
-        ];
+        let tempOverlayDir = '';
+        try {
+            if (sb.text) {
+                filterComplex += `[v0]`;
+                tempOverlayDir = path.join(videoTaskDir, `temp_overlay_vid_${Date.now()}_${Math.floor(Math.random()*1000)}`);
+                if (!fs.existsSync(tempOverlayDir)) fs.mkdirSync(tempOverlayDir, { recursive: true });
 
-        if (videoColorProtection === 'bt709') {
-            args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
-        }
-        if (videoQualityMode === 'highSharpen') {
-            args.push('-profile:v', 'high');
-        }
-        args.push('-movflags', '+faststart', '-y', outputPath);
+                const frames = Math.round(duration * fps);
+                let dynamicFrames = frames;
+                if (sb.textEffect === 'none') {
+                    dynamicFrames = 2;
+                } else if (sb.textEffect === 'fade') {
+                    dynamicFrames = Math.min(frames, Math.ceil(0.5 * fps) + 1);
+                } else if (sb.textEffect === 'blur') {
+                    dynamicFrames = Math.min(frames, Math.ceil(0.8 * fps) + 1);
+                }
+                if (dynamicFrames < 2) dynamicFrames = 2;
 
-        console.log(`[FFmpeg] Generating video storyboard clip: ${FFMPEG_PATH} ${args.join(' ')}`);
-        await execa(FFMPEG_PATH, args);
+                const tasks = [];
+                for (let f = 0; f < dynamicFrames; f++) {
+                    const frameNum = f;
+                    tasks.push(async () => {
+                        const svgString = generateTextOverlaySvg(sb, frameNum, frames, duration, w, h, fps);
+                        const fileName = `frame_${frameNum.toString().padStart(5, '0')}.png`;
+                        const filePath = path.join(tempOverlayDir, fileName);
+                        await sharp(Buffer.from(svgString)).png().toFile(filePath);
+                    });
+                }
+                await runWithLimit(tasks, 16);
+
+                filterComplex += `;[v0][1:v]overlay=0:0[outv]`;
+            } else {
+                filterComplex += `[outv]`;
+            }
+
+            const args = [
+                '-ss', startTime.toString(),
+                '-i', inputVideoPath,
+            ];
+
+            if (sb.text) {
+                args.push(
+                    '-f', 'image2',
+                    '-framerate', fps.toString(),
+                    '-i', path.join(tempOverlayDir, 'frame_%05d.png')
+                );
+            }
+
+            args.push(
+                '-filter_complex', filterComplex,
+                '-map', '[outv]',
+                '-an', // Discard audio to ensure easy concat with images
+                '-c:v', 'libx264',
+                '-preset', videoQualityMode === 'highSharpen' ? 'slow' : 'medium',
+                '-crf', crf,
+                '-b:v', bitrate,
+                '-maxrate', maxRate,
+                '-bufsize', bufSize,
+                '-t', duration.toString(),
+                '-r', fps.toString(),
+                '-pix_fmt', 'yuv420p',
+                '-threads', '0'
+            );
+
+            if (videoColorProtection === 'bt709') {
+                args.push('-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709');
+            }
+            if (videoQualityMode === 'highSharpen') {
+                args.push('-profile:v', 'high');
+            }
+            args.push('-movflags', '+faststart', '-y', outputPath);
+
+            console.log(`[FFmpeg] Generating video storyboard clip: ${FFMPEG_PATH} ${args.join(' ')}`);
+            await execa(FFMPEG_PATH, args);
+        } finally {
+            if (tempOverlayDir && fs.existsSync(tempOverlayDir)) {
+                try {
+                    fs.rmSync(tempOverlayDir, { recursive: true, force: true });
+                } catch (err) {
+                    console.warn(`[FFmpeg] Failed to clean up temp overlay directory ${tempOverlayDir}:`, err);
+                }
+            }
+        }
         return;
     }
 
