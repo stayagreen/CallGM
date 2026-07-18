@@ -6733,10 +6733,10 @@ function MainApp() {
         </div>
       )}
       {showBatch4GridPicker && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-[1000]">
           <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col relative">
             {isProcessingBatch4Grid && (
-              <div className="absolute inset-0 bg-white/90 backdrop-blur-xs flex flex-col items-center justify-center z-50 rounded-2xl">
+              <div className="absolute inset-0 bg-white/90 backdrop-blur-xs flex flex-col items-center justify-center z-[1001] rounded-2xl">
                 <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mb-4"></div>
                 <p className="text-lg font-bold text-gray-800">正在切割并导入四宫格图...</p>
                 <p className="text-sm text-gray-500 mt-2">正在按照任务模版自动构建新的分镜与视频任务</p>
@@ -6863,6 +6863,7 @@ function MainApp() {
                 onClick={() => {
                   setSelectedBatch4GridImages(new Set());
                   setShowBatch4GridPicker(true);
+                  fetchGallery();
                 }}
                 className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition flex items-center justify-center gap-1.5"
               >
