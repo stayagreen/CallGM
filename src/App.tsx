@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, Minus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search, Music, Cpu, CheckSquare, Square } from 'lucide-react';
+import { Plus, Minus, Trash2, Upload, Settings, X, History, Image as ImageIcon, Download, ExternalLink, List as ListIcon, CheckCircle2, Clock, PlayCircle, Edit2, Camera, ChevronDown, ChevronUp, Film, Scissors, Mic, MicOff, Paintbrush, Target, Sparkles, Crop, Share2, Calendar, Link, Eye, User, Chrome, FolderPlus, Folder, Search, Music, Cpu, CheckSquare, Square, Grid } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import VideoEditor, { VideoTask } from './VideoEditor';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -1467,6 +1467,9 @@ function MainApp() {
   const [showGalleryUploadMenu, setShowGalleryUploadMenu] = useState(false);
   const [showGalleryPicker, setShowGalleryPicker] = useState(false);
   const [selectedGalleryImages, setSelectedGalleryImages] = useState<Set<string>>(new Set());
+  const [showBatch4GridPicker, setShowBatch4GridPicker] = useState(false);
+  const [selectedBatch4GridImages, setSelectedBatch4GridImages] = useState<Set<string>>(new Set());
+  const [isProcessingBatch4Grid, setIsProcessingBatch4Grid] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
@@ -2331,6 +2334,134 @@ function MainApp() {
     }
     setShowGalleryPicker(false);
     setSelectedGalleryImages(new Set());
+  };
+
+  const handleConfirmBatch4Grid = async () => {
+    if (selectedBatch4GridImages.size === 0 || !viewingVideoJobDetails) return;
+    setIsProcessingBatch4Grid(true);
+    
+    try {
+      const imgPaths = Array.from(selectedBatch4GridImages) as string[];
+      const newTasks: VideoTask[] = [];
+
+      for (const imgPath of imgPaths) {
+        // Cut/split 4-grid image into 4 quadrants (base64)
+        const quadrants = await new Promise<string[]>((resolve) => {
+          const finalImageUrl = imgPath.startsWith('uploads/') ? `/${imgPath}` : `/downloads/${imgPath}`;
+          const imgUrl = finalImageUrl + `?t=${Date.now()}`;
+          
+          const image = new Image();
+          image.crossOrigin = 'anonymous';
+          image.onload = () => {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            if (!context) return resolve([]);
+            
+            const w = image.width / 2;
+            const h = image.height / 2;
+            
+            const shrink = Math.min(4, Math.floor(w / 4), Math.floor(h / 4));
+            const canvasW = w - (shrink * 2);
+            const canvasH = h - (shrink * 2);
+            
+            canvas.width = canvasW;
+            canvas.height = canvasH;
+
+            const quadrantsCoords = [
+              { x: 0, y: 0 },
+              { x: w, y: 0 },
+              { x: 0, y: h },
+              { x: w, y: h }
+            ];
+
+            const res = quadrantsCoords.map((q) => {
+              context.clearRect(0, 0, canvasW, canvasH);
+              context.drawImage(
+                image, 
+                q.x + shrink, 
+                q.y + shrink, 
+                w - (shrink * 2), 
+                h - (shrink * 2), 
+                0, 
+                0, 
+                canvasW, 
+                canvasH
+              );
+              return canvas.toDataURL('image/jpeg', 0.9);
+            });
+            resolve(res);
+          };
+          image.onerror = () => {
+            console.error(`Failed to load image for splitting: ${imgPath}`);
+            resolve([]);
+          };
+          image.src = imgUrl;
+        });
+
+        if (quadrants.length === 4) {
+          // Clone template storyboards
+          let newStoryboards = (viewingVideoJobDetails.data.storyboards || []).map((sb: any) => ({
+            ...sb,
+            id: Date.now().toString() + Math.random().toString(36).substring(7)
+          }));
+
+          // Ensure we have at least 4 storyboards to hold the 4 quadrants
+          while (newStoryboards.length < 4) {
+            const templateSb = newStoryboards[newStoryboards.length - 1] || {
+              animation: 'none',
+              animationSpeed: 1.5,
+              transition: 'none',
+              text: '',
+              textSize: 20,
+              textColor: '#ffffff',
+              textEffect: 'none',
+              duration: 3.5
+            };
+            newStoryboards.push({
+              ...templateSb,
+              id: Date.now().toString() + Math.random().toString(36).substring(7),
+              image: ''
+            });
+          }
+
+          // Map the 4 quadrants to the first 4 storyboards
+          for (let i = 0; i < 4; i++) {
+            newStoryboards[i].image = quadrants[i];
+          }
+
+          const newTask: VideoTask = {
+            id: Date.now().toString() + Math.random().toString(36).substring(7),
+            storyboards: newStoryboards,
+            bgm: viewingVideoJobDetails.data.bgm || '',
+            introAnimation: viewingVideoJobDetails.data.introAnimation || 'none',
+            outroAnimation: viewingVideoJobDetails.data.outroAnimation || 'none',
+            xhsTitle: viewingVideoJobDetails.data.xhsTitle || '',
+            xhsBody: viewingVideoJobDetails.data.xhsBody || '',
+            xhsTags: viewingVideoJobDetails.data.xhsTags || '',
+            xhsCoverAspectRatio: viewingVideoJobDetails.data.xhsCoverAspectRatio || '3:4'
+          };
+          newTasks.push(newTask);
+        }
+      }
+
+      if (newTasks.length > 0) {
+        setVideoTasks(prevTasks => [...prevTasks, ...newTasks]);
+        setActiveVideoTaskId(newTasks[newTasks.length - 1].id);
+        setActiveTab('video_tasks');
+        alert(`批量四宫格导入成功！已根据模版创建了 ${newTasks.length} 个新视频任务。`);
+      } else {
+        alert('图片处理失败，未创建任何任务。');
+      }
+
+      setViewingVideoJobDetails(null);
+      setShowBatch4GridPicker(false);
+      setSelectedBatch4GridImages(new Set());
+    } catch (error) {
+      console.error('Batch 4grid processing failed:', error);
+      alert('批量四宫格处理时出错');
+    } finally {
+      setIsProcessingBatch4Grid(false);
+    }
   };
 
   const uploadBase64Images = async (base64Images: string[], targetGroupId: number | null) => {
@@ -6601,6 +6732,90 @@ function MainApp() {
           </div>
         </div>
       )}
+      {showBatch4GridPicker && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col relative">
+            {isProcessingBatch4Grid && (
+              <div className="absolute inset-0 bg-white/90 backdrop-blur-xs flex flex-col items-center justify-center z-50 rounded-2xl">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent mb-4"></div>
+                <p className="text-lg font-bold text-gray-800">正在切割并导入四宫格图...</p>
+                <p className="text-sm text-gray-500 mt-2">正在按照任务模版自动构建新的分镜与视频任务</p>
+              </div>
+            )}
+            
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <h2 className="text-xl font-bold flex items-center gap-2 text-gray-900">
+                  <Grid size={22} className="text-blue-600 animate-pulse" />
+                  批量四宫格导入
+                </h2>
+                <p className="text-xs text-gray-500 mt-1">请多选图库中的四宫格图片。确认后将按模板复制生成同等数量的视频任务，并将图片2x2等分切割后导入各任务的分镜中。</p>
+              </div>
+              <button disabled={isProcessingBatch4Grid} onClick={() => setShowBatch4GridPicker(false)} className="text-gray-400 hover:text-gray-600 disabled:opacity-50"><X size={24}/></button>
+            </div>
+            
+            <div className="flex-grow overflow-y-auto mb-6 pr-2">
+              {galleryImages.length === 0 ? (
+                <div className="text-center py-12 text-gray-500">
+                  <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                  <p>图库中暂无图片</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                  {galleryImages.map(imgData => {
+                    const img = imgData.path;
+                    const isSelected = selectedBatch4GridImages.has(img);
+                    return (
+                    <div 
+                      key={img} 
+                      onClick={() => {
+                        if (isProcessingBatch4Grid) return;
+                        const newSet = new Set(selectedBatch4GridImages);
+                        if (newSet.has(img)) newSet.delete(img);
+                        else newSet.add(img);
+                        setSelectedBatch4GridImages(newSet);
+                      }}
+                      className={`relative aspect-[9/16] rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300'}`}
+                    >
+                      <img 
+                        src={`/api/thumbnails/${img.startsWith('uploads/') ? 'uploads' : 'downloads'}/${img.replace(/^uploads\//, '')}?t=${galleryUpdateToken}`} 
+                        className="w-full h-full object-contain" 
+                        loading="lazy" 
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                      {imgData.resolutionTag && (
+                        <div className={`absolute top-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded text-[8px] font-bold text-white shadow-sm pointer-events-none uppercase tracking-wider ${
+                          imgData.resolutionTag === '4K' ? 'bg-red-600/90' :
+                          imgData.resolutionTag === '2K' ? 'bg-blue-600/90' :
+                          'bg-gray-700/80'
+                        }`}>
+                          {imgData.resolutionTag}
+                        </div>
+                      )}
+                      {isSelected && (
+                        <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
+                          <CheckCircle2 className="text-white drop-shadow-md" size={32} />
+                        </div>
+                      )}
+                    </div>
+                  )})}
+                </div>
+              )}
+            </div>
+            
+            <div className="flex gap-3">
+              <button disabled={isProcessingBatch4Grid} onClick={() => setShowBatch4GridPicker(false)} className="flex-1 py-3 rounded-xl font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 transition disabled:opacity-50">取消</button>
+              <button 
+                onClick={handleConfirmBatch4Grid} 
+                disabled={isProcessingBatch4Grid || selectedBatch4GridImages.size === 0}
+                className="flex-1 py-3 rounded-xl font-medium text-white bg-blue-600 hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                确认导入并切割 ({selectedBatch4GridImages.size})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {viewingVideoJobDetails && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-[999]" onClick={() => setViewingVideoJobDetails(null)}>
           <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -6621,24 +6836,40 @@ function MainApp() {
                 ))}
               </div>
             </div>
-            <button 
-              onClick={() => {
-                const newTask: VideoTask = {
-                  id: Date.now().toString(),
-                  storyboards: viewingVideoJobDetails.data.storyboards || [],
-                  bgm: viewingVideoJobDetails.data.bgm || '',
-                  introAnimation: viewingVideoJobDetails.data.introAnimation || 'none',
-                  outroAnimation: viewingVideoJobDetails.data.outroAnimation || 'none'
-                };
-                setVideoTasks([...videoTasks, newTask]);
-                setActiveVideoTaskId(newTask.id);
-                setActiveTab('video_tasks');
-                setViewingVideoJobDetails(null);
-              }}
-              className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition"
-            >
-              导入任务
-            </button>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => {
+                  const newTask: VideoTask = {
+                    id: Date.now().toString(),
+                    storyboards: viewingVideoJobDetails.data.storyboards || [],
+                    bgm: viewingVideoJobDetails.data.bgm || '',
+                    introAnimation: viewingVideoJobDetails.data.introAnimation || 'none',
+                    outroAnimation: viewingVideoJobDetails.data.outroAnimation || 'none',
+                    xhsTitle: viewingVideoJobDetails.data.xhsTitle || '',
+                    xhsBody: viewingVideoJobDetails.data.xhsBody || '',
+                    xhsTags: viewingVideoJobDetails.data.xhsTags || '',
+                    xhsCoverAspectRatio: viewingVideoJobDetails.data.xhsCoverAspectRatio || '3:4'
+                  };
+                  setVideoTasks([...videoTasks, newTask]);
+                  setActiveVideoTaskId(newTask.id);
+                  setActiveTab('video_tasks');
+                  setViewingVideoJobDetails(null);
+                }}
+                className="flex-1 bg-gray-100 text-gray-700 py-3 rounded-xl font-bold hover:bg-gray-200 transition"
+              >
+                导入任务
+              </button>
+              <button 
+                onClick={() => {
+                  setSelectedBatch4GridImages(new Set());
+                  setShowBatch4GridPicker(true);
+                }}
+                className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition flex items-center justify-center gap-1.5"
+              >
+                <Grid size={18} />
+                批量四宫格导入
+              </button>
+            </div>
           </div>
         </div>
       )}
