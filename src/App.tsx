@@ -2435,9 +2435,9 @@ function MainApp() {
             bgm: viewingVideoJobDetails.data.bgm || '',
             introAnimation: viewingVideoJobDetails.data.introAnimation || 'none',
             outroAnimation: viewingVideoJobDetails.data.outroAnimation || 'none',
-            xhsTitle: viewingVideoJobDetails.data.xhsTitle || '',
-            xhsBody: viewingVideoJobDetails.data.xhsBody || '',
-            xhsTags: viewingVideoJobDetails.data.xhsTags || '',
+            xhsTitle: '',
+            xhsBody: '',
+            xhsTags: '',
             xhsCoverAspectRatio: viewingVideoJobDetails.data.xhsCoverAspectRatio || '3:4'
           };
           newTasks.push(newTask);
