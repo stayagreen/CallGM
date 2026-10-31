@@ -3285,7 +3285,7 @@ function MainApp() {
                     
                     const currentTasks = [...validTasks];
 
-                    if (systemConfig.videoRenderScheme === 'client' && typeof VideoEncoder !== 'undefined') {
+                    if (systemConfig.videoRenderScheme === 'client') {
                       // ====== CLIENT-SIDE WEBCODECS RENDERING SCHEME ======
                       setVideoTasks([]);
                       setActiveVideoTaskId('');
