@@ -1099,6 +1099,13 @@ function MainApp() {
   const [viewingXhsNotes, setViewingXhsNotes] = useState<{ videoId: string, jobId?: string, taskData: VideoTask } | null>(null);
   const [showXhsGalleryPicker, setShowXhsGalleryPicker] = useState(false);
   const [showXhsStoryboardCoverPicker, setShowXhsStoryboardCoverPicker] = useState(false);
+  const [showXhsVideoFramePicker, setShowXhsVideoFramePicker] = useState(false);
+  const [xhsFramePickerTime, setXhsFramePickerTime] = useState(0);
+  const [xhsFramePickerDuration, setXhsFramePickerDuration] = useState(0);
+  const [xhsVideoThumbnails, setXhsVideoThumbnails] = useState<{ time: number, dataUrl: string }[]>([]);
+  const [isGeneratingXhsFrames, setIsGeneratingXhsFrames] = useState(false);
+  const xhsCoverUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const xhsFrameVideoRef = useRef<HTMLVideoElement | null>(null);
   const [cropperImageSrc, setCropperImageSrc] = useState<string | null>(null);
   const [processingGalleryImages, setProcessingGalleryImages] = useState<Set<string>>(new Set());
   const [upscalingAssetIds, setUpscalingAssetIds] = useState<Set<number>>(new Set());
@@ -1943,10 +1950,11 @@ function MainApp() {
 
   const fetchVideoGallery = async () => {
     try {
-      const res = await fetch('/api/videos');
+      const res = await fetch(`/api/videos?t=${Date.now()}`, { cache: 'no-store' });
       const data = await res.json();
       if (Array.isArray(data)) {
         setVideoGallery(data);
+        setGalleryUpdateToken(Date.now());
       } else {
         console.error('Video gallery data is not an array:', data);
         setVideoGallery([]);
@@ -1978,12 +1986,196 @@ function MainApp() {
     if (activeTab === 'xhs_notes') fetchXhsNotes();
   }, [activeTab]);
 
+  const getViewingXhsVideoUrl = (videoId?: string) => {
+    if (!videoId) return '';
+    if (videoId.startsWith('http') || videoId.startsWith('/downloads/') || videoId.startsWith('/uploads/')) {
+      return videoId;
+    }
+    return `/downloads/videos/${videoId}`;
+  };
+
+  const saveAndSyncVideoCover = async (videoId: string, nextTaskData: VideoTask) => {
+    if (!videoId) return;
+    // 1. 立即同步更新本地视频库状态，使卡片实时展示新封面
+    setVideoGallery(prev => prev.map(item => item.path === videoId ? { ...item, taskData: nextTaskData } : item));
+    // 2. 持久化保存到后端数据库
+    try {
+      const res = await fetch('/api/videos/xhs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoPath: videoId, taskData: nextTaskData })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.coverImage) {
+          const persistedTaskData = { ...nextTaskData, xhsCoverImage: data.coverImage };
+          setVideoGallery(prev => prev.map(item => item.path === videoId ? { ...item, taskData: persistedTaskData } : item));
+          setViewingXhsNotes(prev => (prev && prev.videoId === videoId) ? { ...prev, taskData: { ...prev.taskData, xhsCoverImage: data.coverImage } } : prev);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to auto persist video cover:', e);
+    }
+  };
+
   useEffect(() => {
     if (!viewingXhsNotes) {
       setScheduledPublishTime('');
       setXhsIsDraft(false);
+      setShowXhsVideoFramePicker(false);
+      setXhsVideoThumbnails([]);
     }
   }, [viewingXhsNotes]);
+
+  // 如果视频没有设置封面（也无分镜封面），打开小红书笔记详情时默认自动截取视频第一帧作为封面
+  useEffect(() => {
+    if (!viewingXhsNotes || !viewingXhsNotes.videoId) return;
+    const hasExistingCover = Boolean(
+      viewingXhsNotes.taskData?.xhsCoverImage ||
+      (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards.length > 0 && viewingXhsNotes.taskData.storyboards[0]?.image)
+    );
+    if (hasExistingCover) return;
+
+    let cancelled = false;
+    const targetVideoId = viewingXhsNotes.videoId;
+    const videoUrl = getViewingXhsVideoUrl(targetVideoId);
+    const vid = document.createElement('video');
+    vid.crossOrigin = 'anonymous';
+    vid.muted = true;
+    vid.playsInline = true;
+    vid.preload = 'auto';
+    vid.src = videoUrl;
+
+    const captureFirstFrame = () => {
+      if (cancelled) return;
+      try {
+        const w = vid.videoWidth || 720;
+        const h = vid.videoHeight || 1280;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(vid, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+          if (dataUrl && dataUrl.startsWith('data:image')) {
+            setViewingXhsNotes(prev => {
+              if (!prev || prev.videoId !== targetVideoId) return prev;
+              const stillNoCover = !(
+                prev.taskData?.xhsCoverImage ||
+                (prev.taskData?.storyboards && prev.taskData.storyboards.length > 0 && prev.taskData.storyboards[0]?.image)
+              );
+              if (!stillNoCover) return prev;
+              const updatedTaskData = {
+                ...prev.taskData,
+                xhsCoverImage: dataUrl
+              };
+              saveAndSyncVideoCover(targetVideoId, updatedTaskData);
+              return {
+                ...prev,
+                taskData: updatedTaskData
+              };
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Auto capture first frame failed:', err);
+      } finally {
+        vid.src = '';
+      }
+    };
+
+    vid.onloadeddata = () => {
+      if (cancelled) return;
+      if (vid.duration && vid.duration > 0.05) {
+        vid.currentTime = 0.01;
+      } else {
+        captureFirstFrame();
+      }
+    };
+    vid.onseeked = () => {
+      captureFirstFrame();
+    };
+
+    return () => {
+      cancelled = true;
+      vid.src = '';
+    };
+  }, [viewingXhsNotes?.videoId]);
+
+  // 打开“视频选帧”弹窗时，自动采样视频帧缩略图（第一张为第一帧）
+  useEffect(() => {
+    if (!showXhsVideoFramePicker || !viewingXhsNotes?.videoId) return;
+    let cancelled = false;
+    setIsGeneratingXhsFrames(true);
+    setXhsVideoThumbnails([]);
+    setXhsFramePickerTime(0);
+
+    const videoUrl = getViewingXhsVideoUrl(viewingXhsNotes.videoId);
+    const vid = document.createElement('video');
+    vid.crossOrigin = 'anonymous';
+    vid.muted = true;
+    vid.playsInline = true;
+    vid.preload = 'auto';
+    vid.src = videoUrl;
+
+    vid.onloadedmetadata = async () => {
+      if (cancelled) return;
+      const duration = vid.duration || 0;
+      const count = 8;
+      const times: number[] = [];
+      if (duration <= 0) {
+        times.push(0);
+      } else {
+        for (let i = 0; i < count; i++) {
+          const t = i === 0 ? 0.01 : Math.min(Math.max(0, duration - 0.05), (duration * i) / (count - 1));
+          times.push(Math.max(0, Number(t.toFixed(2))));
+        }
+      }
+
+      const thumbs: { time: number, dataUrl: string }[] = [];
+      for (const t of times) {
+        if (cancelled) break;
+        await new Promise<void>((resolve) => {
+          const onSeeked = () => {
+            vid.removeEventListener('seeked', onSeeked);
+            try {
+              const vw = vid.videoWidth || 360;
+              const vh = vid.videoHeight || 640;
+              const scale = Math.min(1, 240 / Math.max(vw, vh));
+              const canvas = document.createElement('canvas');
+              canvas.width = Math.max(1, Math.round(vw * scale));
+              canvas.height = Math.max(1, Math.round(vh * scale));
+              const ctx = canvas.getContext('2d');
+              if (ctx) {
+                ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+                thumbs.push({ time: t, dataUrl: canvas.toDataURL('image/jpeg', 0.82) });
+                if (!cancelled) {
+                  setXhsVideoThumbnails([...thumbs]);
+                }
+              }
+            } catch (e) {}
+            resolve();
+          };
+          vid.addEventListener('seeked', onSeeked);
+          vid.currentTime = t;
+        });
+      }
+      if (!cancelled) {
+        setIsGeneratingXhsFrames(false);
+      }
+      vid.src = '';
+    };
+
+    vid.onerror = () => {
+      if (!cancelled) setIsGeneratingXhsFrames(false);
+    };
+
+    return () => {
+      cancelled = true;
+      vid.src = '';
+    };
+  }, [showXhsVideoFramePicker, viewingXhsNotes?.videoId]);
 
   const uploadVideoFile = async (file: File, groupId: number | null) => {
     setVideoUploading(true);
@@ -3093,7 +3285,7 @@ function MainApp() {
                     
                     const currentTasks = [...validTasks];
 
-                    if (systemConfig.videoRenderScheme === 'client') {
+                    if (systemConfig.videoRenderScheme === 'client' && typeof VideoEncoder !== 'undefined') {
                       // ====== CLIENT-SIDE WEBCODECS RENDERING SCHEME ======
                       setVideoTasks([]);
                       setActiveVideoTaskId('');
@@ -4992,11 +5184,32 @@ function MainApp() {
                       className="relative aspect-[9/16] w-full overflow-hidden rounded-lg bg-gray-100 cursor-pointer shadow-inner shrink-0"
                     >
                       <img 
-                        src={`/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`} 
+                        key={vidData.taskData?.xhsCoverImage || vid}
+                        src={(() => {
+                          const customCover = vidData.taskData?.xhsCoverImage || (vidData.taskData?.storyboards && vidData.taskData.storyboards.length > 0 && vidData.taskData.storyboards[0]?.image);
+                          if (customCover) {
+                            if (customCover.startsWith('data:')) return customCover;
+                            if (customCover.startsWith('/downloads/') || customCover.startsWith('/uploads/')) return `${customCover}?t=${galleryUpdateToken}`;
+                            if (customCover.startsWith('uploads/') || customCover.startsWith('downloads/')) return `/${customCover}?t=${galleryUpdateToken}`;
+                            if (customCover.startsWith('http')) return `/api/proxy?url=${encodeURIComponent(customCover)}`.replace('&', '%26');
+                            return customCover;
+                          }
+                          return `/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}?t=${galleryUpdateToken}`;
+                        })()} 
                         alt={vid} 
-                        className="w-full h-full object-fill group-hover:scale-105 transition-transform duration-300 bg-gray-100" 
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 bg-gray-100" 
                         loading="lazy" 
-                        onError={(e) => { e.currentTarget.style.display = 'none'; }} 
+                        onLoad={(e) => {
+                          e.currentTarget.style.display = 'block';
+                        }}
+                        onError={(e) => {
+                          const fallbackSrc = `/api/thumbnails/videos/${vid.replace(/\.[^/.]+$/, ".jpg")}`;
+                          if (!e.currentTarget.src.includes(fallbackSrc)) {
+                            e.currentTarget.src = fallbackSrc;
+                          } else {
+                            e.currentTarget.style.display = 'none';
+                          }
+                        }} 
                       />
                       
                       {vidData.resolutionTag && (
@@ -5165,12 +5378,19 @@ function MainApp() {
                         </div>
 
                         {vidData.createdAt && (
-                          <div className="flex items-center gap-1 text-[10px] text-gray-400 font-medium mt-1">
-                            <Clock size={9} />
-                            {(() => {
-                              const d = new Date(vidData.createdAt.endsWith('Z') ? vidData.createdAt : vidData.createdAt.replace(' ', 'T') + 'Z');
-                              return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-                            })()}
+                          <div className="flex items-center justify-between gap-1 mt-1 text-[10px] text-gray-400 font-medium">
+                            <div className="flex items-center gap-1">
+                              <Clock size={9} />
+                              {(() => {
+                                const d = new Date(vidData.createdAt.endsWith('Z') ? vidData.createdAt : vidData.createdAt.replace(' ', 'T') + 'Z');
+                                return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                              })()}
+                            </div>
+                            {vidData.username && (
+                              <span className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded font-bold">
+                                👤 {vidData.username}
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -7151,6 +7371,34 @@ function MainApp() {
                   )}
                 </div>
                 <div className="flex flex-col gap-2 mt-3 w-full max-w-[240px] mx-auto">
+                  <input
+                    ref={xhsCoverUploadInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file || !viewingXhsNotes) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        const dataUrl = ev.target?.result as string;
+                        if (dataUrl) {
+                          const updatedTaskData = {
+                            ...viewingXhsNotes.taskData,
+                            xhsCoverImage: dataUrl
+                          };
+                          setViewingXhsNotes(prev => prev ? {
+                            ...prev,
+                            taskData: updatedTaskData
+                          } : null);
+                          saveAndSyncVideoCover(viewingXhsNotes.videoId, updatedTaskData);
+                          showToast('✅ 已成功上传并设置封面图', 'success');
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                      e.target.value = '';
+                    }}
+                  />
                   <div className="flex justify-center gap-2">
                     <button
                       type="button"
@@ -7177,6 +7425,28 @@ function MainApp() {
                         <Crop size={13} /> 裁剪封面
                       </button>
                     )}
+                  </div>
+                  <div className="flex justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        xhsCoverUploadInputRef.current?.click();
+                      }}
+                      className="flex-1 px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-amber-700 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1 border border-amber-200 shadow-sm"
+                    >
+                      <Upload size={13} /> 上传封面
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setShowXhsVideoFramePicker(true);
+                      }}
+                      className="flex-1 px-2.5 py-1.5 bg-purple-50 hover:bg-purple-100 active:bg-purple-200 text-purple-700 text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1 border border-purple-200 shadow-sm"
+                    >
+                      <Film size={13} /> 视频选帧
+                    </button>
                   </div>
                   {(viewingXhsNotes.taskData?.xhsCoverImage || (viewingXhsNotes.taskData?.storyboards && viewingXhsNotes.taskData.storyboards.length > 0 && viewingXhsNotes.taskData.storyboards[0].image)) && (
                     <div className="flex justify-center gap-2">
@@ -7380,13 +7650,21 @@ function MainApp() {
                 onClick={async () => {
                   try {
                     setIsSavingConfig(true);
-                    await fetch('/api/videos/xhs', {
+                    const targetVid = viewingXhsNotes.videoId;
+                    const currentTaskData = viewingXhsNotes.taskData;
+                    const res = await fetch('/api/videos/xhs', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ videoPath: viewingXhsNotes.videoId, taskData: viewingXhsNotes.taskData })
+                      body: JSON.stringify({ videoPath: targetVid, taskData: currentTaskData })
                     });
+                    const resData = await res.json().catch(() => ({}));
+                    const finalTaskData = resData.coverImage
+                      ? { ...currentTaskData, xhsCoverImage: resData.coverImage }
+                      : currentTaskData;
+                    setVideoGallery(prev => prev.map(item => item.path === targetVid ? { ...item, taskData: finalTaskData } : item));
+                    setGalleryUpdateToken(Date.now());
                     setViewingXhsNotes(null);
-                    fetchVideoGallery();
+                    await fetchVideoGallery();
                   } catch(e) {
                     alert('保存失败');
                   } finally {
@@ -7422,10 +7700,32 @@ function MainApp() {
             
             <div className="flex-grow overflow-y-auto mb-4 pr-2">
               {(!viewingXhsNotes.taskData?.storyboards || viewingXhsNotes.taskData.storyboards.filter(sb => sb.image).length === 0) ? (
-                <div className="text-center py-16 text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                <div className="text-center py-12 text-gray-500 bg-gray-50 rounded-xl border border-dashed border-gray-200">
                   <ImageIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                   <p className="font-semibold text-gray-700">暂无可用的分镜图片</p>
-                  <p className="text-xs text-gray-400 mt-1">此任务分镜中还没有图片，无法直接选择</p>
+                  <p className="text-xs text-gray-400 mt-1 mb-4">此视频没有分镜图片，您可以直接上传图片或在视频中选择帧作为封面</p>
+                  <div className="flex justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowXhsStoryboardCoverPicker(false);
+                        xhsCoverUploadInputRef.current?.click();
+                      }}
+                      className="px-4 py-2 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 rounded-lg transition flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Upload size={14} /> 上传本地封面
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowXhsStoryboardCoverPicker(false);
+                        setShowXhsVideoFramePicker(true);
+                      }}
+                      className="px-4 py-2 text-xs font-bold text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 rounded-lg transition flex items-center gap-1.5 shadow-sm"
+                    >
+                      <Film size={14} /> 在视频中选择帧
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
@@ -7481,12 +7781,242 @@ function MainApp() {
               )}
             </div>
             
-            <div className="flex justify-end pt-2 border-t border-gray-50">
+            <div className="flex justify-between items-center pt-2 border-t border-gray-50">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowXhsStoryboardCoverPicker(false);
+                    xhsCoverUploadInputRef.current?.click();
+                  }}
+                  className="px-3 py-2 text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 hover:bg-amber-100 rounded-lg transition flex items-center gap-1"
+                >
+                  <Upload size={13} /> 上传本地图片
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowXhsStoryboardCoverPicker(false);
+                    setShowXhsVideoFramePicker(true);
+                  }}
+                  className="px-3 py-2 text-xs font-bold text-purple-700 bg-purple-50 border border-purple-200 hover:bg-purple-100 rounded-lg transition flex items-center gap-1"
+                >
+                  <Film size={13} /> 从视频中选择帧
+                </button>
+              </div>
               <button 
                 onClick={() => setShowXhsStoryboardCoverPicker(false)} 
                 className="px-4 py-2 text-xs font-bold text-gray-600 bg-gray-50 border border-gray-200 hover:bg-gray-100 rounded-lg transition"
               >
                 关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showXhsVideoFramePicker && viewingXhsNotes && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-[1005]" id="xhs-video-frame-picker-modal">
+          <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col relative animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <Film className="text-purple-600 w-5 h-5" />
+                在视频中选择帧作为封面
+              </h2>
+              <button
+                onClick={() => setShowXhsVideoFramePicker(false)}
+                className="text-gray-400 hover:text-gray-600 p-1.5 hover:bg-gray-50 rounded-full transition"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-grow overflow-y-auto space-y-4 pr-1">
+              <div className="bg-gray-900 rounded-xl overflow-hidden flex items-center justify-center relative max-h-[42vh]">
+                <video
+                  ref={xhsFrameVideoRef}
+                  src={getViewingXhsVideoUrl(viewingXhsNotes.videoId)}
+                  crossOrigin="anonymous"
+                  playsInline
+                  muted
+                  preload="auto"
+                  className="max-h-[42vh] w-auto object-contain"
+                  onLoadedMetadata={(e) => {
+                    const dur = e.currentTarget.duration || 0;
+                    setXhsFramePickerDuration(dur);
+                    e.currentTarget.currentTime = 0.01;
+                    setXhsFramePickerTime(0);
+                  }}
+                  onTimeUpdate={(e) => {
+                    setXhsFramePickerTime(e.currentTarget.currentTime || 0);
+                  }}
+                />
+                <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs font-mono px-2.5 py-1 rounded-md">
+                  {xhsFramePickerTime.toFixed(2)}s / {xhsFramePickerDuration.toFixed(2)}s
+                </div>
+              </div>
+
+              <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 space-y-2.5">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold text-gray-600 shrink-0">时间轴选帧:</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0.1, xhsFramePickerDuration)}
+                    step={0.01}
+                    value={xhsFramePickerTime}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setXhsFramePickerTime(val);
+                      if (xhsFrameVideoRef.current) {
+                        xhsFrameVideoRef.current.currentTime = val;
+                      }
+                    }}
+                    className="w-full accent-purple-600 cursor-pointer"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (xhsFrameVideoRef.current) {
+                          xhsFrameVideoRef.current.currentTime = 0.01;
+                          setXhsFramePickerTime(0);
+                        }
+                      }}
+                      className="px-2.5 py-1 text-xs font-bold bg-purple-100 text-purple-700 hover:bg-purple-200 rounded-md transition"
+                    >
+                      第一帧 (默认)
+                    </button>
+                    {[
+                      { label: '-0.5s', delta: -0.5 },
+                      { label: '-0.1s', delta: -0.1 },
+                      { label: '+0.1s', delta: 0.1 },
+                      { label: '+0.5s', delta: 0.5 },
+                    ].map((btn) => (
+                      <button
+                        key={btn.label}
+                        type="button"
+                        onClick={() => {
+                          if (xhsFrameVideoRef.current) {
+                            const nextTime = Math.min(
+                              Math.max(0, (xhsFrameVideoRef.current.currentTime || 0) + btn.delta),
+                              xhsFramePickerDuration || 0
+                            );
+                            xhsFrameVideoRef.current.currentTime = nextTime;
+                            setXhsFramePickerTime(nextTime);
+                          }
+                        }}
+                        className="px-2 py-1 text-xs font-medium bg-white border border-gray-200 text-gray-700 hover:bg-gray-100 rounded-md transition"
+                      >
+                        {btn.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[11px] text-gray-400">拖动滑块或点击下方预览帧即可快速定位画面</span>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-gray-700">快捷关键帧预览 (点击快速选择)</span>
+                  {isGeneratingXhsFrames && (
+                    <span className="text-[11px] text-purple-600 animate-pulse">正在提取视频帧缩略图...</span>
+                  )}
+                </div>
+                {xhsVideoThumbnails.length > 0 && (
+                  <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                    {xhsVideoThumbnails.map((item, idx) => {
+                      const isSelected = Math.abs(xhsFramePickerTime - item.time) < 0.08;
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => {
+                            if (xhsFrameVideoRef.current) {
+                              xhsFrameVideoRef.current.currentTime = item.time;
+                            }
+                            setXhsFramePickerTime(item.time);
+                          }}
+                          className={`relative aspect-[9/16] rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${
+                            isSelected ? 'border-purple-600 ring-2 ring-purple-500/30 scale-[1.02]' : 'border-gray-200 hover:border-purple-400'
+                          }`}
+                        >
+                          <img src={item.dataUrl} className="w-full h-full object-cover" alt={`frame-${idx}`} />
+                          <div className="absolute bottom-0 inset-x-0 bg-black/60 text-white text-[9px] text-center py-0.5 font-mono">
+                            {idx === 0 ? '第一帧' : `${item.time.toFixed(1)}s`}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2.5 pt-4 mt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setShowXhsVideoFramePicker(false)}
+                className="px-4 py-2 text-xs font-bold text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const vid = xhsFrameVideoRef.current;
+                  if (!vid) return;
+                  const canvas = document.createElement('canvas');
+                  canvas.width = vid.videoWidth || 720;
+                  canvas.height = vid.videoHeight || 1280;
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                    ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+                    setViewingXhsNotes({
+                      ...viewingXhsNotes,
+                      taskData: {
+                        ...viewingXhsNotes.taskData,
+                        xhsCoverImage: dataUrl
+                      }
+                    });
+                    setCropperImageSrc(dataUrl);
+                    setShowXhsVideoFramePicker(false);
+                  }
+                }}
+                className="px-4 py-2 text-xs font-bold text-red-600 bg-red-50 border border-red-200 hover:bg-red-100 rounded-lg transition flex items-center gap-1.5"
+              >
+                <Crop size={14} /> 截取当前帧并裁剪
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const vid = xhsFrameVideoRef.current;
+                  if (!vid) return;
+                  const canvas = document.createElement('canvas');
+                  canvas.width = vid.videoWidth || 720;
+                  canvas.height = vid.videoHeight || 1280;
+                  const ctx = canvas.getContext('2d');
+                  if (ctx) {
+                    ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+                    const updatedTaskData = {
+                      ...viewingXhsNotes.taskData,
+                      xhsCoverImage: dataUrl
+                    };
+                    setViewingXhsNotes({
+                      ...viewingXhsNotes,
+                      taskData: updatedTaskData
+                    });
+                    saveAndSyncVideoCover(viewingXhsNotes.videoId, updatedTaskData);
+                    setShowXhsVideoFramePicker(false);
+                    showToast('✅ 已将所选视频帧设为封面', 'success');
+                  }
+                }}
+                className="px-4 py-2 text-xs font-bold text-white bg-purple-600 hover:bg-purple-700 rounded-lg transition flex items-center gap-1.5 shadow-sm"
+              >
+                <CheckCircle2 size={14} /> 直接设为封面
               </button>
             </div>
           </div>
@@ -7551,13 +8081,15 @@ function MainApp() {
           aspectRatio={viewingXhsNotes.taskData?.xhsCoverAspectRatio || '3:4'}
           onClose={() => setCropperImageSrc(null)}
           onCropComplete={(base64Url) => {
+            const updatedTaskData = {
+              ...viewingXhsNotes.taskData,
+              xhsCoverImage: base64Url
+            };
             setViewingXhsNotes({
               ...viewingXhsNotes,
-              taskData: {
-                ...viewingXhsNotes.taskData,
-                xhsCoverImage: base64Url
-              }
+              taskData: updatedTaskData
             });
+            saveAndSyncVideoCover(viewingXhsNotes.videoId, updatedTaskData);
             setCropperImageSrc(null);
           }}
         />

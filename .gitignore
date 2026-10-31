@@ -8,7 +8,13 @@ coverage/
 !.env.example
 
 task/
+task_video/
 download/
 uploads/
+thumbnails/
+debug_screenshots/
+temp_zips/
+realesrgan-ncnn-vulkan/
+bgm/
 data/
 config.json

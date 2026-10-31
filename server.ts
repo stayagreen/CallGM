@@ -34,6 +34,10 @@ import { videoJobProgress, cancelledVideoJobs, startVideoAutomationWatcher, gene
 import { executeXhsPublish, startXhsAutomationWatcher, xhsProgressMap } from "./xhs_automation.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const localFfmpegDir = path.join(__dirname, "node_modules", "@ffmpeg-installer", "win32-x64");
+if (fs.existsSync(localFfmpegDir) && !(process.env.PATH || "").includes(localFfmpegDir)) {
+  process.env.PATH = `${localFfmpegDir}${path.delimiter}${process.env.PATH || ""}`;
+}
 
 import AdmZip from "adm-zip";
 import { ZipArchive } from "archiver";
@@ -2726,16 +2730,20 @@ async function startServer() {
       let jobId = asset.job_id;
       if (!jobId) {
         jobId = Date.now().toString() + Math.floor(Math.random()*1000);
-        db.prepare('UPDATE assets SET job_id = ? WHERE id = ?').run(jobId, asset.id);
         db.prepare('INSERT INTO tasks (id, type, status, data, user_id, retry_count) VALUES (?, ?, ?, ?, ?, ?)').run(jobId, 'video_generation', 'completed', JSON.stringify(taskData), asset.user_id, 0);
+        db.prepare('UPDATE assets SET job_id = ? WHERE id = ?').run(jobId, asset.id);
       } else {
         const taskRow = db.prepare('SELECT data FROM tasks WHERE id = ?').get(jobId) as any;
-        let existingData = {};
-        if (taskRow && taskRow.data) {
-          try { existingData = JSON.parse(taskRow.data); } catch(e) {}
+        if (!taskRow) {
+          db.prepare('INSERT INTO tasks (id, type, status, data, user_id, retry_count) VALUES (?, ?, ?, ?, ?, ?)').run(jobId, 'video_generation', 'completed', JSON.stringify(taskData), asset.user_id, 0);
+        } else {
+          let existingData = {};
+          if (taskRow.data) {
+            try { existingData = JSON.parse(taskRow.data); } catch(e) {}
+          }
+          const newData = { ...existingData, ...taskData };
+          db.prepare('UPDATE tasks SET data = ? WHERE id = ?').run(JSON.stringify(newData), jobId);
         }
-        const newData = { ...existingData, ...taskData };
-        db.prepare('UPDATE tasks SET data = ? WHERE id = ?').run(JSON.stringify(newData), jobId);
       }
       
       res.json({ success: true, jobId, coverImage: taskData.xhsCoverImage });
